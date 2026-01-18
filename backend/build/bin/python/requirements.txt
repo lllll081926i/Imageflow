@@ -1,0 +1,20 @@
+# ImageFlow Python Processing Engine
+# Requirements for the Python image processing scripts
+
+# Core image processing library
+Pillow>=10.0.0
+
+# PDF generation library
+reportlab>=4.0.0
+
+# EXIF data manipulation library
+piexif>=1.1.3
+
+# Optional: For advanced GIF/WebP animation handling
+# imageio>=2.33.0
+
+# For better error handling and logging
+loguru>=0.7.0
+
+# Type hints support
+typing-extensions>=4.0.0

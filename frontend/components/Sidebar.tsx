@@ -6,33 +6,19 @@ import { ViewState } from '../types';
 interface SidebarProps {
     active: ViewState;
     setActive: (view: ViewState) => void;
+    theme: 'light' | 'dark';
+    toggleTheme: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
+const Sidebar: React.FC<SidebarProps> = ({ active, setActive, theme, toggleTheme }) => {
     const [collapsed, setCollapsed] = useState(false);
 
     return (
         <div 
             className={`${collapsed ? 'w-20' : 'w-64'} h-full bg-white/80 dark:bg-[#1C1C1E]/80 glass border-r border-gray-200 dark:border-white/5 flex flex-col transition-[width] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] relative z-20 shrink-0`}
         >
-            {/* Header / Logo */}
-            {/* Keeping padding consistent (px-6) ensures the logo icon stays rooted in place while sidebar shrinks around it */}
-            <div 
-                className="h-20 flex items-center px-6 select-none cursor-pointer overflow-hidden relative shrink-0"
-                onClick={() => setActive('dashboard')}
-            >
-                <div className="w-8 h-8 shrink-0 flex items-center justify-center relative z-10 transition-transform duration-500 hover:scale-110 hover:rotate-3">
-                     <Icon name="AppLogo" size={32} />
-                </div>
-                
-                {/* Text Container: slides out and fades. Origin left ensures it shrinks from right to left */}
-                <div className={`flex items-center whitespace-nowrap overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${collapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
-                    <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#007AFF] via-[#5856D6] to-[#AF52DE] tracking-tight ml-3">ImageFlow</span>
-                </div>
-            </div>
-
             {/* Navigation Items */}
-            <div className="flex-1 overflow-y-auto px-3 space-y-1 no-scrollbar py-2">
+            <div className="flex-1 overflow-y-auto px-3 space-y-1 no-scrollbar py-4">
                 <div className={`h-6 text-xs font-medium text-gray-400 px-3 uppercase tracking-wider transition-all duration-300 flex items-center whitespace-nowrap overflow-hidden ${collapsed ? 'opacity-0' : 'opacity-100'}`}>
                     工具箱
                 </div>
@@ -42,12 +28,17 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                         key={item.id}
                         onClick={() => setActive(item.id)}
                         title={collapsed ? item.title : ''}
-                        className={`w-full flex items-center h-12 rounded-xl text-sm font-medium transition-all duration-300 group relative px-3 ${
+                        className={`w-full flex items-center h-12 rounded-xl text-sm font-medium transition-all duration-300 group relative px-3 z-10 ${
                             active === item.id 
-                                ? 'bg-[#007AFF] text-white shadow-md shadow-blue-500/20' 
+                                ? 'text-white' 
                                 : 'text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
                         }`}
                     >
+                        {/* Active Background Animation */}
+                        {active === item.id && (
+                            <div className="absolute inset-0 bg-[#007AFF] rounded-xl shadow-md shadow-blue-500/20 -z-10 animate-fade-scale" />
+                        )}
+
                         {/* Icon Wrapper: Fixed width ensures icon position never jumps */}
                         <div className="w-6 h-6 flex items-center justify-center shrink-0">
                             <Icon name={item.iconName} size={20} className={`${active === item.id ? 'text-white' : item.color} transition-colors`} />
@@ -72,6 +63,18 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
 
             {/* Footer / Toggle & Settings */}
             <div className="p-3 border-t border-gray-200 dark:border-white/5 space-y-1">
+                <button 
+                    onClick={toggleTheme}
+                    className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors group px-3"
+                >
+                    <div className="w-6 h-6 flex items-center justify-center shrink-0">
+                        <Icon name={theme === 'light' ? 'Moon' : 'Sun'} size={20} className="transition-transform duration-300 group-hover:scale-110" />
+                    </div>
+                    <div className={`whitespace-nowrap overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${collapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
+                        <span className="ml-3">{theme === 'light' ? '深色模式' : '浅色模式'}</span>
+                    </div>
+                </button>
+
                 <button 
                     onClick={() => setCollapsed(!collapsed)}
                     className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors group px-3"

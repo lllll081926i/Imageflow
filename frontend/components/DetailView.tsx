@@ -1,18 +1,30 @@
-import React, { useState, memo } from 'react';
+import React, { useMemo, useState, memo } from 'react';
 import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
-import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone } from './Controls';
+import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone, ProgressBar } from './Controls';
 
 interface DetailViewProps {
     id: ViewState;
     onBack: () => void;
 }
 
+type DroppedFile = {
+    input_path: string;
+    source_root: string;
+    relative_path: string;
+    is_from_dir_drop: boolean;
+};
+
+type ExpandDroppedPathsResult = {
+    files: DroppedFile[];
+    has_directory: boolean;
+};
+
 // --- Feature Settings Panels (Memoized) ---
 
 const ConverterSettings = memo(() => {
-    const [format, setFormat] = useState('JPG - 适合照片');
+    const [format, setFormat] = useState('JPG');
     const [quality, setQuality] = useState(90);
     const [resizeMode, setResizeMode] = useState('原图尺寸');
     const [keepMetadata, setKeepMetadata] = useState(true);
@@ -20,21 +32,31 @@ const ConverterSettings = memo(() => {
     const [dpi, setDpi] = useState(72);
 
     return (
-        <div className="space-y-6">
-            <CustomSelect 
-                label="目标格式" 
-                options={['JPG - 适合照片', 'PNG - 透明背景', 'WEBP - 网页优化', 'AVIF - 极高压缩', 'TIFF - 无损打印', 'ICO - 图标', 'BMP - 无损位图']} 
-                value={format}
-                onChange={setFormat}
-            />
-            
+        <div className="space-y-4">
+            {/* Top Row: Format & Quality */}
+            <div className="grid grid-cols-[1fr_2fr] gap-4">
+                <CustomSelect 
+                    label="目标格式" 
+                    options={['JPG', 'PNG', 'WEBP', 'AVIF', 'TIFF', 'ICO', 'BMP']} 
+                    value={format}
+                    onChange={setFormat}
+                />
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出质量</label>
+                    <div className="h-10 flex items-center">
+                        <StyledSlider value={quality} onChange={setQuality} unit="%" className="w-full" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Middle Row: Resize Mode Buttons */}
             <div className="space-y-2">
-                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">尺寸调整</label>
-                 <SegmentedControl 
-                    options={['原图尺寸', '按比例', '固定宽高', '最长边']}
-                    value={resizeMode}
-                    onChange={setResizeMode}
-                 />
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">尺寸调整</label>
+                <SegmentedControl 
+                    options={['原图', '比例', '固定', '长边']}
+                    value={resizeMode === '原图尺寸' ? '原图' : resizeMode === '按比例' ? '比例' : resizeMode === '固定宽高' ? '固定' : '长边'}
+                    onChange={(v) => setResizeMode(v === '原图' ? '原图尺寸' : v === '比例' ? '按比例' : v === '固定' ? '固定宽高' : '最长边')}
+                />
             </div>
 
             {resizeMode === '按比例' && (
@@ -54,16 +76,15 @@ const ConverterSettings = memo(() => {
                 </div>
             )}
 
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
-                <StyledSlider label="输出质量" value={quality} onChange={setQuality} unit="%" />
-                <div className="grid grid-cols-2 gap-4">
-                     <CustomSelect label="色彩空间" options={['保持原样', 'sRGB (Web通用)', 'Display P3', 'CMYK (打印)']} value={colorSpace} onChange={setColorSpace} />
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                     <CustomSelect label="色彩空间" options={['保持原样', 'sRGB', 'P3', 'CMYK']} value={colorSpace} onChange={setColorSpace} />
                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">DPI 设置</label>
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">DPI</label>
                         <input type="number" value={dpi} onChange={e => setDpi(Number(e.target.value))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
                      </div>
                 </div>
-                <Switch label="保留 EXIF/IPTC 元数据" checked={keepMetadata} onChange={setKeepMetadata} />
+                <Switch label="保留元数据 (EXIF)" checked={keepMetadata} onChange={setKeepMetadata} />
             </div>
         </div>
     );
@@ -401,6 +422,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
     const feature = FEATURES.find(f => f.id === id);
     if (!feature) return null;
 
+    const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
+    const [preserveFolderStructure, setPreserveFolderStructure] = useState(true);
+    const [outputDir, setOutputDir] = useState('');
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [lastMessage, setLastMessage] = useState<string>('');
+
     const renderSettings = () => {
         switch(id) {
             case 'converter': return <ConverterSettings />;
@@ -420,45 +448,196 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
         // Implementation for passing files to Go/Rust backend would go here
     };
 
+    const inputCount = dropResult?.files?.length ?? 0;
+    const effectiveOutputDir = useMemo(() => {
+        if (outputDir) return outputDir;
+        if (dropResult?.files?.[0]?.source_root) return dropResult.files[0].source_root;
+        return '';
+    }, [dropResult, outputDir]);
+
+    const handleSelectOutputDir = async () => {
+        setLastMessage('');
+        try {
+            if (window.go?.main?.App?.SelectOutputDirectory) {
+                const dir = await window.go.main.App.SelectOutputDirectory();
+                if (typeof dir === 'string' && dir.trim()) {
+                    setOutputDir(dir);
+                }
+                return;
+            }
+            if (window.runtime?.OpenDirectoryDialog) {
+                const dir = await window.runtime.OpenDirectoryDialog({ title: '选择输出文件夹' });
+                if (typeof dir === 'string' && dir.trim()) {
+                    setOutputDir(dir);
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            setLastMessage('选择输出目录失败');
+        }
+    };
+
+    const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+    const joinPath = (base: string, rel: string) => `${normalizePath(base)}/${rel.replace(/^\/+/, '')}`;
+    const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
+    const replaceExt = (p: string, ext: string) => {
+        const normalized = p.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('.');
+        if (idx === -1) return `${normalized}.${ext}`;
+        return `${normalized.slice(0, idx)}.${ext}`;
+    };
+
+    const handleStartProcessing = async () => {
+        if (isProcessing) return;
+        setLastMessage('');
+        setProgress(0);
+        if (!dropResult || dropResult.files.length === 0) {
+            setLastMessage('请先拖入文件或文件夹');
+            return;
+        }
+        if (!window.go?.main?.App) {
+            setLastMessage('未检测到 Wails 运行环境');
+            return;
+        }
+
+        const outDir = effectiveOutputDir;
+        if (!outDir) {
+            setLastMessage('请选择输出目录');
+            return;
+        }
+
+        setIsProcessing(true);
+        try {
+            const files = dropResult.files;
+            const total = files.length;
+            let completed = 0;
+
+            if (id === 'converter') {
+                const format = 'jpg'; // In real app, get from settings
+                const quality = 90;
+
+                // Process individually to show progress
+                for (const f of files) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const outRel = replaceExt(rel, format);
+                    const req = {
+                        input_path: f.input_path,
+                        output_path: joinPath(outDir, outRel),
+                        format,
+                        quality,
+                        width: 0,
+                        height: 0,
+                        maintain_ar: true,
+                    };
+                    
+                    try {
+                        await window.go.main.App.Convert(req);
+                    } catch (err) {
+                        console.error(`Failed to convert ${f.input_path}:`, err);
+                    }
+                    
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`转换完成：${completed}/${total} 项`);
+                return;
+            }
+
+            if (id === 'compressor') {
+                // Process individually to show progress
+                for (const f of files) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const req = {
+                        input_path: f.input_path,
+                        output_path: joinPath(outDir, rel),
+                        mode: 'smart',
+                        quality: 80,
+                    };
+
+                    try {
+                        await window.go.main.App.Compress(req);
+                    } catch (err) {
+                        console.error(`Failed to compress ${f.input_path}:`, err);
+                    }
+
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`压缩完成：${completed}/${total} 项`);
+                return;
+            }
+
+            setLastMessage('该功能的实际处理链路尚未接入');
+        } catch (e: any) {
+            console.error(e);
+            setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     return (
         <div className="h-full flex flex-col p-1">
-            <div className="flex items-center gap-4 mb-6 shrink-0">
-                <button onClick={onBack} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors active:scale-95 group">
-                    <Icon name="ChevronLeft" className="w-6 h-6 text-gray-600 dark:text-gray-300 group-hover:-translate-x-0.5 transition-transform" />
-                </button>
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-                        <span className={`p-2 rounded-xl ${feature.bg} ${feature.darkBg} shadow-sm`}>
-                            <Icon name={feature.iconName} className={`w-5 h-5 ${feature.color} dark:text-white`} />
-                        </span>
-                        {feature.title}
-                    </h2>
-                </div>
-            </div>
-
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
                 <div className="lg:col-span-2 h-full">
                     <FileDropZone 
                         onFilesSelected={handleFilesSelected}
+                        onPathsExpanded={(result) => {
+                            setDropResult(result);
+                            setLastMessage('');
+                            setProgress(0);
+                        }}
                         acceptedFormats="image/*"
                         allowMultiple={true}
+                        title="拖拽文件 / 文件夹到这里"
+                        subTitle="或点击选择文件（Wails 下支持拖拽绝对路径）"
                     />
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
-                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full overflow-hidden">
-                    <h3 className="text-base font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2 pb-4 border-b border-gray-100 dark:border-white/5 shrink-0">
-                        <Icon name="Settings" size={18} className="text-gray-400" />
-                        功能设置
-                    </h3>
-                    <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-4">
+                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full overflow-hidden">
+                    <div className="space-y-3 pb-4 border-b border-gray-100 dark:border-white/5 mb-4 shrink-0">
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
+                            <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+                        </div>
+                        {dropResult?.has_directory && (
+                            <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
+                        )}
+                        <button
+                            onClick={handleSelectOutputDir}
+                            className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
+                        >
+                            选择输出文件夹
+                        </button>
+                        {effectiveOutputDir && (
+                            <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                                {effectiveOutputDir}
+                            </div>
+                        )}
+                        {lastMessage && (
+                            <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                                {lastMessage}
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
                         {renderSettings()}
                     </div>
+
                     {id !== 'info' && (
-                        <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0">
-                            <button className="w-full py-3.5 bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD] text-white rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
-                                <Icon name="Wand2" size={18} /> 开始处理
+                        <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
+                            {(isProcessing || progress > 0) && (
+                                <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
+                            )}
+                            <button 
+                                onClick={handleStartProcessing} 
+                                disabled={isProcessing}
+                                className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                            >
+                                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
                             </button>
                         </div>
                     )}

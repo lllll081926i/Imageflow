@@ -47,7 +47,12 @@ const icons: Record<string, React.ReactNode> = {
     Move: <g><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="15 19 12 22 9 19"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></g>,
     Shadow: <g><path d="M19.07 4.93 5.6 18.4"/><path d="M16 16c2 0 3-1 4-2"/><path d="M20 9c0 1-1 2-3 3"/><path d="M4 16c2 0 3-1 4-2"/><path d="M8 9c0 1-1 2-3 3"/><circle cx="12" cy="12" r="3"/></g>,
     PanelLeft: <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />,
-    PanelLeftOpen: <g><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="9" x2="9" y1="3" y2="21" /></g>
+    PanelLeftOpen: <g><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><line x1="9" x2="9" y1="3" y2="21" /></g>,
+    
+    // Window Controls
+    Minimize: <line x1="4" y1="12" x2="20" y2="12" />,
+    Maximize: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
+    Close: <g><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></g>
 };
 
 const Icon: React.FC<IconProps> = ({ name, size = 20, className = "" }) => {

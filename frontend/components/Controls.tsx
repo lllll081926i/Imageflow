@@ -62,14 +62,34 @@ export const SegmentedControl: React.FC<{ options: string[]; value: string; onCh
     );
 });
 
-export const StyledSlider: React.FC<{ label: string; value: number; min?: number; max?: number; unit?: string; onChange: (val: number) => void; step?: number }> = memo(({ label, value, min = 0, max = 100, unit = "", onChange, step = 1 }) => {
+export const StyledSlider: React.FC<{ label?: string; value: number; min?: number; max?: number; unit?: string; onChange: (val: number) => void; step?: number; className?: string }> = memo(({ label, value, min = 0, max = 100, unit = "", onChange, step = 1, className = "" }) => {
     const percent = ((value - min) / (max - min)) * 100;
+    
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        let val = parseInt(e.target.value);
+        if (isNaN(val)) return;
+        val = Math.max(min, Math.min(max, val));
+        onChange(val);
+    };
+
     return (
-        <div className="space-y-3 select-none">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex justify-between">
-                <span>{label}</span>
-                <span className="text-[#007AFF] font-mono text-xs bg-[#007AFF]/10 px-2 py-0.5 rounded min-w-[32px] text-center">{value}{unit}</span>
-            </label>
+        <div className={`space-y-3 select-none ${className}`}>
+            {label !== undefined && (
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex justify-between items-center">
+                    <span>{label}</span>
+                    <div className="relative">
+                        <input 
+                            type="number" 
+                            value={value}
+                            min={min}
+                            max={max}
+                            onChange={handleInputChange}
+                            className="w-12 text-center text-[#007AFF] font-mono text-xs bg-[#007AFF]/10 px-1 py-0.5 rounded outline-none focus:ring-1 focus:ring-[#007AFF] appearance-none m-0"
+                        />
+                        <span className="text-[#007AFF] font-mono text-xs ml-1">{unit}</span>
+                    </div>
+                </label>
+            )}
             <div className="relative h-6 w-full flex items-center group">
                 <div className="absolute w-full h-1.5 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
                     <div className="h-full bg-[#007AFF] transition-none" style={{ width: `${percent}%` }} />
@@ -89,6 +109,23 @@ export const StyledSlider: React.FC<{ label: string; value: number; min?: number
         </div>
     );
 });
+
+export const ProgressBar: React.FC<{ progress: number; label?: string }> = memo(({ progress, label }) => (
+    <div className="w-full space-y-2">
+        {label && (
+            <div className="flex justify-between text-xs font-medium text-gray-600 dark:text-gray-300">
+                <span>{label}</span>
+                <span>{Math.round(progress)}%</span>
+            </div>
+        )}
+        <div className="h-2 w-full bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden">
+            <div 
+                className="h-full bg-gradient-to-r from-[#007AFF] to-[#0055FF] transition-all duration-300 ease-out rounded-full"
+                style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+            />
+        </div>
+    </div>
+));
 
 export const CustomSelect: React.FC<{ label?: string; options: string[]; value: string; onChange: (val: string) => void }> = memo(({ label, options, value, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -181,21 +218,64 @@ export const CustomSelect: React.FC<{ label?: string; options: string[]; value: 
 
 interface FileDropZoneProps {
     onFilesSelected: (files: File[]) => void;
+    onPathsExpanded?: (result: ExpandDroppedPathsResult) => void;
     acceptedFormats?: string; 
     allowMultiple?: boolean;
     title?: string;
     subTitle?: string;
 }
 
+type DroppedFile = {
+    input_path: string;
+    source_root: string;
+    relative_path: string;
+    is_from_dir_drop: boolean;
+};
+
+type ExpandDroppedPathsResult = {
+    files: DroppedFile[];
+    has_directory: boolean;
+};
+
 export const FileDropZone: React.FC<FileDropZoneProps> = ({ 
     onFilesSelected, 
+    onPathsExpanded,
     acceptedFormats = "image/*", 
     allowMultiple = true,
     title = "拖拽图片到这里",
     subTitle = "或点击选择文件 (支持批量处理)"
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
+    const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
+    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
     const inputRef = useRef<HTMLInputElement>(null);
+
+    const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
+    const getExt = (name: string) => {
+        const idx = name.lastIndexOf('.');
+        return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
+    };
+
+    useEffect(() => {
+        if (!window.runtime?.OnFileDrop) return;
+
+        window.runtime.OnFileDrop(async (_x: number, _y: number, paths: string[]) => {
+            if (!paths || paths.length === 0) return;
+            if (!window.go?.main?.App?.ExpandDroppedPaths) return;
+
+            try {
+                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                setPreviewResult(result as ExpandDroppedPathsResult);
+                onPathsExpanded?.(result as ExpandDroppedPathsResult);
+            } catch (e) {
+                console.error(e);
+            }
+        }, true);
+
+        return () => {
+            window.runtime?.OnFileDropOff?.();
+        };
+    }, [onPathsExpanded]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -213,6 +293,15 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const files = Array.from(e.dataTransfer.files);
             onFilesSelected(files);
+            setPreviewResult({
+                has_directory: false,
+                files: files.map(f => ({
+                    input_path: f.name,
+                    source_root: '',
+                    relative_path: f.name,
+                    is_from_dir_drop: false,
+                }))
+            });
         }
     };
 
@@ -224,13 +313,51 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.target.files && e.target.files.length > 0) {
             const files = Array.from(e.target.files);
             onFilesSelected(files);
+            setPreviewResult({
+                has_directory: false,
+                files: files.map(f => ({
+                    input_path: f.name,
+                    source_root: '',
+                    relative_path: f.name,
+                    is_from_dir_drop: false,
+                }))
+            });
         }
     };
+
+    const folderGroups = (() => {
+        const files = previewResult?.files || [];
+        const groups = new Map<string, DroppedFile[]>();
+        for (const f of files) {
+            if (!f.is_from_dir_drop) continue;
+            const key = f.source_root || 'Folder';
+            const arr = groups.get(key) || [];
+            arr.push(f);
+            groups.set(key, arr);
+        }
+        return Array.from(groups.entries())
+            .map(([root, arr]) => ({
+                root,
+                name: basename(root),
+                files: arr.slice().sort((a, b) => a.relative_path.localeCompare(b.relative_path))
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    })();
+
+    const looseFiles = (() => {
+        const files = previewResult?.files || [];
+        return files
+            .filter(f => !f.is_from_dir_drop)
+            .slice()
+            .sort((a, b) => basename(a.input_path).localeCompare(basename(b.input_path)));
+    })();
+
+    const hasPreview = (previewResult?.files?.length || 0) > 0;
 
     return (
         <div 
             className={`
-                h-full w-full rounded-3xl border-2 border-dashed flex flex-col items-center justify-center p-12 transition-all duration-300 cursor-pointer group relative overflow-hidden z-0
+                h-full w-full rounded-3xl border-2 border-dashed flex flex-col items-center justify-center p-8 transition-all duration-300 cursor-pointer group relative overflow-hidden z-0
                 ${isDragOver 
                     ? 'border-[#007AFF] bg-blue-50/50 dark:bg-blue-500/10 scale-[0.99]' 
                     : 'border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] hover:border-[#007AFF]/50 dark:hover:border-[#007AFF]/50 hover:bg-gray-50/50 dark:hover:bg-white/[0.02] shadow-sm hover:shadow-md'
@@ -240,6 +367,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={handleClick}
+            style={{ ['--wails-drop-target' as any]: 'drop' }}
         >
             <input 
                 ref={inputRef}
@@ -250,23 +378,111 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 onChange={handleInputChange} 
             />
 
-            {/* Icon Wrapper */}
-            <div className={`w-20 h-20 bg-blue-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6 transition-all duration-300 text-[#007AFF] shadow-inner relative z-10 ${isDragOver ? 'scale-110 rotate-12 bg-blue-100 dark:bg-white/10' : 'group-hover:scale-110 group-hover:rotate-3'}`}>
-                <Icon name="Upload" size={32} />
-            </div>
-            
-            {/* Text Content - Ensure High Z-Index and Contrast */}
-            <p className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center pointer-events-none relative z-10">
-                {title}
-            </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10">
-                {subTitle}
-            </p>
-            
-            {/* Format Badge */}
-            <div className="mt-8 px-4 py-2 bg-gray-100 dark:bg-white/5 rounded-full text-xs font-mono text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-white/5 pointer-events-none relative z-10">
-                {acceptedFormats.replace(/image\//g, '').toUpperCase()}
-            </div>
+            {hasPreview ? (
+                <div className="w-full h-full relative z-10 flex flex-col">
+                    <div className="flex-1 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col min-h-0">
+                        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0">
+                            <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                已添加 {previewResult?.files.length} 项
+                            </div>
+                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400">
+                                {acceptedFormats.replace(/image\//g, '').toUpperCase()}
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto no-scrollbar">
+                            {folderGroups.map(group => {
+                                const open = expandedFolders[group.root] ?? true;
+                                return (
+                                    <div key={group.root} className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setExpandedFolders(prev => ({ ...prev, [group.root]: !(prev[group.root] ?? true) }));
+                                            }}
+                                            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                                        >
+                                            <div className={`transition-transform duration-300 ${open ? 'rotate-0' : '-rotate-90'}`}>
+                                                <Icon name="ChevronDown" size={16} className="text-gray-400" />
+                                            </div>
+                                            <div className="flex-1 min-w-0 text-left">
+                                                <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{group.name}</div>
+                                                <div className="text-[11px] text-gray-500 dark:text-gray-400">{group.files.length} 张</div>
+                                            </div>
+                                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10">
+                                                文件夹
+                                            </div>
+                                        </button>
+
+                                        <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                            <div className="pb-2">
+                                                {group.files.map((f) => {
+                                                    const name = f.relative_path || basename(f.input_path);
+                                                    const ext = getExt(name);
+                                                    return (
+                                                        <div key={f.input_path} className="px-9 py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+                                                            <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
+                                                            <div className="flex-1 min-w-0 truncate">{name}</div>
+                                                            {ext && (
+                                                                <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10 shrink-0">
+                                                                    {ext}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {looseFiles.map((f) => {
+                                const name = basename(f.input_path);
+                                const ext = getExt(name);
+                                return (
+                                    <div key={f.input_path} className="px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                        <div className="w-2 h-2 rounded-full bg-[#5856D6]/60 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</div>
+                                            <div className="text-[11px] text-gray-500 dark:text-gray-400">文件</div>
+                                        </div>
+                                        {ext && (
+                                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10 shrink-0">
+                                                {ext}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            handleClick();
+                        }}
+                        className="mt-4 text-xs text-gray-400 hover:text-[#007AFF] transition-colors text-center"
+                    >
+                        点击添加更多文件...
+                    </button>
+                </div>
+            ) : (
+                <>
+                    <div className={`w-16 h-16 bg-blue-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-5 transition-all duration-300 text-[#007AFF] shadow-inner relative z-10 ${isDragOver ? 'scale-110 rotate-12 bg-blue-100 dark:bg-white/10' : 'group-hover:scale-110 group-hover:rotate-3'}`}>
+                        <Icon name="Upload" size={32} />
+                    </div>
+                    
+                    <p className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center pointer-events-none relative z-10">
+                        {title}
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10">
+                        {subTitle}
+                    </p>
+                </>
+            )}
 
             {/* Animated Overlay for Drag State */}
             {isDragOver && (
