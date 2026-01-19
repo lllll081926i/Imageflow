@@ -28,7 +28,11 @@ export function GeneratePDF(arg1:models.PDFRequest):Promise<models.PDFResult>;
 
 export function GetInfo(arg1:models.InfoRequest):Promise<models.InfoResult>;
 
+export function GetSettings():Promise<models.AppSettings>;
+
 export function Ping():Promise<string>;
+
+export function SaveSettings(arg1:models.AppSettings):Promise<models.AppSettings>;
 
 export function SelectOutputDirectory():Promise<string>;
 

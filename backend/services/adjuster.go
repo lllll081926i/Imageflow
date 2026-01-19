@@ -8,12 +8,12 @@ import (
 
 // AdjusterService handles image adjustments
 type AdjusterService struct {
-	executor *utils.PythonExecutor
+	executor utils.PythonRunner
 	logger   *utils.Logger
 }
 
 // NewAdjusterService creates a new adjuster service
-func NewAdjusterService(executor *utils.PythonExecutor, logger *utils.Logger) *AdjusterService {
+func NewAdjusterService(executor utils.PythonRunner, logger *utils.Logger) *AdjusterService {
 	return &AdjusterService{
 		executor: executor,
 		logger:   logger,
@@ -44,27 +44,10 @@ func (s *AdjusterService) Adjust(req models.AdjustRequest) (models.AdjustResult,
 func (s *AdjusterService) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResult, error) {
 	s.logger.Info("Starting batch adjustment for %d images", len(requests))
 
-	results := make([]models.AdjustResult, len(requests))
-	resultChan := make(chan struct {
-		index  int
-		result models.AdjustResult
-	}, len(requests))
-
-	// Process images concurrently
-	for i, req := range requests {
-		go func(idx int, r models.AdjustRequest) {
-			result, _ := s.Adjust(r)
-			resultChan <- struct {
-				index  int
-				result models.AdjustResult
-			}{idx, result}
-		}(i, req)
-	}
-
-	// Collect results
-	for i := 0; i < len(requests); i++ {
-		res := <-resultChan
-		results[res.index] = res.result
+	results := make([]models.AdjustResult, 0, len(requests))
+	for _, req := range requests {
+		res, _ := s.Adjust(req)
+		results = append(results, res)
 	}
 
 	s.logger.Info("Batch adjustment completed")

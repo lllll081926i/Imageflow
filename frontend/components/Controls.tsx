@@ -77,16 +77,18 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
             {label !== undefined && (
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex justify-between items-center">
                     <span>{label}</span>
-                    <div className="relative">
-                        <input 
-                            type="number" 
-                            value={value}
-                            min={min}
-                            max={max}
-                            onChange={handleInputChange}
-                            className="w-12 text-center text-[#007AFF] font-mono text-xs bg-[#007AFF]/10 px-1 py-0.5 rounded outline-none focus:ring-1 focus:ring-[#007AFF] appearance-none m-0"
-                        />
-                        <span className="text-[#007AFF] font-mono text-xs ml-1">{unit}</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-[#007AFF]">{Math.round(percent)}%</span>
+                        <div className="relative">
+                            <input 
+                                type="number" 
+                                value={value}
+                                min={min}
+                                max={max}
+                                onChange={handleInputChange}
+                                className="w-12 text-center text-gray-600 dark:text-gray-300 font-mono text-xs bg-gray-100 dark:bg-white/10 px-1 py-0.5 rounded outline-none focus:ring-1 focus:ring-[#007AFF] appearance-none m-0 border border-transparent focus:border-[#007AFF]"
+                            />
+                        </div>
                     </div>
                 </label>
             )}
@@ -148,19 +150,19 @@ export const CustomSelect: React.FC<{ label?: string; options: string[]; value: 
 
     useEffect(() => {
         if (!isOpen) return;
+        const controller = new AbortController();
         const handleClose = () => setIsOpen(false);
-        window.addEventListener('scroll', handleClose, true);
-        window.addEventListener('resize', handleClose);
-        window.addEventListener('click', (e) => {
+        const handleWindowClick = (e: MouseEvent) => {
             if (buttonRef.current && !buttonRef.current.contains(e.target as Node)) {
                 setIsOpen(false);
             }
-        });
+        };
+        window.addEventListener('scroll', handleClose, { capture: true, signal: controller.signal });
+        window.addEventListener('resize', handleClose, { signal: controller.signal });
+        window.addEventListener('click', handleWindowClick, { signal: controller.signal });
 
         return () => {
-            window.removeEventListener('scroll', handleClose, true);
-            window.removeEventListener('resize', handleClose);
-            window.removeEventListener('click', handleClose); 
+            controller.abort();
         };
     }, [isOpen]);
 
@@ -293,7 +295,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const files = Array.from(e.dataTransfer.files);
             onFilesSelected(files);
-            setPreviewResult({
+            const result = {
                 has_directory: false,
                 files: files.map(f => ({
                     input_path: f.name,
@@ -301,11 +303,38 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     relative_path: f.name,
                     is_from_dir_drop: false,
                 }))
-            });
+            };
+            setPreviewResult(result);
+            onPathsExpanded?.(result);
         }
     };
 
-    const handleClick = () => {
+    const handleClick = async () => {
+        try {
+            if (window.runtime?.OpenFileDialog) {
+                const res = await window.runtime.OpenFileDialog({
+                    title: '选择文件',
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: allowMultiple,
+                    filters: [{
+                        DisplayName: "Images",
+                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.heic;*.heif"
+                    }]
+                } as any);
+
+                const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
+                if (paths.length === 0) return;
+                if (!window.go?.main?.App?.ExpandDroppedPaths) return;
+
+                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                setPreviewResult(result as ExpandDroppedPathsResult);
+                onPathsExpanded?.(result as ExpandDroppedPathsResult);
+                return;
+            }
+        } catch (e) {
+            console.error(e);
+        }
         inputRef.current?.click();
     };
 
@@ -313,7 +342,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.target.files && e.target.files.length > 0) {
             const files = Array.from(e.target.files);
             onFilesSelected(files);
-            setPreviewResult({
+            const result = {
                 has_directory: false,
                 files: files.map(f => ({
                     input_path: f.name,
@@ -321,7 +350,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     relative_path: f.name,
                     is_from_dir_drop: false,
                 }))
-            });
+            };
+            setPreviewResult(result);
+            onPathsExpanded?.(result);
         }
     };
 
@@ -357,7 +388,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     return (
         <div 
             className={`
-                h-full w-full rounded-3xl border-2 border-dashed flex flex-col items-center justify-center p-8 transition-all duration-300 cursor-pointer group relative overflow-hidden z-0
+                h-full w-full rounded-3xl border-2 border-dashed flex flex-col transition-all duration-300 relative overflow-hidden z-0
+                ${hasPreview ? 'items-stretch justify-start p-4 cursor-default' : 'items-center justify-center p-8 cursor-pointer group'}
                 ${isDragOver 
                     ? 'border-[#007AFF] bg-blue-50/50 dark:bg-blue-500/10 scale-[0.99]' 
                     : 'border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] hover:border-[#007AFF]/50 dark:hover:border-[#007AFF]/50 hover:bg-gray-50/50 dark:hover:bg-white/[0.02] shadow-sm hover:shadow-md'
@@ -366,7 +398,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={handleClick}
+            onClick={hasPreview ? undefined : handleClick}
             style={{ ['--wails-drop-target' as any]: 'drop' }}
         >
             <input 
@@ -380,8 +412,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
             {hasPreview ? (
                 <div className="w-full h-full relative z-10 flex flex-col">
-                    <div className="flex-1 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col min-h-0">
-                        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0">
+                    <div className="flex-1 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col h-full min-h-0 relative">
+                        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0 bg-gray-50/50 dark:bg-white/5 backdrop-blur-sm z-10">
                             <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
                                 已添加 {previewResult?.files.length} 项
                             </div>
@@ -390,8 +422,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                             </div>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto no-scrollbar">
-                            {folderGroups.map(group => {
+                        <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
+                            {/* Scrollable Content */}
+                            <div className="absolute inset-0 w-full">
+                                {folderGroups.map(group => {
                                 const open = expandedFolders[group.root] ?? true;
                                 return (
                                     <div key={group.root} className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
@@ -415,7 +449,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                             </div>
                                         </button>
 
-                                        <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                        <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[20000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                                             <div className="pb-2">
                                                 {group.files.map((f) => {
                                                     const name = f.relative_path || basename(f.input_path);
@@ -456,6 +490,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                     </div>
                                 );
                             })}
+                            </div>
                         </div>
                     </div>
                     

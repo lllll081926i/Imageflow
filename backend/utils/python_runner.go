@@ -1,0 +1,11 @@
+package utils
+
+import "time"
+
+type PythonRunner interface {
+	SetTimeout(timeout time.Duration)
+	Execute(scriptName string, input interface{}) ([]byte, error)
+	ExecuteAndParse(scriptName string, input interface{}, result interface{}) error
+	StopWorker()
+}
+

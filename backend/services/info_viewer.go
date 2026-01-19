@@ -8,12 +8,12 @@ import (
 
 // InfoViewerService handles image information retrieval
 type InfoViewerService struct {
-	executor *utils.PythonExecutor
+	executor utils.PythonRunner
 	logger   *utils.Logger
 }
 
 // NewInfoViewerService creates a new info viewer service
-func NewInfoViewerService(executor *utils.PythonExecutor, logger *utils.Logger) *InfoViewerService {
+func NewInfoViewerService(executor utils.PythonRunner, logger *utils.Logger) *InfoViewerService {
 	return &InfoViewerService{
 		executor: executor,
 		logger:   logger,

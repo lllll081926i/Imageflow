@@ -2,13 +2,19 @@ package models
 
 // ConvertRequest represents a request to convert an image format
 type ConvertRequest struct {
-	InputPath  string `json:"input_path"`
-	OutputPath string `json:"output_path"`
-	Format     string `json:"format"`
-	Quality    int    `json:"quality"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	MaintainAR bool   `json:"maintain_ar"`
+	InputPath     string `json:"input_path"`
+	OutputPath    string `json:"output_path"`
+	Format        string `json:"format"`
+	Quality       int    `json:"quality"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	MaintainAR    bool   `json:"maintain_ar"`
+	ResizeMode    string `json:"resize_mode"`    // original, percent, fixed, long_edge
+	ScalePercent  int    `json:"scale_percent"`  // used when resize_mode=percent
+	LongEdge      int    `json:"long_edge"`      // used when resize_mode=long_edge
+	KeepMetadata  bool   `json:"keep_metadata"`  // preserve EXIF/ICC when possible
+	ColorSpace    string `json:"color_space"`    // keep, sRGB, P3, CMYK
+	DPI           int    `json:"dpi"`            // embed dpi when supported
 }
 
 // ConvertResult represents the result of an image conversion

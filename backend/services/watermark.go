@@ -8,12 +8,12 @@ import (
 
 // WatermarkService handles watermark application
 type WatermarkService struct {
-	executor *utils.PythonExecutor
+	executor utils.PythonRunner
 	logger   *utils.Logger
 }
 
 // NewWatermarkService creates a new watermark service
-func NewWatermarkService(executor *utils.PythonExecutor, logger *utils.Logger) *WatermarkService {
+func NewWatermarkService(executor utils.PythonRunner, logger *utils.Logger) *WatermarkService {
 	return &WatermarkService{
 		executor: executor,
 		logger:   logger,
@@ -24,8 +24,43 @@ func NewWatermarkService(executor *utils.PythonExecutor, logger *utils.Logger) *
 func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult, error) {
 	s.logger.Info("Adding watermark to image: %s -> %s (type: %s)", req.InputPath, req.OutputPath, req.WatermarkType)
 
+	position := req.Position
+	if position == "tl" {
+		position = "top-left"
+	} else if position == "tc" {
+		position = "top-center"
+	} else if position == "tr" {
+		position = "top-right"
+	} else if position == "cl" {
+		position = "center-left"
+	} else if position == "c" {
+		position = "center"
+	} else if position == "cr" {
+		position = "center-right"
+	} else if position == "bl" {
+		position = "bottom-left"
+	} else if position == "bc" {
+		position = "bottom-center"
+	} else if position == "br" {
+		position = "bottom-right"
+	}
+
+	payload := map[string]interface{}{
+		"type":            req.WatermarkType,
+		"input_path":      req.InputPath,
+		"output_path":     req.OutputPath,
+		"text":            req.Text,
+		"watermark_path":  req.ImagePath,
+		"position":        position,
+		"opacity":         req.Opacity,
+		"watermark_scale": req.Scale,
+		"font_size":       req.FontSize,
+		"font_color":      req.FontColor,
+		"rotation":        req.Rotation,
+	}
+
 	var result models.WatermarkResult
-	err := s.executor.ExecuteAndParse("watermark.py", req, &result)
+	err := s.executor.ExecuteAndParse("watermark.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Watermark application failed: %v", err)
 		return models.WatermarkResult{Success: false, Error: err.Error()}, err
@@ -44,27 +79,10 @@ func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.Wat
 func (s *WatermarkService) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.WatermarkResult, error) {
 	s.logger.Info("Starting batch watermark application for %d images", len(requests))
 
-	results := make([]models.WatermarkResult, len(requests))
-	resultChan := make(chan struct {
-		index  int
-		result models.WatermarkResult
-	}, len(requests))
-
-	// Process images concurrently
-	for i, req := range requests {
-		go func(idx int, r models.WatermarkRequest) {
-			result, _ := s.AddWatermark(r)
-			resultChan <- struct {
-				index  int
-				result models.WatermarkResult
-			}{idx, result}
-		}(i, req)
-	}
-
-	// Collect results
-	for i := 0; i < len(requests); i++ {
-		res := <-resultChan
-		results[res.index] = res.result
+	results := make([]models.WatermarkResult, 0, len(requests))
+	for _, req := range requests {
+		res, _ := s.AddWatermark(req)
+		results = append(results, res)
 	}
 
 	s.logger.Info("Batch watermark application completed")

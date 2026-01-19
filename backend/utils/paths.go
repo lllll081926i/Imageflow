@@ -11,6 +11,24 @@ import (
 	"github.com/imageflow/backend/models"
 )
 
+var supportedExtensions = map[string]bool{
+	".jpg":  true,
+	".jpeg": true,
+	".png":  true,
+	".webp": true,
+	".gif":  true,
+	".bmp":  true,
+	".tiff": true,
+	".tif":  true,
+	".heic": true,
+	".heif": true,
+}
+
+func isImageFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return supportedExtensions[ext]
+}
+
 func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 	var result models.ExpandDroppedPathsResult
 	var files []models.DroppedFile
@@ -26,12 +44,14 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 		}
 
 		if !info.IsDir() {
-			files = append(files, models.DroppedFile{
-				InputPath:     p,
-				SourceRoot:    filepath.Dir(p),
-				RelativePath:  filepath.Base(p),
-				IsFromDirDrop: false,
-			})
+			if isImageFile(p) {
+				files = append(files, models.DroppedFile{
+					InputPath:     p,
+					SourceRoot:    filepath.Dir(p),
+					RelativePath:  filepath.Base(p),
+					IsFromDirDrop: false,
+				})
+			}
 			continue
 		}
 
@@ -43,6 +63,10 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 				return walkErr
 			}
 			if d.IsDir() {
+				return nil
+			}
+
+			if !isImageFile(path) {
 				return nil
 			}
 

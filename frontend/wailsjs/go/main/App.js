@@ -54,8 +54,16 @@ export function GetInfo(arg1) {
   return window['go']['main']['App']['GetInfo'](arg1);
 }
 
+export function GetSettings() {
+  return window['go']['main']['App']['GetSettings']();
+}
+
 export function Ping() {
   return window['go']['main']['App']['Ping']();
+}
+
+export function SaveSettings(arg1) {
+  return window['go']['main']['App']['SaveSettings'](arg1);
 }
 
 export function SelectOutputDirectory() {

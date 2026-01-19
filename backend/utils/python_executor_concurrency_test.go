@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,6 +24,7 @@ func TestPythonExecutor_ConcurrentExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create executor: %v", err)
 	}
+	defer executor.StopWorker()
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 32)
@@ -47,8 +49,23 @@ func TestPythonExecutor_ConcurrentExecute(t *testing.T) {
 	wg.Wait()
 	close(errCh)
 
+	var gotAny bool
 	for e := range errCh {
-		t.Fatalf("unexpected execution error: %v", e)
+		gotAny = true
+		msg := e.Error()
+		bad := []string{
+			"__conda_tmp_",
+			"used by another process",
+			"exit status 3",
+			"conda.cli.main_run",
+		}
+		for _, b := range bad {
+			if strings.Contains(msg, b) {
+				t.Fatalf("unexpected concurrency-related error: %v", e)
+			}
+		}
+	}
+	if !gotAny {
+		t.Fatalf("expected errors for nonexistent input, got none")
 	}
 }
-

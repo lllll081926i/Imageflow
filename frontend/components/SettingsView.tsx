@@ -1,0 +1,131 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import Icon from './Icon';
+
+type AppSettings = {
+    max_concurrency: number;
+};
+
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+const SettingsView: React.FC = () => {
+    const [settings, setSettings] = useState<AppSettings>({ max_concurrency: 8 });
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState<string>('');
+
+    const maxConcurrency = useMemo(() => clamp(settings.max_concurrency || 8, 1, 32), [settings.max_concurrency]);
+
+    useEffect(() => {
+        const run = async () => {
+            try {
+                const res = await window.go.main.App.GetSettings();
+                if (res && typeof res.max_concurrency === 'number') {
+                    setSettings({ max_concurrency: clamp(res.max_concurrency, 1, 32) });
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        run();
+    }, []);
+
+    const save = async (next: AppSettings) => {
+        setSaving(true);
+        setMessage('');
+        try {
+            const saved = await window.go.main.App.SaveSettings(next);
+            if (saved && typeof saved.max_concurrency === 'number') {
+                setSettings({ max_concurrency: clamp(saved.max_concurrency, 1, 32) });
+            } else {
+                setSettings({ max_concurrency: clamp(next.max_concurrency, 1, 32) });
+            }
+            setMessage('已保存');
+            setTimeout(() => setMessage(''), 1500);
+        } catch (e: any) {
+            console.error(e);
+            setMessage(e?.message ? `保存失败：${e.message}` : '保存失败');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="h-full flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-white dark:bg-[#2C2C2E] border border-gray-200 dark:border-white/10 shadow-sm flex items-center justify-center">
+                        <Icon name="Settings" size={20} className="text-[#007AFF]" />
+                    </div>
+                    <div>
+                        <div className="text-xl font-semibold text-gray-900 dark:text-white">全局设置</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">影响批量处理性能与稳定性</div>
+                    </div>
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {message && <span className={message.includes('失败') ? 'text-red-500' : 'text-[#007AFF]'}>{message}</span>}
+                </div>
+            </div>
+
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
+                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-6 flex flex-col min-h-0">
+                    <div className="flex items-center justify-between mb-5">
+                        <div>
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">最大并发</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">默认 8，最高 32。调高会更快但更吃 CPU/内存</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                min={1}
+                                max={32}
+                                value={maxConcurrency}
+                                onChange={(e) => setSettings(s => ({ ...s, max_concurrency: clamp(Number(e.target.value || 1), 1, 32) }))}
+                                className="w-16 text-center text-gray-700 dark:text-gray-200 font-mono text-sm bg-gray-100 dark:bg-white/10 px-2 py-1 rounded-lg outline-none focus:ring-2 focus:ring-[#007AFF]/30 border border-transparent focus:border-[#007AFF]"
+                            />
+                            <button
+                                disabled={saving}
+                                onClick={() => save({ max_concurrency: maxConcurrency })}
+                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${saving ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
+                            >
+                                {saving ? '保存中...' : '保存'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="relative h-10 w-full flex items-center">
+                        <div className="absolute w-full h-2 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-[#007AFF]" style={{ width: `${((maxConcurrency - 1) / 31) * 100}%` }} />
+                        </div>
+                        <div
+                            className="absolute h-6 w-6 bg-white dark:bg-[#1C1C1E] shadow-[0_2px_4px_rgba(0,0,0,0.18)] border border-gray-200 dark:border-white/10 rounded-full flex items-center justify-center pointer-events-none z-20"
+                            style={{ left: `${((maxConcurrency - 1) / 31) * 100}%`, transform: 'translateX(-50%)' }}
+                        >
+                            <div className="w-2 h-2 bg-[#007AFF] rounded-full" />
+                        </div>
+                        <input
+                            type="range"
+                            min={1}
+                            max={32}
+                            step={1}
+                            value={maxConcurrency}
+                            onChange={(e) => setSettings(s => ({ ...s, max_concurrency: clamp(Number(e.target.value), 1, 32) }))}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
+                        />
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-6 flex flex-col min-h-0">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-white mb-2">说明</div>
+                    <div className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                        并发会创建多个 Python Worker 以并行处理任务。格式转换内部仍有单任务超时保护，避免单个文件拖垮整批处理。
+                    </div>
+                    <div className="mt-5 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                        建议：普通电脑保持 8；高性能电脑可调到 16 或 32。若出现系统卡顿或失败率上升，降低并发。
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default SettingsView;
+

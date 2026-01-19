@@ -8,12 +8,12 @@ import (
 
 // ConverterService handles image format conversion
 type ConverterService struct {
-	executor *utils.PythonExecutor
+	executor utils.PythonRunner
 	logger   *utils.Logger
 }
 
 // NewConverterService creates a new converter service
-func NewConverterService(executor *utils.PythonExecutor, logger *utils.Logger) *ConverterService {
+func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *ConverterService {
 	return &ConverterService{
 		executor: executor,
 		logger:   logger,
@@ -44,27 +44,10 @@ func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertRes
 func (s *ConverterService) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertResult, error) {
 	s.logger.Info("Starting batch conversion of %d images", len(requests))
 
-	results := make([]models.ConvertResult, len(requests))
-	resultChan := make(chan struct {
-		index  int
-		result models.ConvertResult
-	}, len(requests))
-
-	// Process images concurrently
-	for i, req := range requests {
-		go func(idx int, r models.ConvertRequest) {
-			result, _ := s.Convert(r)
-			resultChan <- struct {
-				index  int
-				result models.ConvertResult
-			}{idx, result}
-		}(i, req)
-	}
-
-	// Collect results
-	for i := 0; i < len(requests); i++ {
-		res := <-resultChan
-		results[res.index] = res.result
+	results := make([]models.ConvertResult, 0, len(requests))
+	for _, req := range requests {
+		res, _ := s.Convert(req)
+		results = append(results, res)
 	}
 
 	s.logger.Info("Batch conversion completed")

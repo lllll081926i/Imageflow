@@ -23,13 +23,51 @@ type ExpandDroppedPathsResult = {
 
 // --- Feature Settings Panels (Memoized) ---
 
-const ConverterSettings = memo(() => {
-    const [format, setFormat] = useState('JPG');
-    const [quality, setQuality] = useState(90);
-    const [resizeMode, setResizeMode] = useState('原图尺寸');
-    const [keepMetadata, setKeepMetadata] = useState(true);
-    const [colorSpace, setColorSpace] = useState('保持原样');
-    const [dpi, setDpi] = useState(72);
+type ConverterSettingsProps = {
+    format: string;
+    setFormat: (v: string) => void;
+    quality: number;
+    setQuality: (v: number) => void;
+    resizeMode: string;
+    setResizeMode: (v: string) => void;
+    scalePercent: number;
+    setScalePercent: (v: number) => void;
+    fixedWidth: number;
+    setFixedWidth: (v: number) => void;
+    fixedHeight: number;
+    setFixedHeight: (v: number) => void;
+    longEdge: number;
+    setLongEdge: (v: number) => void;
+    keepMetadata: boolean;
+    setKeepMetadata: (v: boolean) => void;
+    colorSpace: string;
+    setColorSpace: (v: string) => void;
+    dpi: number;
+    setDpi: (v: number) => void;
+};
+
+const ConverterSettings = memo(({
+    format,
+    setFormat,
+    quality,
+    setQuality,
+    resizeMode,
+    setResizeMode,
+    scalePercent,
+    setScalePercent,
+    fixedWidth,
+    setFixedWidth,
+    fixedHeight,
+    setFixedHeight,
+    longEdge,
+    setLongEdge,
+    keepMetadata,
+    setKeepMetadata,
+    colorSpace,
+    setColorSpace,
+    dpi,
+    setDpi,
+}: ConverterSettingsProps) => {
 
     return (
         <div className="space-y-4">
@@ -60,19 +98,29 @@ const ConverterSettings = memo(() => {
             </div>
 
             {resizeMode === '按比例' && (
-                 <StyledSlider label="缩放比例" value={75} min={10} max={200} unit="%" onChange={() => {}} />
+                 <StyledSlider label="缩放比例" value={scalePercent} min={10} max={200} unit="%" onChange={setScalePercent} />
             )}
 
             {resizeMode === '固定宽高' && (
                 <div className="flex gap-3 animate-enter">
                     <div className="flex-1 space-y-1">
                         <label className="text-xs text-gray-500">宽度 (px)</label>
-                        <input type="number" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1920" />
+                        <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1920" />
                     </div>
                     <div className="flex-1 space-y-1">
                         <label className="text-xs text-gray-500">高度 (px)</label>
-                        <input type="number" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1080" />
+                        <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1080" />
                     </div>
+                </div>
+            )}
+
+            {resizeMode === '最长边' && (
+                <div className="flex gap-3 animate-enter">
+                    <div className="flex-1 space-y-1">
+                        <label className="text-xs text-gray-500">最长边 (px)</label>
+                        <input type="number" value={longEdge || ''} onChange={e => setLongEdge(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="2048" />
+                    </div>
+                    <div className="flex-1" />
                 </div>
             )}
 
@@ -90,11 +138,27 @@ const ConverterSettings = memo(() => {
     );
 });
 
-const CompressorSettings = memo(() => {
-    const [mode, setMode] = useState('标准');
-    const [targetSize, setTargetSize] = useState(false);
-    const [stripMeta, setStripMeta] = useState(true);
-    const [engine, setEngine] = useState('MozJPEG');
+type CompressorSettingsProps = {
+    mode: string;
+    setMode: (v: string) => void;
+    targetSize: boolean;
+    setTargetSize: (v: boolean) => void;
+    stripMeta: boolean;
+    setStripMeta: (v: boolean) => void;
+    engine: string;
+    setEngine: (v: string) => void;
+};
+
+const CompressorSettings = memo(({
+    mode,
+    setMode,
+    targetSize,
+    setTargetSize,
+    stripMeta,
+    setStripMeta,
+    engine,
+    setEngine,
+}: CompressorSettingsProps) => {
     
     return (
         <div className="space-y-6">
@@ -429,10 +493,62 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
 
+    const [convFormat, setConvFormat] = useState('JPG');
+    const [convQuality, setConvQuality] = useState(90);
+    const [convResizeMode, setConvResizeMode] = useState('原图尺寸');
+    const [convScalePercent, setConvScalePercent] = useState(75);
+    const [convFixedWidth, setConvFixedWidth] = useState(0);
+    const [convFixedHeight, setConvFixedHeight] = useState(0);
+    const [convLongEdge, setConvLongEdge] = useState(2048);
+    const [convKeepMetadata, setConvKeepMetadata] = useState(true);
+    const [convColorSpace, setConvColorSpace] = useState('保持原样');
+    const [convDpi, setConvDpi] = useState(72);
+
+    const [compMode, setCompMode] = useState('标准');
+    const [compTargetSize, setCompTargetSize] = useState(false);
+    const [compStripMeta, setCompStripMeta] = useState(true);
+    const [compEngine, setCompEngine] = useState('MozJPEG (推荐)');
+
     const renderSettings = () => {
         switch(id) {
-            case 'converter': return <ConverterSettings />;
-            case 'compressor': return <CompressorSettings />;
+            case 'converter':
+                return (
+                    <ConverterSettings
+                        format={convFormat}
+                        setFormat={setConvFormat}
+                        quality={convQuality}
+                        setQuality={setConvQuality}
+                        resizeMode={convResizeMode}
+                        setResizeMode={setConvResizeMode}
+                        scalePercent={convScalePercent}
+                        setScalePercent={setConvScalePercent}
+                        fixedWidth={convFixedWidth}
+                        setFixedWidth={setConvFixedWidth}
+                        fixedHeight={convFixedHeight}
+                        setFixedHeight={setConvFixedHeight}
+                        longEdge={convLongEdge}
+                        setLongEdge={setConvLongEdge}
+                        keepMetadata={convKeepMetadata}
+                        setKeepMetadata={setConvKeepMetadata}
+                        colorSpace={convColorSpace}
+                        setColorSpace={setConvColorSpace}
+                        dpi={convDpi}
+                        setDpi={setConvDpi}
+                    />
+                );
+            case 'compressor':
+                return (
+                    <CompressorSettings
+                        mode={compMode}
+                        setMode={setCompMode}
+                        targetSize={compTargetSize}
+                        setTargetSize={setCompTargetSize}
+                        stripMeta={compStripMeta}
+                        setStripMeta={setCompStripMeta}
+                        engine={compEngine}
+                        setEngine={setCompEngine}
+                    />
+                );
             case 'watermark': return <WatermarkSettings />;
             case 'adjust': return <AdjustSettings />;
             case 'filter': return <FilterSettings />;
@@ -486,6 +602,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
         if (idx === -1) return `${normalized}.${ext}`;
         return `${normalized.slice(0, idx)}.${ext}`;
     };
+    const addSuffix = (p: string, suffix: string) => {
+        const normalized = p.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('.');
+        if (idx === -1) return `${normalized}${suffix}`;
+        return `${normalized.slice(0, idx)}${suffix}${normalized.slice(idx)}`;
+    };
 
     const handleStartProcessing = async () => {
         if (isProcessing) return;
@@ -501,7 +623,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
         }
 
         const outDir = effectiveOutputDir;
-        if (!outDir) {
+        if (id !== 'info' && !outDir) {
             setLastMessage('请选择输出目录');
             return;
         }
@@ -513,30 +635,51 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             let completed = 0;
 
             if (id === 'converter') {
-                const format = 'jpg'; // In real app, get from settings
-                const quality = 90;
+                const format = convFormat.toLowerCase();
+                const quality = convQuality;
+                const resizeModeMap: Record<string, string> = {
+                    '原图尺寸': 'original',
+                    '按比例': 'percent',
+                    '固定宽高': 'fixed',
+                    '最长边': 'long_edge',
+                };
+                const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
+                const color_space = convColorSpace === '保持原样' ? '' : convColorSpace;
 
-                // Process individually to show progress
-                for (const f of files) {
+                const buildReq = (f: DroppedFile) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const outRel = replaceExt(rel, format);
-                    const req = {
+                    return {
                         input_path: f.input_path,
                         output_path: joinPath(outDir, outRel),
                         format,
                         quality,
-                        width: 0,
-                        height: 0,
+                        width: resize_mode === 'fixed' ? convFixedWidth : 0,
+                        height: resize_mode === 'fixed' ? convFixedHeight : 0,
                         maintain_ar: true,
+                        resize_mode,
+                        scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
+                        long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
+                        keep_metadata: convKeepMetadata,
+                        color_space,
+                        dpi: convDpi,
                     };
-                    
+                };
+
+                const chunkSize = total >= 80 ? 20 : 1;
+                for (let i = 0; i < files.length; i += chunkSize) {
+                    const chunk = files.slice(i, i + chunkSize).map(buildReq);
                     try {
-                        await window.go.main.App.Convert(req);
+                        if (chunk.length === 1) {
+                            await window.go.main.App.Convert(chunk[0]);
+                        } else {
+                            await window.go.main.App.ConvertBatch(chunk);
+                        }
                     } catch (err) {
-                        console.error(`Failed to convert ${f.input_path}:`, err);
+                        console.error(err);
                     }
-                    
-                    completed++;
+
+                    completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
                 setLastMessage(`转换完成：${completed}/${total} 项`);
@@ -544,30 +687,177 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             }
 
             if (id === 'compressor') {
-                // Process individually to show progress
-                for (const f of files) {
+                const modeMap: Record<string, { mode: string; quality: number }> = {
+                    '无损': { mode: 'lossless', quality: 100 },
+                    '轻度': { mode: 'smart', quality: 90 },
+                    '标准': { mode: 'smart', quality: 80 },
+                    '强力': { mode: 'lossy', quality: 60 },
+                    '极限': { mode: 'lossy', quality: 40 },
+                };
+                const selected = modeMap[compMode] ?? modeMap['标准'];
+
+                const buildReq = (f: DroppedFile) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const req = {
+                    return {
                         input_path: f.input_path,
                         output_path: joinPath(outDir, rel),
-                        mode: 'smart',
-                        quality: 80,
+                        mode: selected.mode,
+                        quality: selected.quality,
                     };
+                };
 
+                const chunkSize = total >= 80 ? 20 : 1;
+                for (let i = 0; i < files.length; i += chunkSize) {
+                    const chunk = files.slice(i, i + chunkSize).map(buildReq);
                     try {
-                        await window.go.main.App.Compress(req);
+                        if (chunk.length === 1) {
+                            await window.go.main.App.Compress(chunk[0]);
+                        } else {
+                            await window.go.main.App.CompressBatch(chunk);
+                        }
                     } catch (err) {
-                        console.error(`Failed to compress ${f.input_path}:`, err);
+                        console.error(err);
                     }
 
-                    completed++;
+                    completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
                 setLastMessage(`压缩完成：${completed}/${total} 项`);
                 return;
             }
 
-            setLastMessage('该功能的实际处理链路尚未接入');
+            if (id === 'watermark') {
+                for (const f of files) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const outRel = addSuffix(rel, '_watermark');
+                    const req = {
+                        input_path: f.input_path,
+                        output_path: joinPath(outDir, outRel),
+                        watermark_type: 'text',
+                        text: '© ImageFlow',
+                        image_path: '',
+                        position: 'br',
+                        opacity: 0.85,
+                        scale: 0.2,
+                        font_size: 36,
+                        font_color: '#FFFFFF',
+                        rotation: 0,
+                    };
+                    try {
+                        await window.go.main.App.AddWatermark(req);
+                    } catch (err) {
+                        console.error(`Failed to watermark ${f.input_path}:`, err);
+                    }
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`水印完成：${completed}/${total} 项`);
+                return;
+            }
+
+            if (id === 'adjust') {
+                for (const f of files) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const outRel = addSuffix(rel, '_adjusted');
+                    const req = {
+                        input_path: f.input_path,
+                        output_path: joinPath(outDir, outRel),
+                        rotate: 0,
+                        flip_h: false,
+                        flip_v: false,
+                        brightness: 0,
+                        contrast: 0,
+                        saturation: 0,
+                        hue: 0,
+                    };
+                    try {
+                        await window.go.main.App.Adjust(req);
+                    } catch (err) {
+                        console.error(`Failed to adjust ${f.input_path}:`, err);
+                    }
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`调整完成：${completed}/${total} 项`);
+                return;
+            }
+
+            if (id === 'filter') {
+                for (const f of files) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const outRel = addSuffix(rel, '_filtered');
+                    const req = {
+                        input_path: f.input_path,
+                        output_path: joinPath(outDir, outRel),
+                        filter_type: 'grayscale',
+                        intensity: 1.0,
+                    };
+                    try {
+                        await window.go.main.App.ApplyFilter(req);
+                    } catch (err) {
+                        console.error(`Failed to filter ${f.input_path}:`, err);
+                    }
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`滤镜完成：${completed}/${total} 项`);
+                return;
+            }
+
+            if (id === 'pdf') {
+                const req = {
+                    image_paths: files.map(f => f.input_path),
+                    output_path: joinPath(outDir, 'output.pdf'),
+                    page_size: 'A4',
+                    layout: 'portrait',
+                    margin: 72,
+                    title: '',
+                    author: '',
+                };
+                await window.go.main.App.GeneratePDF(req);
+                setProgress(100);
+                setLastMessage(`PDF 已生成：${req.output_path}`);
+                return;
+            }
+
+            if (id === 'gif') {
+                for (const f of files) {
+                    const name = basename(f.input_path).replace(/\.[^.]+$/, '');
+                    const req = {
+                        input_path: f.input_path,
+                        output_dir: joinPath(outDir, `${name}_frames`),
+                        start_frame: 0,
+                        end_frame: 0,
+                        format: 'png',
+                    };
+                    try {
+                        await window.go.main.App.SplitGIF(req);
+                    } catch (err) {
+                        console.error(`Failed to split gif ${f.input_path}:`, err);
+                    }
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`GIF 拆分完成：${completed}/${total} 项`);
+                return;
+            }
+
+            if (id === 'info') {
+                for (const f of files) {
+                    try {
+                        const info = await window.go.main.App.GetInfo({ input_path: f.input_path });
+                        console.log('Info:', info);
+                    } catch (err) {
+                        console.error(`Failed to get info ${f.input_path}:`, err);
+                    }
+                    completed++;
+                    setProgress((completed / total) * 100);
+                }
+                setLastMessage(`信息读取完成：${completed}/${total} 项（详情见控制台）`);
+                return;
+            }
+
+            setLastMessage('该功能暂未接入');
         } catch (e: any) {
             console.error(e);
             setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
@@ -627,20 +917,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         {renderSettings()}
                     </div>
 
-                    {id !== 'info' && (
-                        <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
-                            {(isProcessing || progress > 0) && (
-                                <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
-                            )}
-                            <button 
-                                onClick={handleStartProcessing} 
-                                disabled={isProcessing}
-                                className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
-                            >
-                                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
-                            </button>
-                        </div>
-                    )}
+                    <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
+                        {(isProcessing || progress > 0) && (
+                            <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
+                        )}
+                        <button 
+                            onClick={handleStartProcessing} 
+                            disabled={isProcessing}
+                            className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                        >
+                            <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

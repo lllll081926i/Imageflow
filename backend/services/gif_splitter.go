@@ -8,12 +8,12 @@ import (
 
 // GIFSplitterService handles GIF splitting into frames
 type GIFSplitterService struct {
-	executor *utils.PythonExecutor
+	executor utils.PythonRunner
 	logger   *utils.Logger
 }
 
 // NewGIFSplitterService creates a new GIF splitter service
-func NewGIFSplitterService(executor *utils.PythonExecutor, logger *utils.Logger) *GIFSplitterService {
+func NewGIFSplitterService(executor utils.PythonRunner, logger *utils.Logger) *GIFSplitterService {
 	return &GIFSplitterService{
 		executor: executor,
 		logger:   logger,

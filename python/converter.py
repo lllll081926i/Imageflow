@@ -18,6 +18,7 @@ import sys
 import json
 import os
 import gc
+import io
 from pathlib import Path
 from PIL import Image
 import logging
@@ -44,7 +45,13 @@ class ImageConverter:
         logger.info("ImageConverter initialized")
     
     def convert(self, input_path, output_path, format_type, quality=95,
-                width=0, height=0, maintain_ar=True):
+                width=0, height=0, maintain_ar=True,
+                resize_mode='',
+                scale_percent=0,
+                long_edge=0,
+                keep_metadata=False,
+                color_space='',
+                dpi=0):
         """
         Convert an image to a different format.
         
@@ -92,6 +99,9 @@ class ImageConverter:
                 # Open input image
                 logger.info(f"Opening image: {input_path}")
                 img = Image.open(input_path)
+
+            exif_bytes = img.info.get('exif')
+            icc_profile = img.info.get('icc_profile')
             
             # Convert RGBA to RGB for formats that don't support transparency
             if format_type in ['jpg', 'jpeg', 'pdf'] and img.mode == 'RGBA':
@@ -100,12 +110,56 @@ class ImageConverter:
                 background.paste(img, mask=img.split()[3])  # Use alpha channel as mask
                 img = background
             
-            # Resize if dimensions are specified
-            if width > 0 or height > 0:
-                img = self._resize_image(img, width, height, maintain_ar)
+            if color_space:
+                cs = str(color_space).strip().lower()
+                if cs in ['srgb', 's-rgb']:
+                    try:
+                        from PIL import ImageCms  # type: ignore
+                        srgb = ImageCms.createProfile("sRGB")
+                        if icc_profile:
+                            src = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                            img = ImageCms.profileToProfile(img, src, srgb, outputMode='RGB')
+                        else:
+                            img = img.convert('RGB')
+                    except Exception:
+                        img = img.convert('RGB')
+                elif cs == 'cmyk':
+                    try:
+                        img = img.convert('CMYK')
+                    except Exception:
+                        pass
+
+            mode = str(resize_mode or '').strip().lower()
+            if mode == 'percent' and int(scale_percent or 0) > 0:
+                pct = max(1, int(scale_percent))
+                new_w = max(1, int(img.size[0] * pct / 100))
+                new_h = max(1, int(img.size[1] * pct / 100))
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            elif mode == 'long_edge' and int(long_edge or 0) > 0:
+                le = max(1, int(long_edge))
+                w0, h0 = img.size
+                if max(w0, h0) != le:
+                    scale = le / float(max(w0, h0))
+                    new_w = max(1, int(w0 * scale))
+                    new_h = max(1, int(h0 * scale))
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            elif mode == 'fixed':
+                if width > 0 or height > 0:
+                    img = self._resize_image(img, width, height, maintain_ar)
+            else:
+                if width > 0 or height > 0:
+                    img = self._resize_image(img, width, height, maintain_ar)
             
             # Prepare save parameters based on format
             save_params = self._get_save_params(format_type, quality)
+            if int(dpi or 0) > 0:
+                d = max(1, int(dpi))
+                save_params['dpi'] = (d, d)
+            if keep_metadata:
+                if exif_bytes:
+                    save_params['exif'] = exif_bytes
+                if icc_profile:
+                    save_params['icc_profile'] = icc_profile
             
             # Convert format names for Pillow
             pillow_format = self._convert_format_name(format_type)
@@ -263,6 +317,12 @@ def process(input_data):
         width = input_data.get('width', 0)
         height = input_data.get('height', 0)
         maintain_ar = input_data.get('maintain_ar', True)
+        resize_mode = input_data.get('resize_mode', '')
+        scale_percent = input_data.get('scale_percent', 0)
+        long_edge = input_data.get('long_edge', 0)
+        keep_metadata = input_data.get('keep_metadata', False)
+        color_space = input_data.get('color_space', '')
+        dpi = input_data.get('dpi', 0)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -280,7 +340,13 @@ def process(input_data):
             quality=quality,
             width=width,
             height=height,
-            maintain_ar=maintain_ar
+            maintain_ar=maintain_ar,
+            resize_mode=resize_mode,
+            scale_percent=scale_percent,
+            long_edge=long_edge,
+            keep_metadata=keep_metadata,
+            color_space=color_space,
+            dpi=dpi
         )
 
         return result
@@ -308,6 +374,12 @@ def main():
         width = input_data.get('width', 0)
         height = input_data.get('height', 0)
         maintain_ar = input_data.get('maintain_ar', True)
+        resize_mode = input_data.get('resize_mode', '')
+        scale_percent = input_data.get('scale_percent', 0)
+        long_edge = input_data.get('long_edge', 0)
+        keep_metadata = input_data.get('keep_metadata', False)
+        color_space = input_data.get('color_space', '')
+        dpi = input_data.get('dpi', 0)
         
         # Validate required parameters
         if not input_path or not output_path:
@@ -325,7 +397,13 @@ def main():
                 quality=quality,
                 width=width,
                 height=height,
-                maintain_ar=maintain_ar
+                maintain_ar=maintain_ar,
+                resize_mode=resize_mode,
+                scale_percent=scale_percent,
+                long_edge=long_edge,
+                keep_metadata=keep_metadata,
+                color_space=color_space,
+                dpi=dpi
             )
         
         # Write result to stdout

@@ -1,2 +1,0 @@
-cd backend
-wails dev

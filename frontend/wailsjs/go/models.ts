@@ -46,6 +46,18 @@ export namespace models {
 	        this.error = source["error"];
 	    }
 	}
+	export class AppSettings {
+	    max_concurrency: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.max_concurrency = source["max_concurrency"];
+	    }
+	}
 	export class CompressRequest {
 	    input_path: string;
 	    output_path: string;
@@ -96,6 +108,12 @@ export namespace models {
 	    width: number;
 	    height: number;
 	    maintain_ar: boolean;
+	    resize_mode: string;
+	    scale_percent: number;
+	    long_edge: number;
+	    keep_metadata: boolean;
+	    color_space: string;
+	    dpi: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConvertRequest(source);
@@ -110,6 +128,12 @@ export namespace models {
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.maintain_ar = source["maintain_ar"];
+	        this.resize_mode = source["resize_mode"];
+	        this.scale_percent = source["scale_percent"];
+	        this.long_edge = source["long_edge"];
+	        this.keep_metadata = source["keep_metadata"];
+	        this.color_space = source["color_space"];
+	        this.dpi = source["dpi"];
 	    }
 	}
 	export class ConvertResult {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/services"
@@ -15,8 +16,10 @@ type App struct {
 	ctx context.Context
 
 	// Utilities
-	logger   *utils.Logger
-	executor *utils.PythonExecutor
+	logger     *utils.Logger
+	executor   utils.PythonRunner
+	scriptsDir string
+	settings   models.AppSettings
 
 	// Services
 	converterService    *services.ConverterService
@@ -52,31 +55,53 @@ func (a *App) startup(ctx context.Context) {
 		a.logger.Error("Failed to resolve Python scripts directory: %v", err)
 		return
 	}
+	a.scriptsDir = scriptsDir
 	a.logger.Info("Python scripts directory: %s", scriptsDir)
 
-	// Initialize Python executor
-	executor, err := utils.NewPythonExecutor(scriptsDir, logger)
+	settings, err := utils.LoadSettings()
 	if err != nil {
-		a.logger.Error("Failed to initialize Python executor: %v", err)
-		return
+		a.logger.Error("Failed to load settings: %v", err)
+		settings = models.DefaultAppSettings()
 	}
-	a.executor = executor
+	a.settings = settings
+
+	var runner utils.PythonRunner
+	if settings.MaxConcurrency > 1 {
+		pool, err := utils.NewPythonExecutorPool(scriptsDir, logger, settings.MaxConcurrency)
+		if err != nil {
+			a.logger.Error("Failed to initialize Python executor pool: %v", err)
+			return
+		}
+		runner = pool
+	} else {
+		executor, err := utils.NewPythonExecutor(scriptsDir, logger)
+		if err != nil {
+			a.logger.Error("Failed to initialize Python executor: %v", err)
+			return
+		}
+		runner = executor
+	}
+	a.executor = runner
 
 	// Initialize all services
-	a.converterService = services.NewConverterService(executor, logger)
-	a.compressorService = services.NewCompressorService(executor, logger)
-	a.pdfGeneratorService = services.NewPDFGeneratorService(executor, logger)
-	a.gifSplitterService = services.NewGIFSplitterService(executor, logger)
-	a.infoViewerService = services.NewInfoViewerService(executor, logger)
-	a.watermarkService = services.NewWatermarkService(executor, logger)
-	a.adjusterService = services.NewAdjusterService(executor, logger)
-	a.filterService = services.NewFilterService(executor, logger)
+	a.converterService = services.NewConverterService(runner, logger)
+	a.compressorService = services.NewCompressorService(runner, logger)
+	a.pdfGeneratorService = services.NewPDFGeneratorService(runner, logger)
+	a.gifSplitterService = services.NewGIFSplitterService(runner, logger)
+	a.infoViewerService = services.NewInfoViewerService(runner, logger)
+	a.watermarkService = services.NewWatermarkService(runner, logger)
+	a.adjusterService = services.NewAdjusterService(runner, logger)
+	a.filterService = services.NewFilterService(runner, logger)
 
 	a.logger.Info("All services initialized successfully")
 }
 
 // shutdown is called when the app is closing
 func (a *App) shutdown(ctx context.Context) {
+	if a.executor != nil {
+		a.executor.StopWorker()
+	}
+
 	if a.logger != nil {
 		a.logger.Info("ImageFlow backend shutting down...")
 		a.logger.Close()
@@ -85,6 +110,52 @@ func (a *App) shutdown(ctx context.Context) {
 
 func (a *App) Ping() string {
 	return "pong"
+}
+
+func (a *App) GetSettings() (models.AppSettings, error) {
+	return a.settings, nil
+}
+
+func (a *App) SaveSettings(settings models.AppSettings) (models.AppSettings, error) {
+	saved, err := utils.SaveSettings(settings)
+	if err != nil {
+		return saved, err
+	}
+
+	if saved.MaxConcurrency != a.settings.MaxConcurrency {
+		var runner utils.PythonRunner
+		if saved.MaxConcurrency > 1 {
+			pool, err := utils.NewPythonExecutorPool(a.scriptsDir, a.logger, saved.MaxConcurrency)
+			if err != nil {
+				return a.settings, err
+			}
+			runner = pool
+		} else {
+			exec, err := utils.NewPythonExecutor(a.scriptsDir, a.logger)
+			if err != nil {
+				return a.settings, err
+			}
+			runner = exec
+		}
+
+		old := a.executor
+		a.executor = runner
+		a.converterService = services.NewConverterService(runner, a.logger)
+		a.compressorService = services.NewCompressorService(runner, a.logger)
+		a.pdfGeneratorService = services.NewPDFGeneratorService(runner, a.logger)
+		a.gifSplitterService = services.NewGIFSplitterService(runner, a.logger)
+		a.infoViewerService = services.NewInfoViewerService(runner, a.logger)
+		a.watermarkService = services.NewWatermarkService(runner, a.logger)
+		a.adjusterService = services.NewAdjusterService(runner, a.logger)
+		a.filterService = services.NewFilterService(runner, a.logger)
+
+		if old != nil {
+			old.StopWorker()
+		}
+	}
+
+	a.settings = saved
+	return saved, nil
 }
 
 func (a *App) SelectOutputDirectory() (string, error) {
@@ -104,7 +175,40 @@ func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 
 // ConvertBatch converts multiple images concurrently
 func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertResult, error) {
-	return a.converterService.ConvertBatch(requests)
+	n := len(requests)
+	results := make([]models.ConvertResult, n)
+	if n == 0 {
+		return results, nil
+	}
+	workers := a.settings.MaxConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > n {
+		workers = n
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				res, _ := a.converterService.Convert(requests[idx])
+				results[idx] = res
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return results, nil
 }
 
 // Compress compresses an image
@@ -114,7 +218,40 @@ func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error
 
 // CompressBatch compresses multiple images concurrently
 func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.CompressResult, error) {
-	return a.compressorService.CompressBatch(requests)
+	n := len(requests)
+	results := make([]models.CompressResult, n)
+	if n == 0 {
+		return results, nil
+	}
+	workers := a.settings.MaxConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > n {
+		workers = n
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				res, _ := a.compressorService.Compress(requests[idx])
+				results[idx] = res
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return results, nil
 }
 
 // GeneratePDF generates a PDF from multiple images
@@ -139,7 +276,40 @@ func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult,
 
 // AddWatermarkBatch adds watermarks to multiple images concurrently
 func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.WatermarkResult, error) {
-	return a.watermarkService.AddWatermarkBatch(requests)
+	n := len(requests)
+	results := make([]models.WatermarkResult, n)
+	if n == 0 {
+		return results, nil
+	}
+	workers := a.settings.MaxConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > n {
+		workers = n
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				res, _ := a.watermarkService.AddWatermark(requests[idx])
+				results[idx] = res
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return results, nil
 }
 
 // Adjust applies adjustments to an image
@@ -149,7 +319,40 @@ func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
 
 // AdjustBatch applies adjustments to multiple images concurrently
 func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResult, error) {
-	return a.adjusterService.AdjustBatch(requests)
+	n := len(requests)
+	results := make([]models.AdjustResult, n)
+	if n == 0 {
+		return results, nil
+	}
+	workers := a.settings.MaxConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > n {
+		workers = n
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				res, _ := a.adjusterService.Adjust(requests[idx])
+				results[idx] = res
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return results, nil
 }
 
 // ApplyFilter applies a filter to an image
@@ -159,5 +362,38 @@ func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error)
 
 // ApplyFilterBatch applies filters to multiple images concurrently
 func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.FilterResult, error) {
-	return a.filterService.ApplyFilterBatch(requests)
+	n := len(requests)
+	results := make([]models.FilterResult, n)
+	if n == 0 {
+		return results, nil
+	}
+	workers := a.settings.MaxConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > n {
+		workers = n
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				res, _ := a.filterService.ApplyFilter(requests[idx])
+				results[idx] = res
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	return results, nil
 }
