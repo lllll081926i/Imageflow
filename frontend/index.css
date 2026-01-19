@@ -1,7 +1,16 @@
 @import "tailwindcss";
 
+/* Force dark mode to work via class strategy in Tailwind v4 */
+@variant dark (&:where(.dark, .dark *));
+
 @layer base {
-  body { margin: 0; overflow: hidden; background-color: #F5F5F7; }
+  body { 
+    margin: 0; 
+    overflow: hidden; 
+    background-color: #F5F5F7; 
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }
 
 .glass {

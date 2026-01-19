@@ -68,6 +68,7 @@ func (e *PythonExecutor) startWorkerLocked() error {
 	args = append(args, scriptPath)
 
 	cmd := exec.Command(e.pythonCmd, args...)
+	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -293,6 +294,22 @@ func findPython() (string, []string, string, error) {
 		return "", nil, "", fmt.Errorf("IMAGEFLOW_PYTHON_EXE is set but not a Python 3 executable: %s", v)
 	}
 
+	if wd, err := os.Getwd(); err == nil {
+		dir := wd
+		for i := 0; i < 6; i++ {
+			for _, candidate := range venvPythonCandidates(dir) {
+				if isPython3Executable(candidate) {
+					return candidate, nil, candidate, nil
+				}
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
 		for _, candidate := range bundledPythonCandidates(exeDir) {
@@ -345,12 +362,27 @@ func findPython() (string, []string, string, error) {
 
 func isPython3Executable(pythonPath string) bool {
 	cmd := exec.Command(pythonPath, "--version")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
 
 	return bytes.Contains(output, []byte("Python 3"))
+}
+
+func venvPythonCandidates(baseDir string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{
+			filepath.Join(baseDir, ".venv", "Scripts", "python.exe"),
+			filepath.Join(baseDir, "python", ".venv", "Scripts", "python.exe"),
+		}
+	}
+	return []string{
+		filepath.Join(baseDir, ".venv", "bin", "python3"),
+		filepath.Join(baseDir, ".venv", "bin", "python"),
+		filepath.Join(baseDir, "python", ".venv", "bin", "python3"),
+		filepath.Join(baseDir, "python", ".venv", "bin", "python"),
+	}
 }
 
 func bundledPythonCandidates(baseDir string) []string {

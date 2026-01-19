@@ -28,6 +28,10 @@ type ConverterSettingsProps = {
     setFormat: (v: string) => void;
     quality: number;
     setQuality: (v: number) => void;
+    compressLevel: number;
+    setCompressLevel: (v: number) => void;
+    icoSizes: number[];
+    setIcoSizes: (v: number[]) => void;
     resizeMode: string;
     setResizeMode: (v: string) => void;
     scalePercent: number;
@@ -40,6 +44,8 @@ type ConverterSettingsProps = {
     setLongEdge: (v: number) => void;
     keepMetadata: boolean;
     setKeepMetadata: (v: boolean) => void;
+    maintainAR: boolean;
+    setMaintainAR: (v: boolean) => void;
     colorSpace: string;
     setColorSpace: (v: string) => void;
     dpi: number;
@@ -51,6 +57,10 @@ const ConverterSettings = memo(({
     setFormat,
     quality,
     setQuality,
+    compressLevel,
+    setCompressLevel,
+    icoSizes,
+    setIcoSizes,
     resizeMode,
     setResizeMode,
     scalePercent,
@@ -63,15 +73,25 @@ const ConverterSettings = memo(({
     setLongEdge,
     keepMetadata,
     setKeepMetadata,
+    maintainAR,
+    setMaintainAR,
     colorSpace,
     setColorSpace,
     dpi,
     setDpi,
 }: ConverterSettingsProps) => {
 
+    const toggleIcoSize = (size: number) => {
+        if (icoSizes.includes(size)) {
+            setIcoSizes(icoSizes.filter(s => s !== size));
+        } else {
+            setIcoSizes([...icoSizes, size].sort((a, b) => a - b));
+        }
+    };
+
     return (
         <div className="space-y-4">
-            {/* Top Row: Format & Quality */}
+            {/* Top Row: Format & Quality/Compression */}
             <div className="grid grid-cols-[1fr_2fr] gap-4">
                 <CustomSelect 
                     label="目标格式" 
@@ -79,12 +99,51 @@ const ConverterSettings = memo(({
                     value={format}
                     onChange={setFormat}
                 />
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出质量</label>
-                    <div className="h-10 flex items-center">
-                        <StyledSlider value={quality} onChange={setQuality} unit="%" className="w-full" />
+                
+                {['JPG', 'WEBP', 'AVIF'].includes(format) && (
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出质量</label>
+                        <div className="h-10 flex items-center">
+                            <StyledSlider value={quality} onChange={setQuality} unit="%" className="w-full" />
+                        </div>
                     </div>
-                </div>
+                )}
+
+                {format === 'PNG' && (
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">压缩级别 (0-9)</label>
+                        <div className="h-10 flex items-center">
+                            <StyledSlider value={compressLevel} min={0} max={9} onChange={setCompressLevel} className="w-full" />
+                        </div>
+                    </div>
+                )}
+                
+                {format === 'ICO' && (
+                     <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">包含尺寸</label>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                            {[16, 32, 48, 64, 128, 256].map(s => (
+                                <button 
+                                    key={s}
+                                    onClick={() => toggleIcoSize(s)}
+                                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                                        icoSizes.includes(s) 
+                                        ? 'bg-[#007AFF] border-[#007AFF] text-white' 
+                                        : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:border-[#007AFF]/50'
+                                    }`}
+                                >
+                                    {s}px
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {!['JPG', 'WEBP', 'AVIF', 'PNG', 'ICO'].includes(format) && (
+                    <div className="flex items-center justify-center h-full pt-6">
+                        <span className="text-xs text-gray-400">无额外设置</span>
+                    </div>
+                )}
             </div>
 
             {/* Middle Row: Resize Mode Buttons */}
@@ -98,18 +157,29 @@ const ConverterSettings = memo(({
             </div>
 
             {resizeMode === '按比例' && (
-                 <StyledSlider label="缩放比例" value={scalePercent} min={10} max={200} unit="%" onChange={setScalePercent} />
+                 <StyledSlider label="缩放比例" value={scalePercent} min={1} max={200} unit="%" onChange={setScalePercent} />
             )}
 
             {resizeMode === '固定宽高' && (
-                <div className="flex gap-3 animate-enter">
-                    <div className="flex-1 space-y-1">
-                        <label className="text-xs text-gray-500">宽度 (px)</label>
-                        <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1920" />
+                <div className="flex flex-col gap-3 animate-enter">
+                    <div className="flex gap-3">
+                        <div className="flex-1 space-y-1">
+                            <label className="text-xs text-gray-500">宽度 (px)</label>
+                            <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
+                        </div>
+                        <div className="flex-1 space-y-1">
+                            <label className="text-xs text-gray-500">高度 (px)</label>
+                            <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
+                        </div>
                     </div>
-                    <div className="flex-1 space-y-1">
-                        <label className="text-xs text-gray-500">高度 (px)</label>
-                        <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="1080" />
+                    <div className="flex items-center justify-between">
+                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                             保持纵横比
+                             <span className="block text-xs font-normal text-gray-500 mt-0.5">
+                                 若关闭则强制拉伸至指定宽高
+                             </span>
+                         </label>
+                         <Switch checked={maintainAR} onChange={setMaintainAR} />
                     </div>
                 </div>
             )}
@@ -494,15 +564,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
     const [lastMessage, setLastMessage] = useState<string>('');
 
     const [convFormat, setConvFormat] = useState('JPG');
-    const [convQuality, setConvQuality] = useState(90);
+    const [convQuality, setConvQuality] = useState(80);
+    const [convCompressLevel, setConvCompressLevel] = useState(6); // 0-9 for PNG
+    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256]);
     const [convResizeMode, setConvResizeMode] = useState('原图尺寸');
-    const [convScalePercent, setConvScalePercent] = useState(75);
+    const [convScalePercent, setConvScalePercent] = useState(100);
     const [convFixedWidth, setConvFixedWidth] = useState(0);
     const [convFixedHeight, setConvFixedHeight] = useState(0);
-    const [convLongEdge, setConvLongEdge] = useState(2048);
-    const [convKeepMetadata, setConvKeepMetadata] = useState(true);
+    const [convLongEdge, setConvLongEdge] = useState(1920);
+    const [convKeepMetadata, setConvKeepMetadata] = useState(false);
+    const [convMaintainAR, setConvMaintainAR] = useState(true);
     const [convColorSpace, setConvColorSpace] = useState('保持原样');
-    const [convDpi, setConvDpi] = useState(72);
+    const [convDpi, setConvDpi] = useState(0);
 
     const [compMode, setCompMode] = useState('标准');
     const [compTargetSize, setCompTargetSize] = useState(false);
@@ -518,6 +591,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         setFormat={setConvFormat}
                         quality={convQuality}
                         setQuality={setConvQuality}
+                        compressLevel={convCompressLevel}
+                        setCompressLevel={setConvCompressLevel}
+                        icoSizes={convIcoSizes}
+                        setIcoSizes={setConvIcoSizes}
                         resizeMode={convResizeMode}
                         setResizeMode={setConvResizeMode}
                         scalePercent={convScalePercent}
@@ -530,6 +607,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         setLongEdge={setConvLongEdge}
                         keepMetadata={convKeepMetadata}
                         setKeepMetadata={setConvKeepMetadata}
+                        maintainAR={convMaintainAR}
+                        setMaintainAR={setConvMaintainAR}
                         colorSpace={convColorSpace}
                         setColorSpace={setConvColorSpace}
                         dpi={convDpi}
@@ -637,6 +716,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             if (id === 'converter') {
                 const format = convFormat.toLowerCase();
                 const quality = convQuality;
+                const compress_level = convCompressLevel;
+                const ico_sizes = convIcoSizes;
                 const resizeModeMap: Record<string, string> = {
                     '原图尺寸': 'original',
                     '按比例': 'percent',
@@ -646,17 +727,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
                 const color_space = convColorSpace === '保持原样' ? '' : convColorSpace;
 
-                const buildReq = (f: DroppedFile) => {
+                const buildReq = (f: DroppedFile, icoSize?: number) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const outRel = replaceExt(rel, format);
+                    const baseOutRel = replaceExt(rel, format);
+                    const outRel = format === 'ico' && icoSize ? addSuffix(baseOutRel, `_${icoSize}px`) : baseOutRel;
                     return {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_path: joinPath(outDir, outRel),
                         format,
                         quality,
+                        compress_level,
+                        ico_sizes: format === 'ico' && icoSize ? [icoSize] : ico_sizes,
                         width: resize_mode === 'fixed' ? convFixedWidth : 0,
                         height: resize_mode === 'fixed' ? convFixedHeight : 0,
-                        maintain_ar: true,
+                        maintain_ar: convMaintainAR,
                         resize_mode,
                         scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
                         long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
@@ -666,9 +750,22 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     };
                 };
 
-                const chunkSize = total >= 80 ? 20 : 1;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    const chunk = files.slice(i, i + chunkSize).map(buildReq);
+                const requests = (() => {
+                    if (format !== 'ico') return files.map((f) => buildReq(f));
+                    const sizes = (ico_sizes || []).filter((s) => typeof s === 'number' && s > 0);
+                    const effective = sizes.length > 0 ? sizes : [16];
+                    const reqs: any[] = [];
+                    for (const f of files) {
+                        for (const s of effective) {
+                            reqs.push(buildReq(f, s));
+                        }
+                    }
+                    return reqs;
+                })();
+
+                const chunkSize = requests.length >= 80 ? 20 : 1;
+                for (let i = 0; i < requests.length; i += chunkSize) {
+                    const chunk = requests.slice(i, i + chunkSize);
                     try {
                         if (chunk.length === 1) {
                             await window.go.main.App.Convert(chunk[0]);
@@ -680,9 +777,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     }
 
                     completed += chunk.length;
-                    setProgress((completed / total) * 100);
+                    setProgress((completed / requests.length) * 100);
                 }
-                setLastMessage(`转换完成：${completed}/${total} 项`);
+                setLastMessage(`转换完成：${completed}/${requests.length} 项`);
                 return;
             }
 
@@ -699,7 +796,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                 const buildReq = (f: DroppedFile) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     return {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_path: joinPath(outDir, rel),
                         mode: selected.mode,
                         quality: selected.quality,
@@ -731,7 +828,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const outRel = addSuffix(rel, '_watermark');
                     const req = {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_path: joinPath(outDir, outRel),
                         watermark_type: 'text',
                         text: '© ImageFlow',
@@ -760,7 +857,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const outRel = addSuffix(rel, '_adjusted');
                     const req = {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_path: joinPath(outDir, outRel),
                         rotate: 0,
                         flip_h: false,
@@ -787,7 +884,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const outRel = addSuffix(rel, '_filtered');
                     const req = {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_path: joinPath(outDir, outRel),
                         filter_type: 'grayscale',
                         intensity: 1.0,
@@ -806,7 +903,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
 
             if (id === 'pdf') {
                 const req = {
-                    image_paths: files.map(f => f.input_path),
+                    image_paths: files.map(f => normalizePath(f.input_path)),
                     output_path: joinPath(outDir, 'output.pdf'),
                     page_size: 'A4',
                     layout: 'portrait',
@@ -824,7 +921,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                 for (const f of files) {
                     const name = basename(f.input_path).replace(/\.[^.]+$/, '');
                     const req = {
-                        input_path: f.input_path,
+                        input_path: normalizePath(f.input_path),
                         output_dir: joinPath(outDir, `${name}_frames`),
                         start_frame: 0,
                         end_frame: 0,
@@ -845,7 +942,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             if (id === 'info') {
                 for (const f of files) {
                     try {
-                        const info = await window.go.main.App.GetInfo({ input_path: f.input_path });
+                        const info = await window.go.main.App.GetInfo({ input_path: normalizePath(f.input_path) });
                         console.log('Info:', info);
                     } catch (err) {
                         console.error(`Failed to get info ${f.input_path}:`, err);
@@ -878,10 +975,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                             setLastMessage('');
                             setProgress(0);
                         }}
-                        acceptedFormats="image/*"
+                        acceptedFormats="image/*,.svg"
                         allowMultiple={true}
                         title="拖拽文件 / 文件夹到这里"
-                        subTitle="或点击选择文件（Wails 下支持拖拽绝对路径）"
+                        subTitle=""
                     />
                 </div>
 

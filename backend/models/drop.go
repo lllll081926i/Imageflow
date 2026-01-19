@@ -5,6 +5,8 @@ type DroppedFile struct {
 	SourceRoot    string `json:"source_root"`
 	RelativePath  string `json:"relative_path"`
 	IsFromDirDrop bool   `json:"is_from_dir_drop"`
+	Size          int64  `json:"size"`
+	ModTime       int64  `json:"mod_time"`
 }
 
 type ExpandDroppedPathsResult struct {

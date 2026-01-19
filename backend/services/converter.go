@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
+	"path/filepath"
+	"strings"
 )
 
 // ConverterService handles image format conversion
@@ -23,6 +25,22 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 // Convert converts an image to a different format
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 	s.logger.Info("Converting image: %s -> %s (format: %s)", req.InputPath, req.OutputPath, req.Format)
+
+	if strings.EqualFold(filepath.Ext(req.InputPath), ".svg") {
+		tmp, cleanup, err := utils.RasterizeSVGToTempPNG(req)
+		if err != nil {
+			s.logger.Error("SVG rasterization failed: %v", err)
+			return models.ConvertResult{Success: false, Error: err.Error()}, err
+		}
+		defer cleanup()
+
+		req.InputPath = tmp
+		req.ResizeMode = "original"
+		req.ScalePercent = 0
+		req.LongEdge = 0
+		req.Width = 0
+		req.Height = 0
+	}
 
 	var result models.ConvertResult
 	err := s.executor.ExecuteAndParse("converter.py", req, &result)

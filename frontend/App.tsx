@@ -13,11 +13,25 @@ const App: React.FC = () => {
     const [direction, setDirection] = useState<'left' | 'right'>('right');
 
     useEffect(() => {
+        // Prevent default drag behaviors to stop opening files in browser
+        const preventDefault = (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        
+        window.addEventListener('dragover', preventDefault);
+        window.addEventListener('drop', preventDefault);
+
         // Check system preference on load
         if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
             setTheme('dark');
             document.documentElement.classList.add('dark');
         }
+
+        return () => {
+            window.removeEventListener('dragover', preventDefault);
+            window.removeEventListener('drop', preventDefault);
+        };
     }, []);
 
     const toggleTheme = () => {
@@ -58,11 +72,22 @@ const App: React.FC = () => {
                     <span className="text-sm font-semibold tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-[#007AFF] via-[#5856D6] to-[#AF52DE]">ImageFlow</span>
                 </div>
 
-                <WindowControls />
+                {/* Window Controls */}
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={toggleTheme}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50"
+                        style={{ ['--wails-draggable' as any]: 'no-drag' }}
+                        title={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
+                    >
+                        <Icon name={theme === 'light' ? 'Moon' : 'Sun'} size={16} />
+                    </button>
+                    <WindowControls />
+                </div>
             </div>
 
             <div className="flex-1 flex overflow-hidden">
-                <Sidebar active={activeView} setActive={handleNavigate} theme={theme} toggleTheme={toggleTheme} />
+                <Sidebar active={activeView} setActive={handleNavigate} />
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
                     <div className="flex-1 p-4 md:p-6 overflow-hidden">
                         <div className="max-w-full mx-auto h-full">

@@ -1,0 +1,9 @@
+[project]
+name = "imageflow-python"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = [
+  "pillow>=10.0.0",
+  "reportlab>=4.0.0",
+]
+

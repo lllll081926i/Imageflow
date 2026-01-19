@@ -22,6 +22,7 @@ var supportedExtensions = map[string]bool{
 	".tif":  true,
 	".heic": true,
 	".heif": true,
+	".svg":  true,
 }
 
 func isImageFile(path string) bool {
@@ -50,6 +51,8 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 					SourceRoot:    filepath.Dir(p),
 					RelativePath:  filepath.Base(p),
 					IsFromDirDrop: false,
+					Size:          info.Size(),
+					ModTime:       info.ModTime().Unix(),
 				})
 			}
 			continue
@@ -70,6 +73,12 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 				return nil
 			}
 
+			info, err := d.Info()
+			if err != nil {
+				// If we can't get info, just skip or use defaults
+				return nil
+			}
+
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return err
@@ -80,6 +89,8 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 				SourceRoot:    root,
 				RelativePath:  filepath.ToSlash(rel),
 				IsFromDirDrop: true,
+				Size:          info.Size(),
+				ModTime:       info.ModTime().Unix(),
 			})
 			return nil
 		})
@@ -95,4 +106,3 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 	result.Files = files
 	return result, nil
 }
-

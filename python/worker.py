@@ -99,8 +99,11 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
 
 def main():
     """Main worker loop that processes commands from stdin."""
-    # Unbuffer stdout to ensure immediate output
-    sys.stdout.reconfigure(line_buffering=True)
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+        sys.stdout.reconfigure(encoding="utf-8", errors="strict", line_buffering=True)
+    except Exception:
+        pass
 
     # Send ready signal
     print(json.dumps({'status': 'ready'}), flush=True)

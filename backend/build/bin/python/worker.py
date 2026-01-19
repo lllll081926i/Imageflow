@@ -9,7 +9,46 @@ import sys
 import json
 import importlib
 import traceback
+import os
+import subprocess
+import gc
 from typing import Dict, Any
+
+
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+CONVERTER_TIMEOUT_S = int(os.getenv("IMAGEFLOW_CONVERTER_TIMEOUT_S", "180"))
+
+
+def _run_converter_subprocess(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    script_path = os.path.join(SCRIPTS_DIR, "converter.py")
+    try:
+        cp = subprocess.run(
+            [sys.executable, script_path],
+            input=json.dumps(input_data, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=CONVERTER_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": f"converter timeout after {CONVERTER_TIMEOUT_S}s"}
+    except Exception as e:
+        return {"success": False, "error": f"failed to run converter subprocess: {e}"}
+
+    stdout = (cp.stdout or "").strip()
+    stderr = (cp.stderr or "").strip()
+    if cp.returncode != 0:
+        return {"success": False, "error": f"converter exit code {cp.returncode}", "stderr": stderr[-4000:]}
+    if not stdout:
+        return {"success": False, "error": "converter produced no output", "stderr": stderr[-4000:]}
+    try:
+        result = json.loads(stdout)
+        if isinstance(result, dict):
+            return result
+        return {"success": False, "error": "converter returned non-object JSON"}
+    except Exception as e:
+        return {"success": False, "error": f"converter returned invalid JSON: {e}", "stdout": stdout[-4000:], "stderr": stderr[-4000:]}
 
 
 def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,6 +70,9 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
 
         if input_data is None:
             return {'success': False, 'error': 'Missing input data'}
+
+        if script_name == "converter.py":
+            return _run_converter_subprocess(input_data)
 
         # Import the module dynamically
         # Strip .py extension if present to get module name
@@ -57,8 +99,11 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
 
 def main():
     """Main worker loop that processes commands from stdin."""
-    # Unbuffer stdout to ensure immediate output
-    sys.stdout.reconfigure(line_buffering=True)
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+        sys.stdout.reconfigure(encoding="utf-8", errors="strict", line_buffering=True)
+    except Exception:
+        pass
 
     # Send ready signal
     print(json.dumps({'status': 'ready'}), flush=True)
@@ -85,6 +130,9 @@ def main():
 
             # Write result to stdout
             print(json.dumps(result), flush=True)
+
+            # Force garbage collection
+            gc.collect()
 
         except json.JSONDecodeError as e:
             error_result = {'success': False, 'error': f'Invalid JSON: {str(e)}'}

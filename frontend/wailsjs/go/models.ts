@@ -114,6 +114,8 @@ export namespace models {
 	    keep_metadata: boolean;
 	    color_space: string;
 	    dpi: number;
+	    compress_level: number;
+	    ico_sizes: number[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ConvertRequest(source);
@@ -134,6 +136,8 @@ export namespace models {
 	        this.keep_metadata = source["keep_metadata"];
 	        this.color_space = source["color_space"];
 	        this.dpi = source["dpi"];
+	        this.compress_level = source["compress_level"];
+	        this.ico_sizes = source["ico_sizes"];
 	    }
 	}
 	export class ConvertResult {
@@ -159,6 +163,8 @@ export namespace models {
 	    source_root: string;
 	    relative_path: string;
 	    is_from_dir_drop: boolean;
+	    size: number;
+	    mod_time: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DroppedFile(source);
@@ -170,6 +176,8 @@ export namespace models {
 	        this.source_root = source["source_root"];
 	        this.relative_path = source["relative_path"];
 	        this.is_from_dir_drop = source["is_from_dir_drop"];
+	        this.size = source["size"];
+	        this.mod_time = source["mod_time"];
 	    }
 	}
 	export class ExpandDroppedPathsResult {

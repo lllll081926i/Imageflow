@@ -19,6 +19,11 @@ import json
 import os
 import gc
 import io
+import re
+import shutil
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image
 import logging
@@ -43,6 +48,207 @@ class ImageConverter:
     def __init__(self):
         """Initialize the converter."""
         logger.info("ImageConverter initialized")
+
+    def _parse_svg_intrinsic_size(self, svg_path: str):
+        try:
+            tree = ET.parse(svg_path)
+            root = tree.getroot()
+        except Exception:
+            return None
+
+        def strip_unit(v: str):
+            v = (v or "").strip()
+            if not v:
+                return None
+            m = re.match(r"^\s*([0-9]*\.?[0-9]+)", v)
+            if not m:
+                return None
+            return float(m.group(1))
+
+        w_attr = root.attrib.get("width", "")
+        h_attr = root.attrib.get("height", "")
+        w = strip_unit(w_attr)
+        h = strip_unit(h_attr)
+        if w and h and w > 0 and h > 0:
+            return int(round(w)), int(round(h))
+
+        view_box = root.attrib.get("viewBox", "") or root.attrib.get("viewbox", "")
+        if view_box:
+            parts = re.split(r"[,\s]+", view_box.strip())
+            if len(parts) == 4:
+                try:
+                    vb_w = float(parts[2])
+                    vb_h = float(parts[3])
+                    if vb_w > 0 and vb_h > 0:
+                        return int(round(vb_w)), int(round(vb_h))
+                except Exception:
+                    pass
+
+        return None
+
+    def _calculate_svg_render_size(self, svg_path: str, resize_mode: str, scale_percent: int, long_edge: int, width: int, height: int, maintain_ar: bool, format_type: str, ico_sizes):
+        base = self._parse_svg_intrinsic_size(svg_path) or (1024, 1024)
+        base_w, base_h = base
+
+        mode = str(resize_mode or "").strip().lower()
+        target_w, target_h = base_w, base_h
+
+        if mode == "percent" and int(scale_percent or 0) > 0:
+            pct = max(1, int(scale_percent))
+            target_w = max(1, int(base_w * pct / 100))
+            target_h = max(1, int(base_h * pct / 100))
+        elif mode == "long_edge" and int(long_edge or 0) > 0:
+            le = max(1, int(long_edge))
+            scale = le / float(max(base_w, base_h))
+            target_w = max(1, int(base_w * scale))
+            target_h = max(1, int(base_h * scale))
+        elif mode == "fixed" and (int(width or 0) > 0 or int(height or 0) > 0):
+            w = int(width or 0)
+            h = int(height or 0)
+            if maintain_ar:
+                if w > 0 and h == 0:
+                    scale = w / float(base_w)
+                    target_w = w
+                    target_h = max(1, int(base_h * scale))
+                elif h > 0 and w == 0:
+                    scale = h / float(base_h)
+                    target_h = h
+                    target_w = max(1, int(base_w * scale))
+                elif w > 0 and h > 0:
+                    scale = min(w / float(base_w), h / float(base_h))
+                    target_w = max(1, int(base_w * scale))
+                    target_h = max(1, int(base_h * scale))
+            else:
+                target_w = w if w > 0 else base_w
+                target_h = h if h > 0 else base_h
+        else:
+            if int(width or 0) > 0 or int(height or 0) > 0:
+                w = int(width or 0)
+                h = int(height or 0)
+                if maintain_ar:
+                    if w > 0 and h == 0:
+                        scale = w / float(base_w)
+                        target_w = w
+                        target_h = max(1, int(base_h * scale))
+                    elif h > 0 and w == 0:
+                        scale = h / float(base_h)
+                        target_h = h
+                        target_w = max(1, int(base_w * scale))
+                    elif w > 0 and h > 0:
+                        scale = min(w / float(base_w), h / float(base_h))
+                        target_w = max(1, int(base_w * scale))
+                        target_h = max(1, int(base_h * scale))
+                else:
+                    target_w = w if w > 0 else base_w
+                    target_h = h if h > 0 else base_h
+
+        if format_type == "ico" and ico_sizes and isinstance(ico_sizes, list):
+            try:
+                max_size = max(int(s) for s in ico_sizes if int(s) > 0)
+                target_edge = max(target_w, target_h, max_size)
+                target_w = target_edge
+                target_h = target_edge
+            except Exception:
+                pass
+
+        return max(1, int(target_w)), max(1, int(target_h))
+
+    def _svg_to_pil(self, svg_path: str, render_width: int, render_height: int):
+        try:
+            import cairosvg  # type: ignore
+            png_data = cairosvg.svg2png(url=svg_path, output_width=render_width, output_height=render_height)
+            return Image.open(io.BytesIO(png_data))
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"cairosvg SVG render failed: {e}")
+
+        try:
+            from svglib.svglib import svg2rlg  # type: ignore
+            from reportlab.graphics import renderPM  # type: ignore
+
+            drawing = svg2rlg(svg_path)
+            if drawing is None:
+                raise RuntimeError("svg2rlg returned None")
+
+            if render_width > 0 and render_height > 0:
+                sx = render_width / float(getattr(drawing, "width", render_width) or render_width)
+                sy = render_height / float(getattr(drawing, "height", render_height) or render_height)
+                try:
+                    drawing.scale(sx, sy)
+                except Exception:
+                    pass
+
+            png_bytes = renderPM.drawToString(drawing, fmt="PNG")
+            return Image.open(io.BytesIO(png_bytes))
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"svglib SVG render failed: {e}")
+
+        inkscape = shutil.which("inkscape")
+        if inkscape:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+                args = [
+                    inkscape,
+                    svg_path,
+                    "--export-type=png",
+                    f"--export-filename={tmp_path}",
+                ]
+                if render_width > 0:
+                    args.append(f"--export-width={render_width}")
+                if render_height > 0:
+                    args.append(f"--export-height={render_height}")
+                subprocess.run(args, check=True, capture_output=True)
+                img = Image.open(tmp_path)
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+                return img
+            except Exception as e:
+                logger.warning(f"Inkscape SVG render failed: {e}")
+
+        raise RuntimeError(
+            "SVG input is not supported by the current Python environment. "
+            "Install one of: cairosvg (recommended), svglib+lxml, or inkscape."
+        )
+
+    def _normalize_ico_sizes(self, ico_sizes):
+        values = []
+        if ico_sizes and isinstance(ico_sizes, list):
+            for s in ico_sizes:
+                try:
+                    v = int(s)
+                    if v > 0:
+                        values.append(v)
+                except Exception:
+                    continue
+        if not values:
+            values = [16]
+        values = sorted(set(values))
+        return values
+
+    def _prepare_ico_image(self, img, ico_sizes):
+        sizes = self._normalize_ico_sizes(ico_sizes)
+        max_edge = max(sizes) if sizes else max(img.size)
+
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+
+        w, h = img.size
+        edge = max(w, h)
+        if w != h:
+            canvas = Image.new('RGBA', (edge, edge), (0, 0, 0, 0))
+            canvas.paste(img, ((edge - w) // 2, (edge - h) // 2))
+            img = canvas
+
+        if edge != max_edge:
+            img = img.resize((max_edge, max_edge), Image.Resampling.LANCZOS)
+
+        return img, sizes
     
     def convert(self, input_path, output_path, format_type, quality=95,
                 width=0, height=0, maintain_ar=True,
@@ -51,7 +257,9 @@ class ImageConverter:
                 long_edge=0,
                 keep_metadata=False,
                 color_space='',
-                dpi=0):
+                dpi=0,
+                compress_level=6,
+                ico_sizes=None):
         """
         Convert an image to a different format.
         
@@ -63,6 +271,8 @@ class ImageConverter:
             width (int): Target width (0 to keep original)
             height (int): Target height (0 to keep original)
             maintain_ar (bool): Maintain aspect ratio when resizing
+            compress_level (int): ZLIB compression level for PNG (0-9)
+            ico_sizes (list): List of sizes for ICO format
         
         Returns:
             dict: Conversion result with success status and metadata
@@ -76,27 +286,35 @@ class ImageConverter:
                     'error': f'Unsupported output format: {format_type}'
                 }
             
-            # Handle SVG files (convert to PNG first)
+            # Open input image (special handling for SVG)
             if input_path.lower().endswith('.svg'):
                 logger.info(f"Detected SVG file: {input_path}")
                 try:
-                    import cairosvg  # type: ignore
-                    import io
-                    # Convert SVG to PNG in memory
-                    png_data = cairosvg.svg2png(url=input_path)
-                    img = Image.open(io.BytesIO(png_data))
-                    logger.info("SVG converted to PNG successfully")
-                except ImportError:
-                    logger.warning("cairosvg not installed, trying Pillow directly")
-                    img = Image.open(input_path)
+                    render_w, render_h = self._calculate_svg_render_size(
+                        input_path,
+                        resize_mode=resize_mode,
+                        scale_percent=scale_percent,
+                        long_edge=long_edge,
+                        width=width,
+                        height=height,
+                        maintain_ar=maintain_ar,
+                        format_type=format_type,
+                        ico_sizes=ico_sizes,
+                    )
+                    img = self._svg_to_pil(input_path, render_w, render_h)
+                    logger.info(f"SVG rasterized: {render_w}x{render_h}")
+                    resize_mode = ""
+                    scale_percent = 0
+                    long_edge = 0
+                    width = 0
+                    height = 0
                 except Exception as e:
-                    logger.error(f"Failed to convert SVG: {e}")
+                    logger.error(f"Failed to open SVG: {e}")
                     return {
                         'success': False,
-                        'error': f'Failed to convert SVG: {str(e)}. Please install cairosvg: pip install cairosvg'
+                        'error': f'Failed to open SVG: {str(e)}'
                     }
             else:
-                # Open input image
                 logger.info(f"Opening image: {input_path}")
                 img = Image.open(input_path)
 
@@ -150,8 +368,11 @@ class ImageConverter:
                 if width > 0 or height > 0:
                     img = self._resize_image(img, width, height, maintain_ar)
             
+            if format_type == 'ico':
+                img, ico_sizes = self._prepare_ico_image(img, ico_sizes)
+
             # Prepare save parameters based on format
-            save_params = self._get_save_params(format_type, quality)
+            save_params = self._get_save_params(format_type, quality, compress_level, ico_sizes)
             if int(dpi or 0) > 0:
                 d = max(1, int(dpi))
                 save_params['dpi'] = (d, d)
@@ -235,6 +456,7 @@ class ImageConverter:
                 new_width = int(original_width * ratio)
                 new_height = int(original_height * ratio)
         else:
+            # Force stretch (do not maintain aspect ratio)
             new_width = target_width if target_width > 0 else original_width
             new_height = target_height if target_height > 0 else original_height
         
@@ -243,13 +465,15 @@ class ImageConverter:
         # Use high-quality resampling
         return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
-    def _get_save_params(self, format_type, quality):
+    def _get_save_params(self, format_type, quality, compress_level=6, ico_sizes=None):
         """
         Get save parameters based on the output format.
         
         Args:
             format_type (str): Output format
             quality (int): Quality setting
+            compress_level (int): PNG compression level
+            ico_sizes (list): ICO sizes
         
         Returns:
             dict: Save parameters for PIL
@@ -265,13 +489,27 @@ class ImageConverter:
             params['progressive'] = True
         
         if format_type == 'png':
-            params['compress_level'] = 9
+            params['compress_level'] = max(0, min(9, compress_level))
         
         if format_type == 'webp':
             params['method'] = 6  # Best compression
         
         if format_type == 'ico':
-            params['sizes'] = [(16, 16), (32, 32), (64, 64), (128, 128)]
+            if ico_sizes and isinstance(ico_sizes, list):
+                # Convert list of ints/lists to tuples if needed, but Pillow expects list of tuples
+                # Input might be [16, 32] -> [(16,16), (32,32)]
+                sizes = []
+                for s in ico_sizes:
+                    if isinstance(s, (int, float)):
+                        s = int(s)
+                        sizes.append((s, s))
+                    elif isinstance(s, (list, tuple)) and len(s) == 2:
+                        sizes.append((int(s[0]), int(s[1])))
+                if sizes:
+                    params['sizes'] = sizes
+            
+            if 'sizes' not in params:
+                params['sizes'] = [(16, 16)]
         
         return params
     
@@ -324,6 +562,9 @@ def process(input_data):
         color_space = input_data.get('color_space', '')
         dpi = input_data.get('dpi', 0)
 
+        compress_level = input_data.get('compress_level', 6)
+        ico_sizes = input_data.get('ico_sizes', None)
+
         # Validate required parameters
         if not input_path or not output_path:
             return {
@@ -346,7 +587,9 @@ def process(input_data):
             long_edge=long_edge,
             keep_metadata=keep_metadata,
             color_space=color_space,
-            dpi=dpi
+            dpi=dpi,
+            compress_level=compress_level,
+            ico_sizes=ico_sizes
         )
 
         return result
@@ -362,6 +605,12 @@ def process(input_data):
 def main():
     """Main entry point for the converter script."""
     try:
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+            sys.stdout.reconfigure(encoding="utf-8", errors="strict")
+        except Exception:
+            pass
+
         # Read input from stdin
         input_data = json.load(sys.stdin)
         logger.info(f"Received conversion request: {input_data.get('input_path')} -> {input_data.get('output_path')}")
@@ -380,6 +629,8 @@ def main():
         keep_metadata = input_data.get('keep_metadata', False)
         color_space = input_data.get('color_space', '')
         dpi = input_data.get('dpi', 0)
+        compress_level = input_data.get('compress_level', 6)
+        ico_sizes = input_data.get('ico_sizes', None)
         
         # Validate required parameters
         if not input_path or not output_path:
@@ -403,7 +654,9 @@ def main():
                 long_edge=long_edge,
                 keep_metadata=keep_metadata,
                 color_space=color_space,
-                dpi=dpi
+                dpi=dpi,
+                compress_level=compress_level,
+                ico_sizes=ico_sizes
             )
         
         # Write result to stdout

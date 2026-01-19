@@ -6,11 +6,9 @@ import { ViewState } from '../types';
 interface SidebarProps {
     active: ViewState;
     setActive: (view: ViewState) => void;
-    theme: 'light' | 'dark';
-    toggleTheme: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ active, setActive, theme, toggleTheme }) => {
+const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
     const [collapsed, setCollapsed] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -89,18 +87,6 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive, theme, toggleTheme
 
             {/* Footer / Toggle & Settings */}
             <div className="p-3 border-t border-gray-200 dark:border-white/5 space-y-1">
-                <button 
-                    onClick={toggleTheme}
-                    className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors group px-3"
-                >
-                    <div className="w-6 h-6 flex items-center justify-center shrink-0">
-                        <Icon name={theme === 'light' ? 'Moon' : 'Sun'} size={20} className="transition-transform duration-300 group-hover:scale-110" />
-                    </div>
-                    <div className={`whitespace-nowrap overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${collapsed ? 'w-0 opacity-0' : 'w-40 opacity-100'}`}>
-                        <span className="ml-3">{theme === 'light' ? '深色模式' : '浅色模式'}</span>
-                    </div>
-                </button>
-
                 <button 
                     onClick={() => setCollapsed(!collapsed)}
                     className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors group px-3"

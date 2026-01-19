@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, memo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
@@ -67,37 +67,42 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         let val = parseInt(e.target.value);
-        if (isNaN(val)) return;
+        if (isNaN(val)) val = 0;
+        // Allow temporary invalid input but clamp on blur or submit if needed
+        // For now, clamp strictly to ensure valid state
         val = Math.max(min, Math.min(max, val));
         onChange(val);
     };
 
     return (
         <div className={`space-y-3 select-none ${className}`}>
-            {label !== undefined && (
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex justify-between items-center">
-                    <span>{label}</span>
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium text-[#007AFF]">{Math.round(percent)}%</span>
-                        <div className="relative">
-                            <input 
-                                type="number" 
-                                value={value}
-                                min={min}
-                                max={max}
-                                onChange={handleInputChange}
-                                className="w-12 text-center text-gray-600 dark:text-gray-300 font-mono text-xs bg-gray-100 dark:bg-white/10 px-1 py-0.5 rounded outline-none focus:ring-1 focus:ring-[#007AFF] appearance-none m-0 border border-transparent focus:border-[#007AFF]"
-                            />
-                        </div>
+            <div className="flex justify-between items-center">
+                {label !== undefined && (
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {label}
+                    </label>
+                )}
+                <div className="flex items-center gap-1.5 ml-auto">
+                    {/* Optional percentage display can be removed if input is enough, or kept as aux */}
+                    {/* <span className="text-sm font-medium text-[#007AFF]">{Math.round(percent)}%</span> */}
+                    <div className="relative group">
+                        <input 
+                            type="number" 
+                            value={value}
+                            min={min}
+                            max={max}
+                            onChange={handleInputChange}
+                            className="w-12 text-center text-gray-600 dark:text-gray-300 font-mono text-xs bg-gray-100 dark:bg-white/10 px-1 py-0.5 rounded outline-none focus:ring-1 focus:ring-[#007AFF] appearance-none m-0 border border-transparent focus:border-[#007AFF] transition-all"
+                        />
                     </div>
-                </label>
-            )}
+                </div>
+            </div>
             <div className="relative h-6 w-full flex items-center group">
                 <div className="absolute w-full h-1.5 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#007AFF] transition-none" style={{ width: `${percent}%` }} />
+                    <div className="h-full bg-[#007AFF] transition-all duration-150 ease-out" style={{ width: `${percent}%` }} />
                 </div>
                 <div 
-                    className="absolute h-5 w-5 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.2)] border border-gray-100 rounded-full flex items-center justify-center pointer-events-none transition-transform duration-75 ease-out z-20 group-active:scale-110"
+                    className="absolute h-5 w-5 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.2)] border border-gray-100 rounded-full flex items-center justify-center pointer-events-none transition-all duration-150 ease-out z-20 group-active:scale-110"
                     style={{ left: `${percent}%`, transform: 'translateX(-50%)' }}
                 >
                     <div className="w-1.5 h-1.5 bg-[#007AFF] rounded-full" />
@@ -232,7 +237,12 @@ type DroppedFile = {
     source_root: string;
     relative_path: string;
     is_from_dir_drop: boolean;
+    size: number;
+    mod_time: number;
 };
+
+type SortKey = 'name' | 'time' | 'size';
+type SortOrder = 'asc' | 'desc';
 
 type ExpandDroppedPathsResult = {
     files: DroppedFile[];
@@ -242,7 +252,7 @@ type ExpandDroppedPathsResult = {
 export const FileDropZone: React.FC<FileDropZoneProps> = ({ 
     onFilesSelected, 
     onPathsExpanded,
-    acceptedFormats = "image/*", 
+    acceptedFormats = "image/*,.svg", 
     allowMultiple = true,
     title = "拖拽图片到这里",
     subTitle = "或点击选择文件 (支持批量处理)"
@@ -250,12 +260,69 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const [isDragOver, setIsDragOver] = useState(false);
     const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+    const [sortKey, setSortKey] = useState<SortKey>('name');
+    const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+    const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const sortButtonRef = useRef<HTMLButtonElement>(null);
 
     const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
     const getExt = (name: string) => {
         const idx = name.lastIndexOf('.');
         return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
+    };
+
+    // Helper to build a recursive file tree structure
+    const buildFileTree = (files: DroppedFile[]) => {
+        const root: any = {};
+        
+        files.forEach(file => {
+            if (!file.is_from_dir_drop) return;
+            
+            // Normalize path separators
+            const relPath = file.relative_path.replace(/\\/g, '/');
+            const parts = relPath.split('/');
+            
+            let current = root;
+            
+            // Iterate through parts to build the tree
+            // If it's a file (last part), add it to files array
+            // If it's a folder, traverse or create object
+            
+            // We use the source_root as the top-level key for grouping
+            const topKey = file.source_root;
+            if (!root[topKey]) {
+                root[topKey] = {
+                    name: basename(topKey),
+                    path: topKey,
+                    isFolder: true,
+                    children: {},
+                    files: []
+                };
+            }
+            
+            let currentLevel = root[topKey];
+            
+            // Navigate down the tree for nested folders
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (!currentLevel.children[part]) {
+                    currentLevel.children[part] = {
+                        name: part,
+                        path: `${currentLevel.path}/${part}`,
+                        isFolder: true,
+                        children: {},
+                        files: []
+                    };
+                }
+                currentLevel = currentLevel.children[part];
+            }
+            
+            // Add file to the current folder level
+            currentLevel.files.push(file);
+        });
+        
+        return root;
     };
 
     useEffect(() => {
@@ -293,15 +360,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         e.preventDefault();
         setIsDragOver(false);
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            const files = Array.from(e.dataTransfer.files);
+            const files: File[] = Array.from(e.dataTransfer.files);
             onFilesSelected(files);
             const result = {
                 has_directory: false,
-                files: files.map(f => ({
+                files: files.map((f: File) => ({
                     input_path: f.name,
                     source_root: '',
                     relative_path: f.name,
                     is_from_dir_drop: false,
+                    size: f.size,
+                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
                 }))
             };
             setPreviewResult(result);
@@ -319,7 +388,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     allowsMultipleSelection: allowMultiple,
                     filters: [{
                         DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.heic;*.heif"
+                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.heic;*.heif;*.svg"
                     }]
                 } as any);
 
@@ -340,15 +409,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            const files = Array.from(e.target.files);
+            const files: File[] = Array.from(e.target.files);
             onFilesSelected(files);
             const result = {
                 has_directory: false,
-                files: files.map(f => ({
+                files: files.map((f: File) => ({
                     input_path: f.name,
                     source_root: '',
                     relative_path: f.name,
                     is_from_dir_drop: false,
+                    size: f.size,
+                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
                 }))
             };
             setPreviewResult(result);
@@ -356,34 +427,196 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         }
     };
 
-    const folderGroups = (() => {
-        const files = previewResult?.files || [];
-        const groups = new Map<string, DroppedFile[]>();
-        for (const f of files) {
-            if (!f.is_from_dir_drop) continue;
-            const key = f.source_root || 'Folder';
-            const arr = groups.get(key) || [];
-            arr.push(f);
-            groups.set(key, arr);
-        }
-        return Array.from(groups.entries())
-            .map(([root, arr]) => ({
-                root,
-                name: basename(root),
-                files: arr.slice().sort((a, b) => a.relative_path.localeCompare(b.relative_path))
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-    })();
+    const handleRemoveFile = (path: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!previewResult) return;
+        const newFiles = previewResult.files.filter(f => f.input_path !== path);
+        const newResult = { ...previewResult, files: newFiles };
+        setPreviewResult(newResult);
+        onPathsExpanded?.(newResult);
+    };
+
+    const handleRemoveFolder = (root: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!previewResult) return;
+        const newFiles = previewResult.files.filter(f => f.source_root !== root);
+        const newResult = { ...previewResult, files: newFiles };
+        setPreviewResult(newResult);
+        onPathsExpanded?.(newResult);
+    };
+
+    // Recursive function to render the file tree
+    const renderTree = (node: any, depth = 0) => {
+        if (!node) return null;
+        
+        const open = expandedFolders[node.path] ?? true;
+        const paddingLeft = 16 + (depth * 12);
+        
+        // Sort children folders by name (always name for folders)
+        const sortedChildren = Object.values(node.children || {}).sort((a: any, b: any) => {
+            const res = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+            return sortOrder === 'asc' ? res : -res;
+        });
+        
+        // Sort files by current sort key
+        const sortedFiles = (node.files || []).slice().sort((a: DroppedFile, b: DroppedFile) => {
+            let res = 0;
+            if (sortKey === 'name') {
+                const nameA = a.relative_path.split('/').pop() || '';
+                const nameB = b.relative_path.split('/').pop() || '';
+                res = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+            } else if (sortKey === 'size') {
+                res = (a.size || 0) - (b.size || 0);
+            } else if (sortKey === 'time') {
+                res = (a.mod_time || 0) - (b.mod_time || 0);
+            }
+            return sortOrder === 'asc' ? res : -res;
+        });
+
+        return (
+            <div key={node.path} className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedFolders(prev => ({ ...prev, [node.path]: !(prev[node.path] ?? true) }));
+                    }}
+                    className="w-full py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors pr-4"
+                    style={{ paddingLeft }}
+                >
+                    <div className={`transition-transform duration-300 ${open ? 'rotate-0' : '-rotate-90'}`}>
+                        <Icon name="ChevronDown" size={16} className="text-gray-400" />
+                    </div>
+                    <div className="flex-1 min-w-0 text-left">
+                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{node.name}</div>
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                            {/* Count total files recursively? Or just direct children? Let's show direct count for now */}
+                            {sortedFiles.length} 文件, {sortedChildren.length} 文件夹
+                        </div>
+                    </div>
+                    {/* Only show remove button for top-level roots to avoid complexity for now, or implement recursive removal */}
+                    {depth === 0 && (
+                        <button 
+                            onClick={(e) => handleRemoveFolder(node.path, e)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                            title="移除文件夹"
+                        >
+                            <Icon name="Trash2" size={14} />
+                        </button>
+                    )}
+                </button>
+
+                <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[20000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                    <div>
+                        {/* Render Subfolders */}
+                        {sortedChildren.map((child: any) => renderTree(child, depth + 1))}
+                        
+                        {/* Render Files */}
+                        {sortedFiles.map((f: DroppedFile) => {
+                            const name = f.relative_path.split('/').pop() || basename(f.input_path);
+                            return (
+                                <div key={f.input_path} className="py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9" style={{ paddingLeft: paddingLeft + 24 }}>
+                                    <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
+                                    <div className="flex-1 min-w-0 truncate">{name}</div>
+                                    <button 
+                                        onClick={(e) => handleRemoveFile(f.input_path, e)}
+                                        className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
+                                        title="移除文件"
+                                    >
+                                        <Icon name="X" size={14} />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const treeRoot = useMemo(() => {
+        if (!previewResult?.files) return {};
+        return buildFileTree(previewResult.files);
+    }, [previewResult]);
 
     const looseFiles = (() => {
         const files = previewResult?.files || [];
         return files
             .filter(f => !f.is_from_dir_drop)
             .slice()
-            .sort((a, b) => basename(a.input_path).localeCompare(basename(b.input_path)));
+            .sort((a, b) => {
+                let res = 0;
+                if (sortKey === 'name') {
+                    const nameA = basename(a.input_path);
+                    const nameB = basename(b.input_path);
+                    res = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+                } else if (sortKey === 'size') {
+                    res = (a.size || 0) - (b.size || 0);
+                } else if (sortKey === 'time') {
+                    res = (a.mod_time || 0) - (b.mod_time || 0);
+                }
+                return sortOrder === 'asc' ? res : -res;
+            });
     })();
 
     const hasPreview = (previewResult?.files?.length || 0) > 0;
+
+    const toggleSortOrder = () => {
+        setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    };
+
+    const SortMenu = () => {
+        if (!isSortMenuOpen || !sortButtonRef.current) return null;
+
+        const options: { label: string; key: SortKey }[] = [
+            { label: '名称', key: 'name' },
+            { label: '时间', key: 'time' },
+            { label: '大小', key: 'size' },
+        ];
+
+        return createPortal(
+            <>
+                <div className="fixed inset-0 z-40" onClick={() => setIsSortMenuOpen(false)} />
+                <div 
+                    className="fixed z-50 bg-white dark:bg-[#1C1C1E] rounded-xl shadow-xl border border-gray-200 dark:border-white/10 p-1 min-w-[120px] animate-enter"
+                    style={{
+                        top: sortButtonRef.current.getBoundingClientRect().bottom + 4,
+                        left: sortButtonRef.current.getBoundingClientRect().right - 120, // Align right
+                    }}
+                >
+                    {options.map(opt => (
+                        <button
+                            key={opt.key}
+                            onClick={() => {
+                                setSortKey(opt.key);
+                                setIsSortMenuOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                                sortKey === opt.key 
+                                    ? 'bg-[#007AFF] text-white' 
+                                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
+                            }`}
+                        >
+                            <span>{opt.label}</span>
+                            {sortKey === opt.key && <Icon name="Check" size={14} />}
+                        </button>
+                    ))}
+                    <div className="h-px bg-gray-200 dark:bg-white/10 my-1 mx-1" />
+                    <button
+                        onClick={() => {
+                            toggleSortOrder();
+                            setIsSortMenuOpen(false);
+                        }}
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+                    >
+                        <span>{sortOrder === 'asc' ? '升序' : '降序'}</span>
+                        <Icon name={sortOrder === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} />
+                    </button>
+                </div>
+            </>,
+            document.body
+        );
+    };
 
     return (
         <div 
@@ -414,82 +647,51 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 <div className="w-full h-full relative z-10 flex flex-col">
                     <div className="flex-1 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col h-full min-h-0 relative">
                         <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0 bg-gray-50/50 dark:bg-white/5 backdrop-blur-sm z-10">
-                            <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                                已添加 {previewResult?.files.length} 项
+                            <div className="flex items-center gap-2">
+                                <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                    已添加 {previewResult?.files.length} 项
+                                </div>
+                                <div className="text-[10px] font-mono text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-white/10 px-1.5 py-0.5 rounded">
+                                    {acceptedFormats.replace(/image\//g, '').replace(/\*/g, '').toUpperCase()}
+                                </div>
                             </div>
-                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400">
-                                {acceptedFormats.replace(/image\//g, '').toUpperCase()}
-                            </div>
+                            
+                            <button
+                                ref={sortButtonRef}
+                                onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-xs font-medium text-gray-600 dark:text-gray-300 transition-colors"
+                            >
+                                <Icon name="ListFilter" size={14} />
+                                <span>排序</span>
+                            </button>
+                            <SortMenu />
                         </div>
 
                         <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
                             {/* Scrollable Content */}
                             <div className="absolute inset-0 w-full">
-                                {folderGroups.map(group => {
-                                const open = expandedFolders[group.root] ?? true;
-                                return (
-                                    <div key={group.root} className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setExpandedFolders(prev => ({ ...prev, [group.root]: !(prev[group.root] ?? true) }));
-                                            }}
-                                            className="w-full px-4 py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                                        >
-                                            <div className={`transition-transform duration-300 ${open ? 'rotate-0' : '-rotate-90'}`}>
-                                                <Icon name="ChevronDown" size={16} className="text-gray-400" />
-                                            </div>
-                                            <div className="flex-1 min-w-0 text-left">
-                                                <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{group.name}</div>
-                                                <div className="text-[11px] text-gray-500 dark:text-gray-400">{group.files.length} 张</div>
-                                            </div>
-                                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10">
-                                                文件夹
-                                            </div>
-                                        </button>
+                                {Object.values(treeRoot).map((node: any) => renderTree(node))}
 
-                                        <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[20000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                                            <div className="pb-2">
-                                                {group.files.map((f) => {
-                                                    const name = f.relative_path || basename(f.input_path);
-                                                    const ext = getExt(name);
-                                                    return (
-                                                        <div key={f.input_path} className="px-9 py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
-                                                            <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
-                                                            <div className="flex-1 min-w-0 truncate">{name}</div>
-                                                            {ext && (
-                                                                <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10 shrink-0">
-                                                                    {ext}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
+                                {looseFiles.map((f) => {
+                                    const name = basename(f.input_path);
+                                    const ext = getExt(name);
+                                    return (
+                                        <div key={f.input_path} className="px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors group/file">
+                                            <div className="w-2 h-2 rounded-full bg-[#5856D6]/60 shrink-0" />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</div>
+                                                <div className="text-[11px] text-gray-500 dark:text-gray-400">文件</div>
                                             </div>
+                                            <button 
+                                                onClick={(e) => handleRemoveFile(f.input_path, e)}
+                                                className="opacity-0 group-hover/file:opacity-100 p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all"
+                                                title="移除文件"
+                                            >
+                                                <Icon name="Trash2" size={14} />
+                                            </button>
                                         </div>
-                                    </div>
-                                );
-                            })}
-
-                            {looseFiles.map((f) => {
-                                const name = basename(f.input_path);
-                                const ext = getExt(name);
-                                return (
-                                    <div key={f.input_path} className="px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                        <div className="w-2 h-2 rounded-full bg-[#5856D6]/60 shrink-0" />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</div>
-                                            <div className="text-[11px] text-gray-500 dark:text-gray-400">文件</div>
-                                        </div>
-                                        {ext && (
-                                            <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 px-2 py-1 rounded-lg bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10 shrink-0">
-                                                {ext}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
@@ -513,8 +715,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     <p className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center pointer-events-none relative z-10">
                         {title}
                     </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
                         {subTitle}
+                        <span className="block mt-1 text-xs opacity-70">支持 JPG, PNG, WEBP, GIF, SVG 等常见格式</span>
+                        <span className="block mt-0.5 text-xs opacity-70">也可直接拖入整个文件夹</span>
                     </p>
                 </>
             )}

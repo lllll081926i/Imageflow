@@ -59,6 +59,26 @@ ImageFlow 是一个功能强大的图像处理应用，采用现代化技术栈�
 - Python >= 3.8
 - Wails CLI
 
+### Python 依赖（开发环境推荐 uv）
+
+本项目的 Python 依赖通过 `uv` 管理，虚拟环境默认在项目根目录的 `.venv/` 中（依赖随项目一起管理，避免 conda run 并发临时文件冲突）。
+
+1. 安装 uv（任选其一）：
+   - Windows: `winget install Astral.uv`
+   - macOS/Linux: 参考 uv 官方安装方式
+
+2. 在项目根目录创建并同步依赖：
+   ```bash
+   uv sync
+   ```
+
+3. 运行开发模式：
+   ```bash
+   wails dev
+   ```
+
+后端会自动优先探测并使用 `.venv` 中的 Python（也可以用 `IMAGEFLOW_PYTHON_EXE` 手动指定）。
+
 ### 快速开始
 
 1. 克隆项目：
