@@ -6,6 +6,9 @@ import SettingsView from './components/SettingsView';
 import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
 import { ViewState, Theme } from './types';
+import { FEATURES } from './constants';
+
+const FEATURE_IDS = FEATURES.map((feature) => feature.id);
 
 const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
@@ -91,14 +94,22 @@ const App: React.FC = () => {
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
                     <div className="flex-1 p-4 md:p-6 overflow-hidden">
                         <div className="max-w-full mx-auto h-full">
-                            <div key={activeView} className="h-full animate-fade-scale flex flex-col">
-                                {activeView === 'dashboard' ? (
+                            <div className="h-full animate-fade-scale flex flex-col">
+                                <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
                                     <Dashboard onSelect={handleNavigate} />
-                                ) : activeView === 'settings' ? (
+                                </div>
+                                <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
                                     <SettingsView />
-                                ) : (
-                                    <DetailView id={activeView} onBack={() => handleNavigate('dashboard')} />
-                                )}
+                                </div>
+                                {FEATURE_IDS.map((viewId) => (
+                                    <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
+                                        <DetailView
+                                            id={viewId}
+                                            isActive={activeView === viewId}
+                                            onBack={() => handleNavigate('dashboard')}
+                                        />
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>

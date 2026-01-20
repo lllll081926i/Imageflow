@@ -14,12 +14,13 @@ Usage:
 import sys
 import json
 import os
+import io
+import math
 from pathlib import Path
 from PIL import Image
 from reportlab.lib.pagesizes import A4, A3, letter, legal
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import SimpleDocTemplate, PageBreak, Image as RLImage
-from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 import logging
 
@@ -51,7 +52,8 @@ class PDFGenerator:
     
     def generate(self, images, output_path, layout='single',
                  custom_rows=2, custom_cols=2, page_size='A4',
-                 margin=72, title='', author='', portrait=True):
+                 margin=72, title='', author='', portrait=True,
+                 compression_level=0):
         """
         Generate a PDF from multiple images.
         
@@ -66,6 +68,7 @@ class PDFGenerator:
             title (str): PDF metadata title
             author (str): PDF metadata author
             portrait (bool): True for portrait, False for landscape
+            compression_level (int): 0=none, 1-3 JPEG quality levels
         
         Returns:
             dict: Generation result with success status and metadata
@@ -79,7 +82,9 @@ class PDFGenerator:
                     'error': 'No valid images found'
                 }
             
-            logger.info(f"Generating PDF with {len(valid_images)} images")
+            image_count = len(valid_images)
+            page_count = self._estimate_page_count(image_count, layout, custom_rows, custom_cols)
+            logger.info(f"Generating PDF with {image_count} images")
             
             # Get page size
             if page_size in self.PAGE_SIZES:
@@ -112,7 +117,15 @@ class PDFGenerator:
             doc.author = author
             
             # Build content based on layout
-            story = self._build_content(valid_images, layout, custom_rows, custom_cols, pagesize, margin)
+            story = self._build_content(
+                valid_images,
+                layout,
+                custom_rows,
+                custom_cols,
+                pagesize,
+                margin,
+                compression_level,
+            )
             
             # Generate PDF
             doc.build(story)
@@ -126,7 +139,8 @@ class PDFGenerator:
                 'success': True,
                 'output_path': output_path,
                 'file_size': file_size,
-                'image_count': len(valid_images)
+                'image_count': image_count,
+                'page_count': page_count,
             }
             
         except Exception as e:
@@ -144,7 +158,8 @@ class PDFGenerator:
             if os.path.exists(img_path):
                 try:
                     # Try to open the image to validate it
-                    Image.open(img_path)
+                    with Image.open(img_path) as img:
+                        img.verify()
                     valid_images.append(img_path)
                 except Exception as e:
                     logger.warning(f"Cannot open image {img_path}: {e}")
@@ -153,7 +168,7 @@ class PDFGenerator:
         
         return valid_images
     
-    def _build_content(self, images, layout, custom_rows, custom_cols, pagesize, margin):
+    def _build_content(self, images, layout, custom_rows, custom_cols, pagesize, margin, compression_level=0):
         """
         Build the content list for the PDF based on the layout.
         
@@ -173,26 +188,38 @@ class PDFGenerator:
         if layout == 'single':
             # One image per page
             for img_path in images:
-                img = self._create_image_flowable(img_path, pagesize, margin, scale=0.95)
+                img = self._create_image_flowable(
+                    img_path,
+                    pagesize,
+                    margin,
+                    scale=0.95,
+                    compression_level=compression_level,
+                )
                 story.append(img)
                 story.append(PageBreak())
         
         elif layout == '2x2':
             # 2x2 grid layout
-            story.extend(self._create_grid_layout(images, 2, 2, pagesize, margin))
+            story.extend(self._create_grid_layout(images, 2, 2, pagesize, margin, compression_level))
         
         elif layout == '3x3':
             # 3x3 grid layout
-            story.extend(self._create_grid_layout(images, 3, 3, pagesize, margin))
+            story.extend(self._create_grid_layout(images, 3, 3, pagesize, margin, compression_level))
         
         elif layout == 'custom':
             # Custom grid layout
-            story.extend(self._create_grid_layout(images, custom_rows, custom_cols, pagesize, margin))
+            story.extend(self._create_grid_layout(images, custom_rows, custom_cols, pagesize, margin, compression_level))
         
         else:
             # Default to single image per page
             for img_path in images:
-                img = self._create_image_flowable(img_path, pagesize, margin, scale=1.0)
+                img = self._create_image_flowable(
+                    img_path,
+                    pagesize,
+                    margin,
+                    scale=1.0,
+                    compression_level=compression_level,
+                )
                 story.append(img)
                 story.append(PageBreak())
         
@@ -202,7 +229,7 @@ class PDFGenerator:
         
         return story
     
-    def _create_grid_layout(self, images, rows, cols, pagesize, margin):
+    def _create_grid_layout(self, images, rows, cols, pagesize, margin, compression_level=0):
         """Create a grid layout for images."""
         from reportlab.platypus import Table, TableStyle
         from reportlab.lib import colors
@@ -229,7 +256,8 @@ class PDFGenerator:
                             batch[idx],
                             (cell_width, cell_height),
                             margin=0,
-                            scale=0.9
+                            scale=0.9,
+                            compression_level=compression_level,
                         )
                         row_data.append(img)
                     else:
@@ -256,7 +284,7 @@ class PDFGenerator:
         
         return story
     
-    def _create_image_flowable(self, img_path, available_size, margin=0, scale=0.95):
+    def _create_image_flowable(self, img_path, available_size, margin=0, scale=0.95, compression_level=0):
         """
         Create a reportlab Image flowable from a file path.
 
@@ -270,26 +298,73 @@ class PDFGenerator:
             RLImage: Reportlab Image flowable
         """
         # Load image with PIL to get dimensions
-        pil_img = Image.open(img_path)
-        img_width, img_height = pil_img.size
+        with Image.open(img_path) as pil_img:
+            img_width, img_height = pil_img.size
 
-        # Calculate available space (subtract margins first, then apply scale)
-        avail_width = (available_size[0] - 2 * margin) * scale
-        avail_height = (available_size[1] - 2 * margin) * scale
+            # Calculate available space (subtract margins first, then apply scale)
+            avail_width = (available_size[0] - 2 * margin) * scale
+            avail_height = (available_size[1] - 2 * margin) * scale
 
-        # Calculate scale to fit in available space
-        width_ratio = avail_width / img_width
-        height_ratio = avail_height / img_height
-        scale_factor = min(width_ratio, height_ratio, 1.0)
+            # Calculate scale to fit in available space
+            width_ratio = avail_width / img_width
+            height_ratio = avail_height / img_height
+            scale_factor = min(width_ratio, height_ratio, 1.0)
 
-        # Calculate final dimensions
-        final_width = img_width * scale_factor
-        final_height = img_height * scale_factor
+            # Calculate final dimensions
+            final_width = img_width * scale_factor
+            final_height = img_height * scale_factor
 
-        # Create reportlab image
-        img = RLImage(img_path, width=final_width, height=final_height)
+            # Create reportlab image
+            if compression_level > 0:
+                buffer = self._encode_image_for_pdf(pil_img, compression_level)
+                img = RLImage(buffer, width=final_width, height=final_height)
+                img._image_buffer = buffer
+            else:
+                img = RLImage(img_path, width=final_width, height=final_height)
 
         return img
+
+    def _estimate_page_count(self, image_count, layout, rows, cols):
+        if image_count <= 0:
+            return 0
+        if layout == 'single':
+            return image_count
+        if layout == '2x2':
+            per_page = 4
+        elif layout == '3x3':
+            per_page = 9
+        elif layout == 'custom':
+            per_page = max(1, rows) * max(1, cols)
+        else:
+            return image_count
+        return int(math.ceil(image_count / per_page))
+
+    def _encode_image_for_pdf(self, pil_img, compression_level):
+        quality_map = {1: 85, 2: 70, 3: 50}
+        quality = quality_map.get(int(compression_level), 70)
+
+        pil_img = self._prepare_jpeg_image(pil_img)
+
+        buffer = io.BytesIO()
+        pil_img.save(
+            buffer,
+            format="JPEG",
+            quality=quality,
+            optimize=True,
+            progressive=True,
+        )
+        buffer.seek(0)
+        return buffer
+
+    def _prepare_jpeg_image(self, pil_img):
+        if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
+            rgba = pil_img.convert("RGBA")
+            background = Image.new("RGB", rgba.size, (255, 255, 255))
+            background.paste(rgba, mask=rgba.split()[-1])
+            return background
+        if pil_img.mode != "RGB":
+            return pil_img.convert("RGB")
+        return pil_img
 
 
 def process(input_data):
@@ -315,6 +390,7 @@ def process(input_data):
         title = input_data.get('title', '')
         author = input_data.get('author', '')
         portrait = input_data.get('portrait', True)
+        compression_level = input_data.get('compression_level', 0)
 
         # Validate required parameters
         if not images or not output_path:
@@ -335,7 +411,8 @@ def process(input_data):
             margin=margin,
             title=title,
             author=author,
-            portrait=portrait
+            portrait=portrait,
+            compression_level=compression_level
         )
 
         return result
@@ -366,6 +443,7 @@ def main():
         title = input_data.get('title', '')
         author = input_data.get('author', '')
         portrait = input_data.get('portrait', True)
+        compression_level = input_data.get('compression_level', 0)
         
         # Validate required parameters
         if not images or not output_path:
@@ -386,7 +464,8 @@ def main():
                 margin=margin,
                 title=title,
                 author=author,
-                portrait=portrait
+                portrait=portrait,
+                compression_level=compression_level
             )
         
         # Write result to stdout

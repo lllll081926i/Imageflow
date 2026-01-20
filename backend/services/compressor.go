@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
@@ -22,7 +23,7 @@ func NewCompressorService(executor utils.PythonRunner, logger *utils.Logger) *Co
 
 // Compress compresses an image
 func (s *CompressorService) Compress(req models.CompressRequest) (models.CompressResult, error) {
-	s.logger.Info("Compressing image: %s -> %s (mode: %s)", req.InputPath, req.OutputPath, req.Mode)
+	s.logger.Info("Compressing image: %s -> %s (level: %d)", req.InputPath, req.OutputPath, req.Level)
 
 	var result models.CompressResult
 	err := s.executor.ExecuteAndParse("compressor.py", req, &result)
@@ -45,11 +46,18 @@ func (s *CompressorService) CompressBatch(requests []models.CompressRequest) ([]
 	s.logger.Info("Starting batch compression of %d images", len(requests))
 
 	results := make([]models.CompressResult, 0, len(requests))
+	var errs []error
 	for _, req := range requests {
-		res, _ := s.Compress(req)
+		res, err := s.Compress(req)
 		results = append(results, res)
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	s.logger.Info("Batch compression completed")
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

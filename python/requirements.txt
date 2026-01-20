@@ -9,10 +9,19 @@ reportlab>=4.0.0
 
 # EXIF data manipulation library
 piexif>=1.1.3
+ExifRead>=3.0.0
 
 # SVG rasterization (choose one path; svglib uses reportlab renderPM)
 svglib>=1.5.1
 lxml>=5.0.0
+
+# Image compression libraries
+# JPEG compression (lossless optimization)
+mozjpeg-lossless-optimization>=1.1.0
+# PNG lossy compression
+imagequant>=1.0.0
+# PNG lossless optimization
+pyoxipng>=1.0.0
 
 # Optional: For advanced GIF/WebP animation handling
 # imageio>=2.33.0

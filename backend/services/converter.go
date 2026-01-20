@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
@@ -35,7 +36,7 @@ func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertRes
 		defer cleanup()
 
 		req.InputPath = tmp
-		req.ResizeMode = "original"
+		req.ResizeMode = ""
 		req.ScalePercent = 0
 		req.LongEdge = 0
 		req.Width = 0
@@ -63,11 +64,18 @@ func (s *ConverterService) ConvertBatch(requests []models.ConvertRequest) ([]mod
 	s.logger.Info("Starting batch conversion of %d images", len(requests))
 
 	results := make([]models.ConvertResult, 0, len(requests))
+	var errs []error
 	for _, req := range requests {
-		res, _ := s.Convert(req)
+		res, err := s.Convert(req)
 		results = append(results, res)
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	s.logger.Info("Batch conversion completed")
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

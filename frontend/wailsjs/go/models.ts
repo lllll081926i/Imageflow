@@ -61,8 +61,10 @@ export namespace models {
 	export class CompressRequest {
 	    input_path: string;
 	    output_path: string;
-	    mode: string;
-	    quality: number;
+	    level: number;
+	    engine?: string;
+	    target_size_kb?: number;
+	    strip_metadata?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CompressRequest(source);
@@ -72,8 +74,10 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.input_path = source["input_path"];
 	        this.output_path = source["output_path"];
-	        this.mode = source["mode"];
-	        this.quality = source["quality"];
+	        this.level = source["level"];
+	        this.engine = source["engine"];
+	        this.target_size_kb = source["target_size_kb"];
+	        this.strip_metadata = source["strip_metadata"];
 	    }
 	}
 	export class CompressResult {
@@ -83,6 +87,8 @@ export namespace models {
 	    original_size: number;
 	    compressed_size: number;
 	    compression_rate: number;
+	    compression_level: number;
+	    warning?: string;
 	    error?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -97,6 +103,8 @@ export namespace models {
 	        this.original_size = source["original_size"];
 	        this.compressed_size = source["compressed_size"];
 	        this.compression_rate = source["compression_rate"];
+	        this.compression_level = source["compression_level"];
+	        this.warning = source["warning"];
 	        this.error = source["error"];
 	    }
 	}
@@ -305,12 +313,16 @@ export namespace models {
 	export class InfoResult {
 	    success: boolean;
 	    input_path: string;
+	    file_name?: string;
 	    format: string;
 	    mode: string;
 	    width: number;
 	    height: number;
+	    bit_depth?: number;
 	    file_size: number;
+	    modified?: number;
 	    exif?: Record<string, string>;
+	    metadata?: Record<string, any>;
 	    histogram?: Record<string, Array<number>>;
 	    error?: string;
 	
@@ -322,13 +334,87 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
 	        this.input_path = source["input_path"];
+	        this.file_name = source["file_name"];
 	        this.format = source["format"];
 	        this.mode = source["mode"];
 	        this.width = source["width"];
 	        this.height = source["height"];
+	        this.bit_depth = source["bit_depth"];
 	        this.file_size = source["file_size"];
+	        this.modified = source["modified"];
 	        this.exif = source["exif"];
+	        this.metadata = source["metadata"];
 	        this.histogram = source["histogram"];
+	        this.error = source["error"];
+	    }
+	}
+	export class MetadataEditRequest {
+	    input_path: string;
+	    output_path: string;
+	    exif_data: Record<string, any>;
+	    overwrite: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetadataEditRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input_path = source["input_path"];
+	        this.output_path = source["output_path"];
+	        this.exif_data = source["exif_data"];
+	        this.overwrite = source["overwrite"];
+	    }
+	}
+	export class MetadataEditResult {
+	    success: boolean;
+	    input_path: string;
+	    output_path: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetadataEditResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.input_path = source["input_path"];
+	        this.output_path = source["output_path"];
+	        this.error = source["error"];
+	    }
+	}
+	export class MetadataStripRequest {
+	    input_path: string;
+	    output_path: string;
+	    overwrite: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetadataStripRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input_path = source["input_path"];
+	        this.output_path = source["output_path"];
+	        this.overwrite = source["overwrite"];
+	    }
+	}
+	export class MetadataStripResult {
+	    success: boolean;
+	    input_path: string;
+	    output_path: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetadataStripResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.input_path = source["input_path"];
+	        this.output_path = source["output_path"];
 	        this.error = source["error"];
 	    }
 	}
@@ -338,6 +424,7 @@ export namespace models {
 	    page_size: string;
 	    layout: string;
 	    margin: number;
+	    compression_level: number;
 	    title: string;
 	    author: string;
 	
@@ -352,6 +439,7 @@ export namespace models {
 	        this.page_size = source["page_size"];
 	        this.layout = source["layout"];
 	        this.margin = source["margin"];
+	        this.compression_level = source["compression_level"];
 	        this.title = source["title"];
 	        this.author = source["author"];
 	    }

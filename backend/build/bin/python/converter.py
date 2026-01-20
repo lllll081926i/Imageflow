@@ -48,6 +48,130 @@ class ImageConverter:
     def __init__(self):
         """Initialize the converter."""
         logger.info("ImageConverter initialized")
+        self._profile_dir = Path(__file__).resolve().parent / "profiles"
+        self._srgb_profile = None
+        self._srgb_profile_bytes = None
+        self._display_p3_profile = None
+        self._display_p3_profile_bytes = None
+
+    def _read_profile_bytes(self, name: str):
+        try:
+            return (self._profile_dir / name).read_bytes()
+        except Exception:
+            return None
+
+    def _get_srgb_profile(self):
+        if self._srgb_profile is not None:
+            return self._srgb_profile
+        try:
+            from PIL import ImageCms  # type: ignore
+        except Exception:
+            return None
+
+        icc_bytes = self._read_profile_bytes("sRGB-v4.icc")
+        if icc_bytes:
+            try:
+                self._srgb_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+                self._srgb_profile_bytes = icc_bytes
+                return self._srgb_profile
+            except Exception:
+                pass
+
+        try:
+            self._srgb_profile = ImageCms.createProfile("sRGB")
+            try:
+                self._srgb_profile_bytes = self._srgb_profile.tobytes()
+            except Exception:
+                self._srgb_profile_bytes = None
+            return self._srgb_profile
+        except Exception:
+            return None
+
+    def _get_display_p3_profile(self):
+        if self._display_p3_profile is not None:
+            return self._display_p3_profile
+        try:
+            from PIL import ImageCms  # type: ignore
+        except Exception:
+            return None
+
+        icc_bytes = self._read_profile_bytes("DisplayP3-v4.icc")
+        if not icc_bytes:
+            return None
+        try:
+            self._display_p3_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+            self._display_p3_profile_bytes = icc_bytes
+            return self._display_p3_profile
+        except Exception:
+            return None
+
+    def _apply_color_space(self, img, color_space, icc_profile_bytes):
+        cs = str(color_space or "").strip().lower()
+        if not cs or cs in ["keep", "original", "source"]:
+            return img, None, "", False
+
+        if cs == "cmyk":
+            try:
+                return img.convert("CMYK"), None, "", True
+            except Exception as e:
+                return None, None, str(e), False
+
+        try:
+            from PIL import ImageCms  # type: ignore
+        except Exception:
+            return None, None, "Pillow ImageCms not available", False
+
+        target_profile = None
+        target_bytes = None
+        if cs in ["srgb", "s-rgb"]:
+            target_profile = self._get_srgb_profile()
+            target_bytes = self._srgb_profile_bytes
+        elif cs in ["p3", "display-p3", "display_p3", "display p3"]:
+            target_profile = self._get_display_p3_profile()
+            target_bytes = self._display_p3_profile_bytes
+        else:
+            return None, None, f"Unsupported color space: {color_space}", False
+
+        if target_profile is None:
+            return None, None, f"Target profile not available for {color_space}", False
+
+        src_profile = None
+        if icc_profile_bytes:
+            try:
+                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile_bytes))
+            except Exception:
+                src_profile = None
+        if src_profile is None:
+            src_profile = self._get_srgb_profile()
+        if src_profile is None:
+            return None, None, "Source profile not available", False
+
+        work = img
+        alpha = None
+        if img.mode in ("RGBA", "LA"):
+            alpha = img.getchannel("A")
+            work = img.convert("RGB")
+        elif img.mode in ("P", "L"):
+            work = img.convert("RGB")
+        elif img.mode != "RGB":
+            try:
+                work = img.convert("RGB")
+            except Exception:
+                pass
+
+        try:
+            converted = ImageCms.profileToProfile(work, src_profile, target_profile, outputMode="RGB")
+        except Exception as e:
+            return None, None, str(e), False
+
+        if alpha is not None:
+            try:
+                converted = converted.convert("RGBA")
+                converted.putalpha(alpha)
+            except Exception:
+                pass
+
+        return converted, target_bytes, "", True
 
     def _parse_svg_intrinsic_size(self, svg_path: str):
         try:
@@ -283,7 +407,7 @@ class ImageConverter:
             if format_type not in self.OUTPUT_FORMATS:
                 return {
                     'success': False,
-                    'error': f'Unsupported output format: {format_type}'
+                    'error': f'[UNSUPPORTED_FORMAT] Unsupported output format: {format_type}'
                 }
             
             # Open input image (special handling for SVG)
@@ -320,32 +444,21 @@ class ImageConverter:
 
             exif_bytes = img.info.get('exif')
             icc_profile = img.info.get('icc_profile')
-            
-            # Convert RGBA to RGB for formats that don't support transparency
-            if format_type in ['jpg', 'jpeg', 'pdf'] and img.mode == 'RGBA':
-                logger.info("Converting RGBA to RGB")
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[3])  # Use alpha channel as mask
-                img = background
+            output_icc_profile = None
+            color_space_applied = False
             
             if color_space:
-                cs = str(color_space).strip().lower()
-                if cs in ['srgb', 's-rgb']:
-                    try:
-                        from PIL import ImageCms  # type: ignore
-                        srgb = ImageCms.createProfile("sRGB")
-                        if icc_profile:
-                            src = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
-                            img = ImageCms.profileToProfile(img, src, srgb, outputMode='RGB')
-                        else:
-                            img = img.convert('RGB')
-                    except Exception:
-                        img = img.convert('RGB')
-                elif cs == 'cmyk':
-                    try:
-                        img = img.convert('CMYK')
-                    except Exception:
-                        pass
+                converted, target_icc, err, applied = self._apply_color_space(img, color_space, icc_profile)
+                if err:
+                    return {
+                        'success': False,
+                        'error': f'Color space conversion failed: {err}'
+                    }
+                if converted is not None:
+                    img = converted
+                color_space_applied = applied
+                if target_icc:
+                    output_icc_profile = target_icc
 
             mode = str(resize_mode or '').strip().lower()
             if mode == 'percent' and int(scale_percent or 0) > 0:
@@ -371,6 +484,8 @@ class ImageConverter:
             if format_type == 'ico':
                 img, ico_sizes = self._prepare_ico_image(img, ico_sizes)
 
+            img = self._prepare_for_output(img, format_type)
+
             # Prepare save parameters based on format
             save_params = self._get_save_params(format_type, quality, compress_level, ico_sizes)
             if int(dpi or 0) > 0:
@@ -379,8 +494,13 @@ class ImageConverter:
             if keep_metadata:
                 if exif_bytes:
                     save_params['exif'] = exif_bytes
-                if icc_profile:
+                if output_icc_profile:
+                    save_params['icc_profile'] = output_icc_profile
+                elif icc_profile and not color_space_applied:
                     save_params['icc_profile'] = icc_profile
+            else:
+                if output_icc_profile:
+                    save_params['icc_profile'] = output_icc_profile
             
             # Convert format names for Pillow
             pillow_format = self._convert_format_name(format_type)
@@ -391,8 +511,33 @@ class ImageConverter:
                 os.makedirs(output_dir, exist_ok=True)
             
             # Save the image
-            logger.info(f"Saving to: {output_path} (format: {pillow_format})")
-            img.save(output_path, format=pillow_format, **save_params)
+            tmp_output_path = None
+            save_path = output_path
+            try:
+                if os.path.abspath(input_path) == os.path.abspath(output_path):
+                    final_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+                    os.makedirs(final_dir, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(
+                        suffix=Path(output_path).suffix or ".tmp",
+                        delete=False,
+                        dir=final_dir,
+                    ) as tmp:
+                        tmp_output_path = tmp.name
+                    save_path = tmp_output_path
+                    logger.info(f"Overwrite mode detected; writing to temp: {save_path}")
+
+                logger.info(f"Saving to: {save_path} (format: {pillow_format})")
+                img.save(save_path, format=pillow_format, **save_params)
+
+                if tmp_output_path:
+                    os.replace(tmp_output_path, output_path)
+                    tmp_output_path = None
+            finally:
+                try:
+                    if tmp_output_path:
+                        os.remove(tmp_output_path)
+                except Exception:
+                    pass
 
             # Explicitly close image to free memory
             img.close()
@@ -412,7 +557,7 @@ class ImageConverter:
             logger.error(f"File not found: {e}")
             return {
                 'success': False,
-                'error': f'Input file not found: {input_path}'
+                'error': f'[NOT_FOUND] Input file not found: {input_path}'
             }
         except Exception as e:
             logger.error(f"Conversion failed: {e}", exc_info=True)
@@ -464,6 +609,24 @@ class ImageConverter:
         
         # Use high-quality resampling
         return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    def _prepare_for_output(self, img, format_type):
+        if format_type not in ['jpg', 'jpeg', 'pdf']:
+            return img
+        if img.mode in ('RGBA', 'LA'):
+            return self._flatten_alpha(img)
+        if img.mode == 'P' and 'transparency' in img.info:
+            return self._flatten_alpha(img.convert('RGBA'))
+        if img.mode != 'RGB':
+            return img.convert('RGB')
+        return img
+
+    def _flatten_alpha(self, img, background=(255, 255, 255)):
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+        base = Image.new('RGB', img.size, background)
+        base.paste(img, mask=img.split()[3])
+        return base
     
     def _get_save_params(self, format_type, quality, compress_level=6, ico_sizes=None):
         """
@@ -636,7 +799,7 @@ def main():
         if not input_path or not output_path:
             result = {
                 'success': False,
-                'error': 'Missing required parameters: input_path or output_path'
+                'error': '[BAD_INPUT] Missing required parameters: input_path or output_path'
             }
         else:
             # Create converter and perform conversion
@@ -667,13 +830,13 @@ def main():
         logger.error(f"Invalid JSON input: {e}")
         json.dump({
             'success': False,
-            'error': f'Invalid JSON input: {str(e)}'
+            'error': f'[BAD_INPUT] Invalid JSON input: {str(e)}'
         }, sys.stdout)
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
         json.dump({
             'success': False,
-            'error': str(e)
+            'error': f'[INTERNAL] {str(e)}'
         }, sys.stdout)
 
 

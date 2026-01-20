@@ -22,6 +22,8 @@ export function Convert(arg1:models.ConvertRequest):Promise<models.ConvertResult
 
 export function ConvertBatch(arg1:Array<models.ConvertRequest>):Promise<Array<models.ConvertResult>>;
 
+export function EditMetadata(arg1:models.MetadataEditRequest):Promise<models.MetadataEditResult>;
+
 export function ExpandDroppedPaths(arg1:Array<string>):Promise<models.ExpandDroppedPathsResult>;
 
 export function GeneratePDF(arg1:models.PDFRequest):Promise<models.PDFResult>;
@@ -37,3 +39,5 @@ export function SaveSettings(arg1:models.AppSettings):Promise<models.AppSettings
 export function SelectOutputDirectory():Promise<string>;
 
 export function SplitGIF(arg1:models.GIFSplitRequest):Promise<models.GIFSplitResult>;
+
+export function StripMetadata(arg1:models.MetadataStripRequest):Promise<models.MetadataStripResult>;

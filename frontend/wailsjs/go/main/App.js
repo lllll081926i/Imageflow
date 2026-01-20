@@ -42,6 +42,10 @@ export function ConvertBatch(arg1) {
   return window['go']['main']['App']['ConvertBatch'](arg1);
 }
 
+export function EditMetadata(arg1) {
+  return window['go']['main']['App']['EditMetadata'](arg1);
+}
+
 export function ExpandDroppedPaths(arg1) {
   return window['go']['main']['App']['ExpandDroppedPaths'](arg1);
 }
@@ -72,4 +76,8 @@ export function SelectOutputDirectory() {
 
 export function SplitGIF(arg1) {
   return window['go']['main']['App']['SplitGIF'](arg1);
+}
+
+export function StripMetadata(arg1) {
+  return window['go']['main']['App']['StripMetadata'](arg1);
 }

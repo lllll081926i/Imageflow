@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -27,6 +28,7 @@ type App struct {
 	pdfGeneratorService *services.PDFGeneratorService
 	gifSplitterService  *services.GIFSplitterService
 	infoViewerService   *services.InfoViewerService
+	metadataService     *services.MetadataService
 	watermarkService    *services.WatermarkService
 	adjusterService     *services.AdjusterService
 	filterService       *services.FilterService
@@ -89,6 +91,7 @@ func (a *App) startup(ctx context.Context) {
 	a.pdfGeneratorService = services.NewPDFGeneratorService(runner, logger)
 	a.gifSplitterService = services.NewGIFSplitterService(runner, logger)
 	a.infoViewerService = services.NewInfoViewerService(runner, logger)
+	a.metadataService = services.NewMetadataService(runner, logger)
 	a.watermarkService = services.NewWatermarkService(runner, logger)
 	a.adjusterService = services.NewAdjusterService(runner, logger)
 	a.filterService = services.NewFilterService(runner, logger)
@@ -145,6 +148,7 @@ func (a *App) SaveSettings(settings models.AppSettings) (models.AppSettings, err
 		a.pdfGeneratorService = services.NewPDFGeneratorService(runner, a.logger)
 		a.gifSplitterService = services.NewGIFSplitterService(runner, a.logger)
 		a.infoViewerService = services.NewInfoViewerService(runner, a.logger)
+		a.metadataService = services.NewMetadataService(runner, a.logger)
 		a.watermarkService = services.NewWatermarkService(runner, a.logger)
 		a.adjusterService = services.NewAdjusterService(runner, a.logger)
 		a.filterService = services.NewFilterService(runner, a.logger)
@@ -180,6 +184,8 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 	if n == 0 {
 		return results, nil
 	}
+	var errsMu sync.Mutex
+	var errs []error
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -198,8 +204,13 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				res, _ := a.converterService.Convert(requests[idx])
+				res, err := a.converterService.Convert(requests[idx])
 				results[idx] = res
+				if err != nil {
+					errsMu.Lock()
+					errs = append(errs, fmt.Errorf("convert[%d]: %w", idx, err))
+					errsMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -208,6 +219,9 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 	}
 	close(jobs)
 	wg.Wait()
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }
 
@@ -223,6 +237,8 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 	if n == 0 {
 		return results, nil
 	}
+	var errsMu sync.Mutex
+	var errs []error
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -241,8 +257,13 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				res, _ := a.compressorService.Compress(requests[idx])
+				res, err := a.compressorService.Compress(requests[idx])
 				results[idx] = res
+				if err != nil {
+					errsMu.Lock()
+					errs = append(errs, fmt.Errorf("compress[%d]: %w", idx, err))
+					errsMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -251,6 +272,9 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 	}
 	close(jobs)
 	wg.Wait()
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }
 
@@ -267,6 +291,15 @@ func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error
 // GetInfo retrieves image information
 func (a *App) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
 	return a.infoViewerService.GetInfo(req)
+}
+
+// EditMetadata edits image metadata (EXIF)
+func (a *App) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditResult, error) {
+	return a.infoViewerService.EditMetadata(req)
+}
+
+func (a *App) StripMetadata(req models.MetadataStripRequest) (models.MetadataStripResult, error) {
+	return a.metadataService.StripMetadata(req)
 }
 
 // AddWatermark adds a watermark to an image

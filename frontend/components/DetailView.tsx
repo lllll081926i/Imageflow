@@ -7,6 +7,7 @@ import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, Fil
 interface DetailViewProps {
     id: ViewState;
     onBack: () => void;
+    isActive?: boolean;
 }
 
 type DroppedFile = {
@@ -46,10 +47,10 @@ type ConverterSettingsProps = {
     setKeepMetadata: (v: boolean) => void;
     maintainAR: boolean;
     setMaintainAR: (v: boolean) => void;
-    colorSpace: string;
-    setColorSpace: (v: string) => void;
-    dpi: number;
-    setDpi: (v: number) => void;
+    filePrefix: string;
+    setFilePrefix: (v: string) => void;
+    overwriteSource: boolean;
+    setOverwriteSource: (v: boolean) => void;
 };
 
 const ConverterSettings = memo(({
@@ -75,10 +76,10 @@ const ConverterSettings = memo(({
     setKeepMetadata,
     maintainAR,
     setMaintainAR,
-    colorSpace,
-    setColorSpace,
-    dpi,
-    setDpi,
+    filePrefix,
+    setFilePrefix,
+    overwriteSource,
+    setOverwriteSource,
 }: ConverterSettingsProps) => {
 
     const toggleIcoSize = (size: number) => {
@@ -195,14 +196,15 @@ const ConverterSettings = memo(({
             )}
 
             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                     <CustomSelect label="色彩空间" options={['保持原样', 'sRGB', 'P3', 'CMYK']} value={colorSpace} onChange={setColorSpace} />
-                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">DPI</label>
-                        <input type="number" value={dpi} onChange={e => setDpi(Number(e.target.value))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
-                     </div>
-                </div>
                 <Switch label="保留元数据 (EXIF)" checked={keepMetadata} onChange={setKeepMetadata} />
+            </div>
+
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件前缀</label>
+                    <input type="text" value={filePrefix} onChange={e => setFilePrefix(e.target.value)} placeholder="例如: IF" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
+                </div>
+                <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
             </div>
         </div>
     );
@@ -213,10 +215,14 @@ type CompressorSettingsProps = {
     setMode: (v: string) => void;
     targetSize: boolean;
     setTargetSize: (v: boolean) => void;
-    stripMeta: boolean;
-    setStripMeta: (v: boolean) => void;
+    targetSizeKB: number;
+    setTargetSizeKB: (v: number) => void;
     engine: string;
     setEngine: (v: string) => void;
+    filePrefix: string;
+    setFilePrefix: (v: string) => void;
+    overwriteSource: boolean;
+    setOverwriteSource: (v: boolean) => void;
 };
 
 const CompressorSettings = memo(({
@@ -224,10 +230,14 @@ const CompressorSettings = memo(({
     setMode,
     targetSize,
     setTargetSize,
-    stripMeta,
-    setStripMeta,
+    targetSizeKB,
+    setTargetSizeKB,
     engine,
     setEngine,
+    filePrefix,
+    setFilePrefix,
+    overwriteSource,
+    setOverwriteSource,
 }: CompressorSettingsProps) => {
     
     return (
@@ -241,22 +251,32 @@ const CompressorSettings = memo(({
                  />
             </div>
 
-            <CustomSelect label="压缩引擎" options={['MozJPEG (推荐)', 'Guetzli (慢但小)', 'PNGQuant (针对PNG)', 'OxiPNG']} value={engine} onChange={setEngine} />
+            <CustomSelect label="压缩引擎" options={['自动 (推荐)', 'MozJPEG (JPEG)', 'PNGQuant (PNG)', 'OxiPNG (PNG 无损)', 'Pillow (兼容)']} value={engine} onChange={setEngine} />
 
             <div className="space-y-4 pt-2">
                 <Switch label="指定目标大小限制 (KB)" checked={targetSize} onChange={setTargetSize} />
                 {targetSize && (
                      <div className="animate-enter">
-                        <input type="number" placeholder="例如: 500" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                        <input type="number" value={targetSizeKB} onChange={e => setTargetSizeKB(Number(e.target.value))} placeholder="例如: 500" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
                      </div>
                 )}
             </div>
 
              <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
-                 <Switch label="移除所有元数据 (隐私保护)" checked={stripMeta} onChange={setStripMeta} />
                  <div className="p-3 rounded-xl bg-green-50 dark:bg-green-500/10 text-xs text-green-700 dark:text-green-400 leading-relaxed border border-green-100 dark:border-green-500/10">
-                    {mode === '无损' ? '仅优化文件结构，不损失任何画质。' : `当前使用 ${engine} 智能量化算法，预计减少 40%-80% 体积。`}
+                    {mode === '无损' ? '无损优化：JPG 使用 MozJPEG，PNG 使用 OxiPNG。' : `引擎选择：${engine}。目标大小会按需逐步降低质量直至满足。`}
                 </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                    默认移除隐私元数据，保留 DPI 与色域信息。
+                </div>
+            </div>
+
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件前缀</label>
+                    <input type="text" value={filePrefix} onChange={e => setFilePrefix(e.target.value)} placeholder="例如: IF" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
+                </div>
+                <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
             </div>
         </div>
     );
@@ -426,12 +446,35 @@ const FilterSettings = memo(() => {
     );
 });
 
-const PdfSettings = memo(() => {
-    const [size, setSize] = useState('A4 (210 x 297 mm)');
-    const [layout, setLayout] = useState('纵向');
-    const [fit, setFit] = useState('适应页面');
-    const [compress, setCompress] = useState(false);
-    const [ocr, setOcr] = useState(false);
+type PdfSettingsProps = {
+    size: string;
+    setSize: (v: string) => void;
+    layout: string;
+    setLayout: (v: string) => void;
+    fit: string;
+    setFit: (v: string) => void;
+    compression: string;
+    setCompression: (v: string) => void;
+    title: string;
+    setTitle: (v: string) => void;
+    author: string;
+    setAuthor: (v: string) => void;
+};
+
+const PdfSettings = memo(({
+    size,
+    setSize,
+    layout,
+    setLayout,
+    fit,
+    setFit,
+    compression,
+    setCompression,
+    title,
+    setTitle,
+    author,
+    setAuthor,
+}: PdfSettingsProps) => {
 
     return (
          <div className="space-y-6">
@@ -457,12 +500,14 @@ const PdfSettings = memo(() => {
             <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
                  <div className="space-y-3">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">元数据</label>
-                    <input type="text" placeholder="文档标题" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                    <input type="text" placeholder="作者" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
+                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="文档标题" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
+                    <input type="text" value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="作者" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
                  </div>
                 <div className="h-px bg-gray-100 dark:bg-white/5" />
-                <Switch label="压缩图片流 (减小体积)" checked={compress} onChange={setCompress} />
-                <Switch label="OCR 文字识别 (创建可搜索 PDF)" checked={ocr} onChange={setOcr} />
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">PDF 压缩</label>
+                    <SegmentedControl options={['不压缩', '轻度', '标准', '强力']} value={compression} onChange={setCompression} />
+                </div>
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">文档加密 (可选)</label>
                     <input type="password" placeholder="留空则不加密" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
@@ -509,53 +554,236 @@ const GifSettings = memo(() => {
     );
 });
 
-const InfoSettings = memo(() => {
-    // Mock Data for UI
-    const exifData = [
-        { label: '尺寸', value: '4032 x 3024' },
-        { label: '文件大小', value: '4.2 MB' },
-        { label: '颜色空间', value: 'Display P3' },
-        { label: '深度', value: '24 bit' },
-        { label: 'DPI', value: '72' },
-        { label: '设备制造', value: 'Apple' },
-        { label: '设备型号', value: 'iPhone 15 Pro' },
-        { label: '光圈', value: 'f/1.78' },
-        { label: '曝光时间', value: '1/120 s' },
-        { label: 'ISO 感光度', value: '80' },
-        { label: '焦距', value: '24mm' },
-        { label: 'GPS', value: '34.05, -118.24' },
-    ];
+type InfoSettingsProps = {
+    filePath: string;
+    info: any | null;
+    onExportJSON: () => void;
+    onClearPrivacy: () => void;
+    onEditMetadata: (key: string, value: any) => Promise<void>;
+};
+
+const InfoSettings = memo(({
+    filePath,
+    info,
+    onExportJSON,
+    onClearPrivacy,
+    onEditMetadata,
+}: InfoSettingsProps) => {
+    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [editingValue, setEditingValue] = useState('');
+
+    const buildRowsFromMap = (data?: Record<string, any>, editableKeys?: Set<string>) => {
+        if (!data) return [];
+        return Object.keys(data)
+            .sort((a, b) => a.localeCompare(b))
+            .map((key) => ({
+                label: key,
+                value: String(data[key]),
+                editKey: key.startsWith('piexif:') ? key.slice('piexif:'.length) : key,
+                editable: Boolean(editableKeys?.has(key.startsWith('piexif:') ? key.slice('piexif:'.length) : key))
+                    && !(key.startsWith('piexif:') ? key.slice('piexif:'.length) : key).toLowerCase().includes('thumbnail'),
+            }))
+            .filter((row) => row.value !== '' && row.value !== 'undefined' && row.value !== 'null');
+    };
+
+    const meta = info?.metadata || {};
+    const editableKeys = new Set(Object.keys(meta.piexif || {}));
+    const parseResolution = (value: any) => {
+        if (value === null || value === undefined) return null;
+        const text = String(value).trim();
+        if (!text) return null;
+        const fractionMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+        if (fractionMatch) {
+            const num = Number(fractionMatch[1]);
+            const den = Number(fractionMatch[2]);
+            if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
+                return num / den;
+            }
+        }
+        const nums = text.match(/-?\d+(?:\.\d+)?/g);
+        if (!nums || nums.length === 0) return null;
+        if (nums.length >= 2 && text.includes(',')) {
+            const num = Number(nums[0]);
+            const den = Number(nums[1]);
+            if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
+                return num / den;
+            }
+        }
+        const num = Number(nums[0]);
+        return Number.isFinite(num) ? num : null;
+    };
+    const formatDpi = (value: number) => {
+        if (!Number.isFinite(value)) return '';
+        return Number.isInteger(value) ? `${value}` : `${value.toFixed(2)}`;
+    };
+    const formatBytes = (value: number) => {
+        if (!Number.isFinite(value) || value < 0) return '';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let size = value;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex += 1;
+        }
+        if (unitIndex === 0) {
+            return `${value} B`;
+        }
+        const decimals = size >= 10 ? 1 : 2;
+        return `${value} B (${size.toFixed(decimals)} ${units[unitIndex]})`;
+    };
+    const buildFlatMetadata = () => {
+        let merged: Record<string, any> = {};
+        if (info?.exif && Object.keys(info.exif).length > 0) {
+            merged = { ...(info.exif as Record<string, any>) };
+        } else {
+            const groups = ['exifread', 'piexif', 'extra'];
+            for (const group of groups) {
+                const items = meta[group] || {};
+                for (const [key, value] of Object.entries(items)) {
+                    if (Object.prototype.hasOwnProperty.call(merged, key)) {
+                        merged[`${group}:${key}`] = value;
+                    } else {
+                        merged[key] = value;
+                    }
+                }
+            }
+        }
+
+        const basic: Record<string, any> = {};
+        if (filePath) {
+            basic['Basic:Path'] = filePath;
+        }
+        if (typeof info?.file_size === 'number') {
+            basic['Basic:Size'] = formatBytes(info.file_size);
+        }
+        if (typeof info?.width === 'number') {
+            basic['Basic:Width'] = info.width;
+        }
+        if (typeof info?.height === 'number') {
+            basic['Basic:Height'] = info.height;
+        }
+        if (typeof info?.width === 'number' && typeof info?.height === 'number' && info.width && info.height) {
+            basic['Basic:Dimensions'] = `${info.width}x${info.height}`;
+        }
+
+        const dpiFromPng = merged['PNG:DPI'];
+        const xRes = merged['Image XResolution'] ?? merged['0th:XResolution'];
+        const yRes = merged['Image YResolution'] ?? merged['0th:YResolution'];
+        let dpiX = null;
+        let dpiY = null;
+        if (dpiFromPng) {
+            const dpiText = String(dpiFromPng);
+            const match = dpiText.match(/(-?\d+(?:\.\d+)?)\s*x\s*(-?\d+(?:\.\d+)?)/i);
+            if (match) {
+                dpiX = Number(match[1]);
+                dpiY = Number(match[2]);
+            } else {
+                dpiX = parseResolution(dpiFromPng);
+                dpiY = parseResolution(dpiFromPng);
+            }
+        } else {
+            dpiX = parseResolution(xRes);
+            dpiY = parseResolution(yRes);
+        }
+        if (dpiX || dpiY) {
+            const left = dpiX ? formatDpi(dpiX) : '';
+            const right = dpiY ? formatDpi(dpiY) : '';
+            basic['Basic:DPI'] = right ? `${left}x${right}` : left;
+        }
+
+        return { ...basic, ...merged };
+    };
+    const flatMeta = buildFlatMetadata();
+    let rows = buildRowsFromMap(flatMeta, editableKeys);
+    if (!info?.success && info?.error) {
+        rows = [{ label: '错误', value: String(info.error), editKey: '', editable: false }];
+    }
+
+    const name = filePath ? filePath.replace(/\\/g, '/').split('/').pop() || filePath : '';
+    const isEmpty = rows.length === 0;
+
+    const startEdit = (label: string, value: string) => {
+        setEditingKey(label);
+        setEditingValue(value);
+    };
+
+    const commitEdit = async (key: string, value: string) => {
+        if (!key) {
+            setEditingKey(null);
+            return;
+        }
+        const trimmed = value.trim();
+        const payload = trimmed.toLowerCase() == 'null' ? null : trimmed;
+        await onEditMetadata(key, payload);
+        setEditingKey(null);
+    };
 
     return (
         <div className="h-full flex flex-col">
             <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4 flex items-center justify-between">
-                <span>元数据预览</span>
-                <span className="text-xs text-gray-400 font-normal">sample.jpg</span>
+                <span>全部元数据</span>
+                <span className="text-xs text-gray-400 font-normal">{name || '-'}</span>
             </div>
             <div className="bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 overflow-hidden text-sm flex-1 overflow-y-auto no-scrollbar">
-                <table className="w-full">
-                    <tbody>
-                        {exifData.map((item, i) => (
-                            <tr key={i} className="border-b border-gray-100 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400 w-1/3">{item.label}</td>
-                                <td className="py-2.5 px-4 text-gray-900 dark:text-white font-mono text-xs">{item.value}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                {isEmpty ? (
+                    <div className="p-4 text-xs text-gray-500 dark:text-gray-400">
+                        暂无可显示的元数据
+                    </div>
+                ) : (
+                    <table className="w-full">
+                        <tbody>
+                            {rows.map((item, i) => {
+                                const isEditing = editingKey === item.label;
+                                const isEditable = Boolean(item.editable) && !(item.value || '').startsWith('hex:');
+                                return (
+                                    <tr key={`${item.label}-${i}`} className="border-b border-gray-100 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                        <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400 w-1/3">{item.label}</td>
+                                        <td className="py-2.5 px-4 text-gray-900 dark:text-white font-mono text-xs break-all">
+                                            {isEditing ? (
+                                                <input
+                                                    autoFocus
+                                                    value={editingValue}
+                                                    onChange={(e) => setEditingValue(e.target.value)}
+                                                    onBlur={() => commitEdit(item.editKey, editingValue)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            commitEdit(item.editKey, editingValue);
+                                                        } else if (e.key === 'Escape') {
+                                                            setEditingKey(null);
+                                                        }
+                                                    }}
+                                                    className="w-full px-2 py-1 rounded bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 text-xs font-mono outline-none"
+                                                />
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => isEditable && startEdit(item.label, item.value)}
+                                                    className={`text-left w-full ${isEditable ? 'cursor-text hover:text-[#007AFF]' : 'cursor-default'}`}
+                                                >
+                                                    {item.value}
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                )}
             </div>
             <div className="mt-4 flex gap-3 shrink-0">
-                 <button className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors">导出 JSON</button>
-                 <button className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 transition-colors">清除隐私信息</button>
+                 <button onClick={onExportJSON} disabled={!info?.success} className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">导出 JSON</button>
+                 <button onClick={onClearPrivacy} disabled={!filePath} className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">清除隐私信息</button>
             </div>
         </div>
     );
 });
 
-const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
+const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) => {
     const feature = FEATURES.find(f => f.id === id);
     if (!feature) return null;
 
+    const isInfo = id === 'info';
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [preserveFolderStructure, setPreserveFolderStructure] = useState(true);
     const [outputDir, setOutputDir] = useState('');
@@ -574,13 +802,23 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
     const [convLongEdge, setConvLongEdge] = useState(1920);
     const [convKeepMetadata, setConvKeepMetadata] = useState(false);
     const [convMaintainAR, setConvMaintainAR] = useState(true);
-    const [convColorSpace, setConvColorSpace] = useState('保持原样');
-    const [convDpi, setConvDpi] = useState(0);
+    const [convFilePrefix, setConvFilePrefix] = useState('IF');
+    const [convOverwriteSource, setConvOverwriteSource] = useState(false);
 
     const [compMode, setCompMode] = useState('标准');
     const [compTargetSize, setCompTargetSize] = useState(false);
-    const [compStripMeta, setCompStripMeta] = useState(true);
-    const [compEngine, setCompEngine] = useState('MozJPEG (推荐)');
+    const [compTargetSizeKB, setCompTargetSizeKB] = useState(500);
+    const [compEngine, setCompEngine] = useState('自动 (推荐)');
+    const [compFilePrefix, setCompFilePrefix] = useState('IF');
+    const [compOverwriteSource, setCompOverwriteSource] = useState(false);
+    const [pdfSize, setPdfSize] = useState('A4 (210 x 297 mm)');
+    const [pdfLayout, setPdfLayout] = useState('纵向');
+    const [pdfFit, setPdfFit] = useState('适应页面 (保持比例)');
+    const [pdfCompression, setPdfCompression] = useState('不压缩');
+    const [pdfTitle, setPdfTitle] = useState('');
+    const [pdfAuthor, setPdfAuthor] = useState('');
+    const [infoFilePath, setInfoFilePath] = useState('');
+    const [infoPreview, setInfoPreview] = useState<any | null>(null);
 
     const renderSettings = () => {
         switch(id) {
@@ -609,10 +847,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         setKeepMetadata={setConvKeepMetadata}
                         maintainAR={convMaintainAR}
                         setMaintainAR={setConvMaintainAR}
-                        colorSpace={convColorSpace}
-                        setColorSpace={setConvColorSpace}
-                        dpi={convDpi}
-                        setDpi={setConvDpi}
+                        filePrefix={convFilePrefix}
+                        setFilePrefix={setConvFilePrefix}
+                        overwriteSource={convOverwriteSource}
+                        setOverwriteSource={setConvOverwriteSource}
                     />
                 );
             case 'compressor':
@@ -622,18 +860,123 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         setMode={setCompMode}
                         targetSize={compTargetSize}
                         setTargetSize={setCompTargetSize}
-                        stripMeta={compStripMeta}
-                        setStripMeta={setCompStripMeta}
+                        targetSizeKB={compTargetSizeKB}
+                        setTargetSizeKB={setCompTargetSizeKB}
                         engine={compEngine}
                         setEngine={setCompEngine}
+                        filePrefix={compFilePrefix}
+                        setFilePrefix={setCompFilePrefix}
+                        overwriteSource={compOverwriteSource}
+                        setOverwriteSource={setCompOverwriteSource}
                     />
                 );
             case 'watermark': return <WatermarkSettings />;
             case 'adjust': return <AdjustSettings />;
             case 'filter': return <FilterSettings />;
-            case 'pdf': return <PdfSettings />;
+            case 'pdf':
+                return (
+                    <PdfSettings
+                        size={pdfSize}
+                        setSize={setPdfSize}
+                        layout={pdfLayout}
+                        setLayout={setPdfLayout}
+                        fit={pdfFit}
+                        setFit={setPdfFit}
+                        compression={pdfCompression}
+                        setCompression={setPdfCompression}
+                        title={pdfTitle}
+                        setTitle={setPdfTitle}
+                        author={pdfAuthor}
+                        setAuthor={setPdfAuthor}
+                    />
+                );
             case 'gif': return <GifSettings />;
-            case 'info': return <InfoSettings />;
+            case 'info': {
+                const onExportJSON = () => {
+                    if (!infoPreview?.success) return;
+                    try {
+                        const content = JSON.stringify(infoPreview, null, 2);
+                        const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const name = (infoFilePath || 'image').replace(/\\/g, '/').split('/').pop() || 'image';
+                        a.href = url;
+                        a.download = `${name}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    } catch (e) {
+                        console.error(e);
+                    }
+                };
+
+                const onClearPrivacy = async () => {
+                    if (!infoFilePath) return;
+                    try {
+                        const normalized = infoFilePath.replace(/\\/g, '/');
+                        const idx = normalized.lastIndexOf('/');
+                        const dir = idx >= 0 ? normalized.slice(0, idx) : '';
+                        const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
+                        const outPath = (dir ? `${dir}/` : '') + `IF_${name}`;
+
+                        const appAny = (window.go?.main?.App as any);
+                        if (!appAny?.StripMetadata) {
+                            setLastMessage('后端未接入隐私清理接口');
+                            return;
+                        }
+                        setLastMessage('');
+                        const res = await appAny.StripMetadata({ input_path: infoFilePath, output_path: outPath, overwrite: false });
+                        if (res?.success) {
+                            setLastMessage(`隐私清理完成：${res.output_path || outPath}`);
+                            const refreshed = await window.go.main.App.GetInfo({ input_path: res.output_path || outPath });
+                            setInfoFilePath(res.output_path || outPath);
+                            setInfoPreview(refreshed);
+                        } else {
+                            setLastMessage(res?.error || '隐私清理失败');
+                        }
+                    } catch (e: any) {
+                        console.error(e);
+                        setLastMessage(typeof e?.message === 'string' ? e.message : '隐私清理失败');
+                    }
+                };
+
+                const onEditMetadata = async (key: string, value: any) => {
+                    if (!infoFilePath) return;
+                    const appAny = (window.go?.main?.App as any);
+                    if (!appAny?.EditMetadata) {
+                        setLastMessage('后端未接入元数据编辑接口');
+                        return;
+                    }
+                    setLastMessage('');
+                    try {
+                        const res = await appAny.EditMetadata({
+                            input_path: infoFilePath,
+                            output_path: infoFilePath,
+                            exif_data: { [key]: value },
+                            overwrite: true,
+                        });
+                        if (res?.success) {
+                            setLastMessage('元数据已更新');
+                            const refreshed = await window.go.main.App.GetInfo({ input_path: infoFilePath });
+                            setInfoPreview(refreshed);
+                        } else {
+                            setLastMessage(res?.error || '元数据编辑失败');
+                        }
+                    } catch (e: any) {
+                        console.error(e);
+                        setLastMessage(typeof e?.message === 'string' ? e.message : '元数据编辑失败');
+                    }
+                };
+
+                return (
+                    <InfoSettings
+                        filePath={infoFilePath}
+                        info={infoPreview}
+                        onExportJSON={onExportJSON}
+                        onClearPrivacy={onClearPrivacy}
+                        onEditMetadata={onEditMetadata}
+                    />
+                );
+            }
             default: return <div className="text-gray-400 text-sm text-center py-10">暂无特殊设置</div>;
         }
     };
@@ -681,11 +1024,64 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
         if (idx === -1) return `${normalized}.${ext}`;
         return `${normalized.slice(0, idx)}.${ext}`;
     };
+    const extname = (p: string) => {
+        const normalized = p.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('.');
+        if (idx === -1) return '';
+        return normalized.slice(idx + 1).toLowerCase();
+    };
+    const matchesFormat = (format: string, ext: string) => {
+        const f = (format || '').toLowerCase();
+        const e = (ext || '').toLowerCase();
+        if (f === 'jpg' || f === 'jpeg') return e === 'jpg' || e === 'jpeg';
+        if (f === 'tif' || f === 'tiff') return e === 'tif' || e === 'tiff';
+        return f === e;
+    };
     const addSuffix = (p: string, suffix: string) => {
         const normalized = p.replace(/\\/g, '/');
         const idx = normalized.lastIndexOf('.');
         if (idx === -1) return `${normalized}${suffix}`;
         return `${normalized.slice(0, idx)}${suffix}${normalized.slice(idx)}`;
+    };
+    const sanitizeFilePrefix = (prefix: string) => (prefix || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+    const addPrefixToRelPath = (rel: string, prefix: string) => {
+        const p = sanitizeFilePrefix(prefix);
+        if (!p) return rel;
+        const normalized = rel.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('/');
+        const dir = idx >= 0 ? normalized.slice(0, idx + 1) : '';
+        const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
+        return `${dir}${p}_${name}`;
+    };
+
+    const loadInfoForPath = async (p: string) => {
+        if (!window.go?.main?.App?.GetInfo) {
+            setLastMessage('未检测到 Wails 运行环境');
+            return;
+        }
+        const normalized = normalizePath(p);
+        setIsProcessing(true);
+        setProgress(0);
+        setLastMessage('');
+        setInfoFilePath(normalized);
+        setInfoPreview(null);
+        try {
+            const info = await window.go.main.App.GetInfo({ input_path: normalized });
+            setInfoPreview(info);
+            if (info?.success) {
+                setLastMessage(`信息读取完成：${basename(normalized)}`);
+            } else {
+                setLastMessage(info?.error || '信息读取失败');
+            }
+        } catch (err: any) {
+            console.error(`Failed to get info ${p}:`, err);
+            const msg = typeof err?.message === 'string' ? err.message : '信息读取失败';
+            setInfoPreview({ success: false, error: msg });
+            setLastMessage(msg);
+        } finally {
+            setProgress(100);
+            setIsProcessing(false);
+        }
     };
 
     const handleStartProcessing = async () => {
@@ -718,6 +1114,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                 const quality = convQuality;
                 const compress_level = convCompressLevel;
                 const ico_sizes = convIcoSizes;
+                const effectiveIcoSizes = (ico_sizes || []).filter((s) => typeof s === 'number' && s > 0);
                 const resizeModeMap: Record<string, string> = {
                     '原图尺寸': 'original',
                     '按比例': 'percent',
@@ -725,19 +1122,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                     '最长边': 'long_edge',
                 };
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
-                const color_space = convColorSpace === '保持原样' ? '' : convColorSpace;
-
-                const buildReq = (f: DroppedFile, icoSize?: number) => {
+                const buildReq = (f: DroppedFile) => {
+                    const input_path = normalizePath(f.input_path);
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const baseOutRel = replaceExt(rel, format);
-                    const outRel = format === 'ico' && icoSize ? addSuffix(baseOutRel, `_${icoSize}px`) : baseOutRel;
+                    const outRel = baseOutRel;
+                    const namedRel = convOverwriteSource ? outRel : addPrefixToRelPath(outRel, convFilePrefix);
+                    const canOverwrite = convOverwriteSource && matchesFormat(format, extname(f.input_path));
+                    const output_path = canOverwrite ? input_path : joinPath(outDir, namedRel);
                     return {
-                        input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, outRel),
+                        input_path,
+                        output_path,
                         format,
                         quality,
                         compress_level,
-                        ico_sizes: format === 'ico' && icoSize ? [icoSize] : ico_sizes,
+                        ico_sizes: format === 'ico' ? (effectiveIcoSizes.length ? effectiveIcoSizes : [16]) : [],
                         width: resize_mode === 'fixed' ? convFixedWidth : 0,
                         height: resize_mode === 'fixed' ? convFixedHeight : 0,
                         maintain_ar: convMaintainAR,
@@ -745,23 +1144,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                         scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
                         long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
                         keep_metadata: convKeepMetadata,
-                        color_space,
-                        dpi: convDpi,
                     };
                 };
 
-                const requests = (() => {
-                    if (format !== 'ico') return files.map((f) => buildReq(f));
-                    const sizes = (ico_sizes || []).filter((s) => typeof s === 'number' && s > 0);
-                    const effective = sizes.length > 0 ? sizes : [16];
-                    const reqs: any[] = [];
-                    for (const f of files) {
-                        for (const s of effective) {
-                            reqs.push(buildReq(f, s));
-                        }
-                    }
-                    return reqs;
-                })();
+                const requests = files.map((f) => buildReq(f));
 
                 const chunkSize = requests.length >= 80 ? 20 : 1;
                 for (let i = 0; i < requests.length; i += chunkSize) {
@@ -784,42 +1170,71 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             }
 
             if (id === 'compressor') {
-                const modeMap: Record<string, { mode: string; quality: number }> = {
-                    '无损': { mode: 'lossless', quality: 100 },
-                    '轻度': { mode: 'smart', quality: 90 },
-                    '标准': { mode: 'smart', quality: 80 },
-                    '强力': { mode: 'lossy', quality: 60 },
-                    '极限': { mode: 'lossy', quality: 40 },
+                const levelMap: Record<string, number> = {
+                    '无损': 1,
+                    '轻度': 2,
+                    '标准': 3,
+                    '强力': 4,
+                    '极限': 5,
                 };
-                const selected = modeMap[compMode] ?? modeMap['标准'];
+                const engineMap: Record<string, string> = {
+                    '自动 (推荐)': 'auto',
+                    'MozJPEG (JPEG)': 'mozjpeg',
+                    'PNGQuant (PNG)': 'pngquant',
+                    'OxiPNG (PNG 无损)': 'oxipng',
+                    'Pillow (兼容)': 'pillow',
+                };
+                const level = levelMap[compMode] ?? 3;
+                const engine = engineMap[compEngine] ?? 'auto';
+                const targetSizeKB = compTargetSize ? Math.max(0, Number(compTargetSizeKB) || 0) : 0;
 
                 const buildReq = (f: DroppedFile) => {
                     const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    if (compOverwriteSource) {
+                        return {
+                            input_path: normalizePath(f.input_path),
+                            output_path: normalizePath(f.input_path),
+                            level,
+                            engine,
+                            target_size_kb: targetSizeKB,
+                            strip_metadata: true,
+                        };
+                    }
+                    const namedRel = addPrefixToRelPath(rel, compFilePrefix);
                     return {
                         input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, rel),
-                        mode: selected.mode,
-                        quality: selected.quality,
+                        output_path: joinPath(outDir, namedRel),
+                        level,
+                        engine,
+                        target_size_kb: targetSizeKB,
+                        strip_metadata: true,
                     };
                 };
+
+                let failed = 0;
+                let warned = 0;
 
                 const chunkSize = total >= 80 ? 20 : 1;
                 for (let i = 0; i < files.length; i += chunkSize) {
                     const chunk = files.slice(i, i + chunkSize).map(buildReq);
                     try {
                         if (chunk.length === 1) {
-                            await window.go.main.App.Compress(chunk[0]);
+                            const res = await window.go.main.App.Compress(chunk[0]);
+                            if ((res as any)?.warning) warned++;
                         } else {
-                            await window.go.main.App.CompressBatch(chunk);
+                            const res = await window.go.main.App.CompressBatch(chunk);
+                            warned += (res as any[]).filter(r => r?.warning).length;
                         }
                     } catch (err) {
                         console.error(err);
+                        failed += chunk.length;
                     }
 
                     completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
-                setLastMessage(`压缩完成：${completed}/${total} 项`);
+                const extra = failed > 0 || warned > 0 ? `（失败 ${failed}，未达目标 ${warned}）` : '';
+                setLastMessage(`压缩完成：${completed}/${total} 项${extra}`);
                 return;
             }
 
@@ -902,14 +1317,27 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             }
 
             if (id === 'pdf') {
+                const sizeMap: Record<string, string> = {
+                    'A4 (210 x 297 mm)': 'A4',
+                    'A3 (297 x 420 mm)': 'A3',
+                    'Letter': 'Letter',
+                    'Legal': 'Legal',
+                };
+                const compressionMap: Record<string, number> = {
+                    '不压缩': 0,
+                    '轻度': 1,
+                    '标准': 2,
+                    '强力': 3,
+                };
                 const req = {
                     image_paths: files.map(f => normalizePath(f.input_path)),
                     output_path: joinPath(outDir, 'output.pdf'),
-                    page_size: 'A4',
-                    layout: 'portrait',
+                    page_size: sizeMap[pdfSize] ?? 'A4',
+                    layout: pdfLayout === '横向' ? 'landscape' : 'portrait',
                     margin: 72,
-                    title: '',
-                    author: '',
+                    compression_level: compressionMap[pdfCompression] ?? 0,
+                    title: pdfTitle.trim(),
+                    author: pdfAuthor.trim(),
                 };
                 await window.go.main.App.GeneratePDF(req);
                 setProgress(100);
@@ -940,17 +1368,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
             }
 
             if (id === 'info') {
-                for (const f of files) {
-                    try {
-                        const info = await window.go.main.App.GetInfo({ input_path: normalizePath(f.input_path) });
-                        console.log('Info:', info);
-                    } catch (err) {
-                        console.error(`Failed to get info ${f.input_path}:`, err);
-                    }
-                    completed++;
-                    setProgress((completed / total) * 100);
-                }
-                setLastMessage(`信息读取完成：${completed}/${total} 项（详情见控制台）`);
+                const f = files[0];
+                await loadInfoForPath(f.input_path);
                 return;
             }
 
@@ -965,16 +1384,39 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
 
     return (
         <div className="h-full flex flex-col p-1">
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
+            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className="lg:col-span-2 h-full">
+                <div className={`h-full ${isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
                     <FileDropZone 
+                        isActive={isActive}
                         onFilesSelected={handleFilesSelected}
                         onPathsExpanded={(result) => {
                             setDropResult(result);
+                            if (id !== 'info') {
+                                setLastMessage('');
+                                setProgress(0);
+                                return;
+                            }
+                            const selected = infoFilePath
+                                ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
+                                : false;
+                            if (selected) return;
+                            const first = result?.files?.[0];
+                            if (first?.input_path) {
+                                loadInfoForPath(first.input_path);
+                                return;
+                            }
+                            setInfoFilePath('');
+                            setInfoPreview(null);
                             setLastMessage('');
-                            setProgress(0);
                         }}
+                        onItemSelect={(file) => {
+                            if (id !== 'info') return;
+                            if (file?.input_path) {
+                                loadInfoForPath(file.input_path);
+                            }
+                        }}
+                        selectedPath={id === 'info' ? infoFilePath : undefined}
                         acceptedFormats="image/*,.svg"
                         allowMultiple={true}
                         title="拖拽文件 / 文件夹到这里"
@@ -983,49 +1425,58 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack }) => {
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
-                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full overflow-hidden">
-                    <div className="space-y-3 pb-4 border-b border-gray-100 dark:border-white/5 mb-4 shrink-0">
-                        <div className="flex items-center justify-between text-sm">
-                            <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
-                            <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+                <div className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full overflow-hidden ${isInfo ? 'lg:col-span-4' : ''}`}>
+                    {!isInfo && (
+                        <div className="space-y-3 pb-4 border-b border-gray-100 dark:border-white/5 mb-4 shrink-0">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
+                                <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+                            </div>
+                            {dropResult?.has_directory && (
+                                <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
+                            )}
+                            <button
+                                onClick={handleSelectOutputDir}
+                                className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
+                            >
+                                选择输出文件夹
+                            </button>
+                            {effectiveOutputDir && (
+                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                                    {effectiveOutputDir}
+                                </div>
+                            )}
+                            {lastMessage && (
+                                <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                                    {lastMessage}
+                                </div>
+                            )}
                         </div>
-                        {dropResult?.has_directory && (
-                            <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
-                        )}
-                        <button
-                            onClick={handleSelectOutputDir}
-                            className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
-                        >
-                            选择输出文件夹
-                        </button>
-                        {effectiveOutputDir && (
-                            <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
-                                {effectiveOutputDir}
-                            </div>
-                        )}
-                        {lastMessage && (
-                            <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
-                                {lastMessage}
-                            </div>
-                        )}
-                    </div>
+                    )}
+                    {isInfo && lastMessage && (
+                        <div className="mb-4 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                            {lastMessage}
+                        </div>
+                    )}
                     
                     <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
                         {renderSettings()}
                     </div>
 
-                    <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
-                        {(isProcessing || progress > 0) && (
-                            <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
-                        )}
-                        <button 
-                            onClick={handleStartProcessing} 
-                            disabled={isProcessing}
-                            className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
-                        >
-                            <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
-                        </button>
-                    </div>
+                    {!isInfo && (
+                        <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
+                            {(isProcessing || progress > 0) && (
+                                <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
+                            )}
+                            <button 
+                                onClick={handleStartProcessing} 
+                                disabled={isProcessing}
+                                className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                            >
+                                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

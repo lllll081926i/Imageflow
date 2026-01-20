@@ -28,6 +28,7 @@ func TestPythonExecutor_ConcurrentExecute(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 32)
+	resultCh := make(chan models.ConvertResult, 32)
 
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
@@ -42,16 +43,17 @@ func TestPythonExecutor_ConcurrentExecute(t *testing.T) {
 			}, &result)
 			if e != nil {
 				errCh <- e
+				return
 			}
+			resultCh <- result
 		}()
 	}
 
 	wg.Wait()
 	close(errCh)
+	close(resultCh)
 
-	var gotAny bool
 	for e := range errCh {
-		gotAny = true
 		msg := e.Error()
 		bad := []string{
 			"__conda_tmp_",
@@ -65,7 +67,17 @@ func TestPythonExecutor_ConcurrentExecute(t *testing.T) {
 			}
 		}
 	}
-	if !gotAny {
-		t.Fatalf("expected errors for nonexistent input, got none")
+
+	var gotFailureResult bool
+	for r := range resultCh {
+		if !r.Success {
+			gotFailureResult = true
+			if r.Error == "" {
+				t.Fatalf("expected error message in result, got empty")
+			}
+		}
+	}
+	if !gotFailureResult {
+		t.Fatalf("expected failure results for nonexistent input, got none")
 	}
 }

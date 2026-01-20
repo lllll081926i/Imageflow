@@ -38,6 +38,7 @@ func (s *PDFGeneratorService) GeneratePDF(req models.PDFRequest) (models.PDFResu
 		"author":      req.Author,
 		"portrait":    portrait,
 		"layout":      "single",
+		"compression_level": req.CompressionLevel,
 	}
 
 	var result models.PDFResult

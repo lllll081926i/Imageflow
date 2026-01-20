@@ -72,21 +72,21 @@ func (e *PythonExecutor) startWorkerLocked() error {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdin pipe: %w", err)
+		return fmt.Errorf("[PY_WORKER_START_STDIN] failed to create stdin pipe: %w", err)
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
+		return fmt.Errorf("[PY_WORKER_START_STDOUT] failed to create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
+		return fmt.Errorf("[PY_WORKER_START_STDERR] failed to create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start worker process: %w", err)
+		return fmt.Errorf("[PY_WORKER_START_FAILED] failed to start worker process: %w", err)
 	}
 
 	e.workerCmd = cmd
@@ -121,7 +121,7 @@ func (e *PythonExecutor) startWorkerLocked() error {
 	var status map[string]string
 	if err := json.Unmarshal(startLine, &status); err != nil || status["status"] != "ready" {
 		e.stopWorkerLocked()
-		return fmt.Errorf("unexpected worker startup message: %s", string(startLine))
+		return fmt.Errorf("[PY_WORKER_START_BAD_HANDSHAKE] unexpected worker startup message: %s", string(startLine))
 	}
 
 	e.workerRunning = true
@@ -207,7 +207,7 @@ func (e *PythonExecutor) ExecuteAndParse(scriptName string, input interface{}, r
 	}
 
 	if err := json.Unmarshal(output, result); err != nil {
-		return fmt.Errorf("failed to parse output: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf("[PY_BAD_OUTPUT] failed to parse output: %w\nOutput: %s", err, string(output))
 	}
 
 	return nil
@@ -215,7 +215,7 @@ func (e *PythonExecutor) ExecuteAndParse(scriptName string, input interface{}, r
 
 func (e *PythonExecutor) executeOnceLocked(scriptName string, input interface{}) ([]byte, bool, error) {
 	if !e.workerRunning || e.workerCmd == nil || e.workerStdin == nil || e.workerStdout == nil {
-		return nil, true, fmt.Errorf("python worker is not running")
+		return nil, true, fmt.Errorf("[PY_WORKER_NOT_RUNNING] python worker is not running")
 	}
 
 	cmd := map[string]interface{}{
@@ -225,11 +225,11 @@ func (e *PythonExecutor) executeOnceLocked(scriptName string, input interface{})
 
 	inputJSON, err := json.Marshal(cmd)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to marshal input: %w", err)
+		return nil, false, fmt.Errorf("[PY_BAD_INPUT] failed to marshal input: %w", err)
 	}
 
 	if _, err := e.workerStdin.Write(append(inputJSON, '\n')); err != nil {
-		return nil, true, fmt.Errorf("failed to write to worker: %w", err)
+		return nil, true, fmt.Errorf("[PY_WORKER_WRITE_FAILED] failed to write to worker: %w", err)
 	}
 
 	line, err := e.readLineLocked(e.timeout)
@@ -237,15 +237,6 @@ func (e *PythonExecutor) executeOnceLocked(scriptName string, input interface{})
 		return nil, true, err
 	}
 
-	var workerErr struct {
-		Success *bool  `json:"success,omitempty"`
-		Error   string `json:"error,omitempty"`
-	}
-	if err := json.Unmarshal(line, &workerErr); err == nil {
-		if workerErr.Success != nil && !*workerErr.Success && workerErr.Error != "" {
-			return nil, false, fmt.Errorf("python error: %s", workerErr.Error)
-		}
-	}
 	return line, false, nil
 }
 
@@ -268,15 +259,15 @@ func (e *PythonExecutor) readLineLocked(timeout time.Duration) ([]byte, error) {
 	case res := <-ch:
 		if res.err != nil {
 			e.stopWorkerLocked()
-			return nil, fmt.Errorf("failed to read from worker: %w", res.err)
+			return nil, fmt.Errorf("[PY_WORKER_READ_FAILED] failed to read from worker: %w", res.err)
 		}
 		if len(res.line) == 0 {
-			return nil, fmt.Errorf("worker produced no output")
+			return nil, fmt.Errorf("[PY_WORKER_NO_OUTPUT] worker produced no output")
 		}
 		return res.line, nil
 	case <-time.After(timeout):
 		e.stopWorkerLocked()
-		return nil, fmt.Errorf("execution timed out after %v", timeout)
+		return nil, fmt.Errorf("[PY_WORKER_TIMEOUT] execution timed out after %v", timeout)
 	}
 }
 

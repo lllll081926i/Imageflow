@@ -226,10 +226,13 @@ export const CustomSelect: React.FC<{ label?: string; options: string[]; value: 
 interface FileDropZoneProps {
     onFilesSelected: (files: File[]) => void;
     onPathsExpanded?: (result: ExpandDroppedPathsResult) => void;
+    onItemSelect?: (file: DroppedFile) => void;
+    selectedPath?: string;
     acceptedFormats?: string; 
     allowMultiple?: boolean;
     title?: string;
     subTitle?: string;
+    isActive?: boolean;
 }
 
 type DroppedFile = {
@@ -252,10 +255,13 @@ type ExpandDroppedPathsResult = {
 export const FileDropZone: React.FC<FileDropZoneProps> = ({ 
     onFilesSelected, 
     onPathsExpanded,
+    onItemSelect,
+    selectedPath,
     acceptedFormats = "image/*,.svg", 
     allowMultiple = true,
     title = "拖拽图片到这里",
-    subTitle = "或点击选择文件 (支持批量处理)"
+    subTitle = "或点击选择文件 (支持批量处理)",
+    isActive = true,
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
     const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
@@ -267,10 +273,12 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const sortButtonRef = useRef<HTMLButtonElement>(null);
 
     const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
+    const normalizePath = (p: string) => p.replace(/\\/g, '/');
     const getExt = (name: string) => {
         const idx = name.lastIndexOf('.');
         return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
     };
+    const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
 
     // Helper to build a recursive file tree structure
     const buildFileTree = (files: DroppedFile[]) => {
@@ -326,6 +334,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     };
 
     useEffect(() => {
+        if (!isActive) return;
         if (!window.runtime?.OnFileDrop) return;
 
         window.runtime.OnFileDrop(async (_x: number, _y: number, paths: string[]) => {
@@ -344,7 +353,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         return () => {
             window.runtime?.OnFileDropOff?.();
         };
-    }, [onPathsExpanded]);
+    }, [onPathsExpanded, isActive]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -514,8 +523,18 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         {/* Render Files */}
                         {sortedFiles.map((f: DroppedFile) => {
                             const name = f.relative_path.split('/').pop() || basename(f.input_path);
+                            const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
                             return (
-                                <div key={f.input_path} className="py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9" style={{ paddingLeft: paddingLeft + 24 }}>
+                                <div
+                                    key={f.input_path}
+                                    onClick={() => onItemSelect?.(f)}
+                                    className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
+                                        isSelected
+                                            ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
+                                            : 'hover:bg-black/5 dark:hover:bg-white/5'
+                                    } ${onItemSelect ? 'cursor-pointer' : ''}`}
+                                    style={{ paddingLeft: paddingLeft + 24 }}
+                                >
                                     <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
                                     <div className="flex-1 min-w-0 truncate">{name}</div>
                                     <button 
@@ -675,8 +694,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                 {looseFiles.map((f) => {
                                     const name = basename(f.input_path);
                                     const ext = getExt(name);
+                                    const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
                                     return (
-                                        <div key={f.input_path} className="px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors group/file">
+                                        <div
+                                            key={f.input_path}
+                                            onClick={() => onItemSelect?.(f)}
+                                            className={`px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 transition-colors group/file ${
+                                                isSelected
+                                                    ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
+                                                    : 'hover:bg-black/5 dark:hover:bg-white/5'
+                                            } ${onItemSelect ? 'cursor-pointer' : ''}`}
+                                        >
                                             <div className="w-2 h-2 rounded-full bg-[#5856D6]/60 shrink-0" />
                                             <div className="flex-1 min-w-0">
                                                 <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</div>
