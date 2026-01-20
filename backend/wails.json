@@ -2,14 +2,17 @@
   "version": "2",
   "name": "imageflow",
   "outputfilename": "ImageFlow",
+  "author": {
+    "name": "lllll081926"
+  },
+  "info": {
+    "companyName": "lllll081926"
+  },
   "frontend:dir": "../frontend",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "viteServerTimeout": 30,
-  "wailsjsdir": "../frontend",
-  "preBuildHooks": {
-    "*/*": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$src=$null; foreach ($c in @('..\\\\python','..\\\\..\\\\python','..\\\\..\\\\..\\\\python')) { if (Test-Path ($c + '\\\\converter.py')) { $src=$c; break } }; if (-not $src) { throw 'python scripts dir not found' }; $cwd=(Get-Location).Path; if ($cwd -like '*\\\\build\\\\bin') { $dst='python' } elseif ($cwd -like '*\\\\build') { $dst='bin\\\\python' } else { $dst='build\\\\bin\\\\python' }; New-Item -ItemType Directory -Force $dst | Out-Null; Copy-Item -Recurse -Force ($src + '\\\\*') $dst\""
-  }
+  "wailsjsdir": "../frontend"
 }

@@ -12,9 +12,7 @@ type ConvertRequest struct {
 	ResizeMode    string `json:"resize_mode"`    // original, percent, fixed, long_edge
 	ScalePercent  int    `json:"scale_percent"`  // used when resize_mode=percent
 	LongEdge      int    `json:"long_edge"`      // used when resize_mode=long_edge
-	KeepMetadata  bool   `json:"keep_metadata"`  // preserve EXIF/ICC when possible
-	ColorSpace    string `json:"color_space"`    // keep, sRGB, P3, CMYK
-	DPI           int    `json:"dpi"`            // embed dpi when supported
+	KeepMetadata  bool   `json:"keep_metadata"`  // preserve EXIF when possible
 	CompressLevel int    `json:"compress_level"` // 0-9 for PNG
 	ICOSizes      []int  `json:"ico_sizes"`      // list of sizes for ICO (16, 32, 64, 128, 256)
 }

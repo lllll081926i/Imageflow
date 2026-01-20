@@ -120,8 +120,6 @@ export namespace models {
 	    scale_percent: number;
 	    long_edge: number;
 	    keep_metadata: boolean;
-	    color_space: string;
-	    dpi: number;
 	    compress_level: number;
 	    ico_sizes: number[];
 	
@@ -142,8 +140,6 @@ export namespace models {
 	        this.scale_percent = source["scale_percent"];
 	        this.long_edge = source["long_edge"];
 	        this.keep_metadata = source["keep_metadata"];
-	        this.color_space = source["color_space"];
-	        this.dpi = source["dpi"];
 	        this.compress_level = source["compress_level"];
 	        this.ico_sizes = source["ico_sizes"];
 	    }

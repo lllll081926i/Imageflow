@@ -22,6 +22,9 @@ CONVERTER_TIMEOUT_S = int(os.getenv("IMAGEFLOW_CONVERTER_TIMEOUT_S", "180"))
 def _run_converter_subprocess(input_data: Dict[str, Any]) -> Dict[str, Any]:
     script_path = os.path.join(SCRIPTS_DIR, "converter.py")
     try:
+        popen_kwargs = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         cp = subprocess.run(
             [sys.executable, script_path],
             input=json.dumps(input_data, ensure_ascii=False),
@@ -30,6 +33,7 @@ def _run_converter_subprocess(input_data: Dict[str, Any]) -> Dict[str, Any]:
             encoding="utf-8",
             errors="replace",
             timeout=CONVERTER_TIMEOUT_S,
+            **popen_kwargs,
         )
     except subprocess.TimeoutExpired:
         return {"success": False, "error": f"converter timeout after {CONVERTER_TIMEOUT_S}s"}

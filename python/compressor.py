@@ -149,16 +149,6 @@ class ImageCompressor:
             # Open input image
             logger.info(f"Opening image: {input_path}")
             img = Image.open(input_path)
-            icc_profile = img.info.get("icc_profile")
-            dpi = None
-            try:
-                dpi_val = img.info.get("dpi")
-                if isinstance(dpi_val, (tuple, list)) and len(dpi_val) == 2:
-                    dpi = (int(dpi_val[0]), int(dpi_val[1]))
-                elif isinstance(dpi_val, (int, float)):
-                    dpi = (int(dpi_val), int(dpi_val))
-            except Exception:
-                dpi = None
 
             # Get original file size
             original_size = os.path.getsize(input_path)
@@ -193,8 +183,6 @@ class ImageCompressor:
                     engine=engine,
                     target_bytes=target_bytes,
                     strip_metadata=bool(strip_metadata),
-                    icc_profile=icc_profile,
-                    dpi=dpi,
                 )
             elif format_type == "PNG":
                 warning = self._compress_png(
@@ -205,8 +193,6 @@ class ImageCompressor:
                     engine=engine,
                     target_bytes=target_bytes,
                     strip_metadata=bool(strip_metadata),
-                    icc_profile=icc_profile,
-                    dpi=dpi,
                 )
             elif format_type == "WEBP":
                 warning = self._compress_webp(
@@ -217,8 +203,6 @@ class ImageCompressor:
                     engine=engine,
                     target_bytes=target_bytes,
                     strip_metadata=bool(strip_metadata),
-                    icc_profile=icc_profile,
-                    dpi=dpi,
                 )
             else:
                 # Fallback to Pillow for other formats
@@ -230,8 +214,6 @@ class ImageCompressor:
                     engine=engine,
                     target_bytes=target_bytes,
                     strip_metadata=bool(strip_metadata),
-                    icc_profile=icc_profile,
-                    dpi=dpi,
                 )
 
             # Explicitly close image to free memory
@@ -293,8 +275,6 @@ class ImageCompressor:
         engine="",
         target_bytes=0,
         strip_metadata=False,
-        icc_profile=None,
-        dpi=None,
     ):
         """Compress JPEG using MoZJPEG or Pillow."""
         logger.info(f"Compressing JPEG (level: {level})")
@@ -388,10 +368,6 @@ class ImageCompressor:
                 "optimize": True,
                 "progressive": (level != CompressionLevel.LOSSLESS),
             }
-            if icc_profile:
-                save_kwargs["icc_profile"] = icc_profile
-            if dpi:
-                save_kwargs["dpi"] = dpi
             work.save(output_path, **save_kwargs)
             if use_mozjpeg and not force_pillow and self.mozjpeg_available:
                 try:
@@ -463,8 +439,6 @@ class ImageCompressor:
         engine="",
         target_bytes=0,
         strip_metadata=False,
-        icc_profile=None,
-        dpi=None,
     ):
         """Compress PNG using imagequant (lossy) or oxipng (lossless)."""
         logger.info(f"Compressing PNG (level: {level})")
@@ -485,10 +459,6 @@ class ImageCompressor:
 
         def save_lossless():
             save_kwargs = {"format": "PNG", "optimize": True}
-            if icc_profile:
-                save_kwargs["icc_profile"] = icc_profile
-            if dpi:
-                save_kwargs["dpi"] = dpi
             img.save(output_path, **save_kwargs)
             if use_oxipng and not force_pillow:
                 try:
@@ -514,10 +484,6 @@ class ImageCompressor:
                             dithering_level=1.0,
                         )
                         save_kwargs = {"format": "PNG"}
-                        if icc_profile:
-                            save_kwargs["icc_profile"] = icc_profile
-                        if dpi:
-                            save_kwargs["dpi"] = dpi
                         quantized_img.save(output_path, **save_kwargs)
                         if use_oxipng and not force_pillow:
                             try:
@@ -541,10 +507,6 @@ class ImageCompressor:
                             dithering_level=1.0,
                         )
                         save_kwargs = {"format": "PNG"}
-                        if icc_profile:
-                            save_kwargs["icc_profile"] = icc_profile
-                        if dpi:
-                            save_kwargs["dpi"] = dpi
                         quantized_img.save(output_path, **save_kwargs)
                         if use_oxipng and not force_pillow:
                             try:
@@ -560,10 +522,6 @@ class ImageCompressor:
                         return
                     if img.mode == "P":
                         save_kwargs = {"format": "PNG", "optimize": True}
-                        if icc_profile:
-                            save_kwargs["icc_profile"] = icc_profile
-                        if dpi:
-                            save_kwargs["dpi"] = dpi
                         img.save(output_path, **save_kwargs)
                         if use_oxipng and not force_pillow:
                             try:
@@ -578,10 +536,6 @@ class ImageCompressor:
                                 logger.warning(f"OxiPNG optimization failed: {e}")
                         return
                     save_kwargs = {"format": "PNG", "optimize": True}
-                    if icc_profile:
-                        save_kwargs["icc_profile"] = icc_profile
-                    if dpi:
-                        save_kwargs["dpi"] = dpi
                     img.save(output_path, **save_kwargs)
                     return
                 except Exception as e:
@@ -592,10 +546,6 @@ class ImageCompressor:
                 colors = max(2, min(256, colors))
                 quantized = img.quantize(colors=colors, method=0, dither=1)
                 save_kwargs = {"format": "PNG"}
-                if icc_profile:
-                    save_kwargs["icc_profile"] = icc_profile
-                if dpi:
-                    save_kwargs["dpi"] = dpi
                 quantized.save(output_path, **save_kwargs)
                 if use_oxipng and not force_pillow:
                     try:
@@ -610,10 +560,6 @@ class ImageCompressor:
                         logger.warning(f"OxiPNG optimization failed: {e}")
             else:
                 save_kwargs = {"format": "PNG", "optimize": True, "compress_level": 9}
-                if icc_profile:
-                    save_kwargs["icc_profile"] = icc_profile
-                if dpi:
-                    save_kwargs["dpi"] = dpi
                 img.save(output_path, **save_kwargs)
 
         if level == CompressionLevel.LOSSLESS or engine == "oxipng":
@@ -694,8 +640,6 @@ class ImageCompressor:
         engine="",
         target_bytes=0,
         strip_metadata=False,
-        icc_profile=None,
-        dpi=None,
     ):
         """Compress WEBP using Pillow with quality control."""
         logger.info(f"Compressing WEBP (level: {level})")
@@ -708,10 +652,6 @@ class ImageCompressor:
             else:
                 q2 = max(1, min(100, int(q)))
                 save_kwargs = {"format": "WEBP", "quality": q2, "method": 6}
-            if icc_profile:
-                save_kwargs["icc_profile"] = icc_profile
-            if dpi:
-                save_kwargs["dpi"] = dpi
             img.save(output_path, **save_kwargs)
 
         if target_bytes > 0 and level == CompressionLevel.LOSSLESS:
@@ -772,8 +712,6 @@ class ImageCompressor:
         engine="",
         target_bytes=0,
         strip_metadata=False,
-        icc_profile=None,
-        dpi=None,
     ):
         """Fallback compression for unsupported formats."""
         logger.warning(f"Unsupported format, using fallback compression")
@@ -785,10 +723,6 @@ class ImageCompressor:
             save_kwargs = {"format": img.format, "optimize": True}
             if level != CompressionLevel.LOSSLESS:
                 save_kwargs["quality"] = quality
-            if icc_profile:
-                save_kwargs["icc_profile"] = icc_profile
-            if dpi:
-                save_kwargs["dpi"] = dpi
             img.save(output_path, **save_kwargs)
         except Exception as e:
             # Just save without optimization

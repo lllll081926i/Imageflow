@@ -1,0 +1,145 @@
+$ErrorActionPreference = "Stop"
+
+function Find-WailsRoot {
+    param([string]$Start)
+    $root = $Start
+    for ($i = 0; $i -lt 8; $i++) {
+        if (Test-Path (Join-Path $root "wails.json")) {
+            return $root
+        }
+        $parent = Split-Path $root -Parent
+        if ($parent -eq $root) {
+            break
+        }
+        $root = $parent
+    }
+    return $null
+}
+
+$root = Find-WailsRoot -Start $PSScriptRoot
+if (-not $root) {
+    $root = Find-WailsRoot -Start (Get-Location).Path
+}
+if (-not $root) {
+    throw "wails.json not found"
+}
+
+function Find-PythonDir {
+    param([string]$Start)
+    $candidates = @(
+        (Join-Path $Start "python"),
+        (Join-Path $Start "..\\python"),
+        (Join-Path $Start "..\\..\\python")
+    )
+    foreach ($candidate in $candidates) {
+        $full = [System.IO.Path]::GetFullPath($candidate)
+        if (Test-Path (Join-Path $full "converter.py")) {
+            return $full
+        }
+    }
+    return $null
+}
+
+function Trim-PythonRuntime {
+    param([string]$RuntimeRoot)
+    if (-not (Test-Path $RuntimeRoot)) {
+        return
+    }
+
+    $scriptsDir = Join-Path $RuntimeRoot "Scripts"
+    if (Test-Path $scriptsDir) {
+        Remove-Item -Recurse -Force $scriptsDir
+    }
+
+    $sitePackages = Join-Path $RuntimeRoot "Lib\\site-packages"
+    if (Test-Path $sitePackages) {
+        $removeTop = @(
+            "pip",
+            "pip-*.dist-info",
+            "wheel",
+            "wheel-*.dist-info",
+            "__pycache__"
+        )
+        foreach ($pattern in $removeTop) {
+            Get-ChildItem -Path $sitePackages -Force -Filter $pattern |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        Get-ChildItem -Path $sitePackages -Recurse -Force -Directory |
+            Where-Object { $_.Name -in @("tests", "test", "__pycache__") } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Get-ChildItem -Path $RuntimeRoot -Recurse -Force -Include *.pyc, *.pyo |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
+$src = Find-PythonDir -Start $root
+if (-not $src) {
+    throw "python scripts dir not found near $root"
+}
+
+$embedDst = Join-Path $root "embedded_python"
+New-Item -ItemType Directory -Force $embedDst | Out-Null
+Get-ChildItem -Force $embedDst |
+    Where-Object { $_.Name -ne ".keep" } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item -Force (Join-Path $src "*.py") $embedDst
+
+$buildBin = Join-Path $root "build\bin"
+if (-not (Test-Path $buildBin)) {
+    throw "build/bin not found; run wails build first"
+}
+
+$wailsConfig = Get-Content -Raw (Join-Path $root "wails.json") | ConvertFrom-Json
+$outputName = $wailsConfig.outputfilename
+if (-not $outputName) {
+    $outputName = $wailsConfig.name
+}
+
+$exeName = "$outputName.exe"
+$exePath = Join-Path $buildBin $exeName
+if (-not (Test-Path $exePath)) {
+    $exe = Get-ChildItem -Path $buildBin -Filter *.exe |
+        Where-Object { $_.Name -notmatch "installer" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $exe) {
+        throw "app executable not found in $buildBin"
+    }
+    $exePath = $exe.FullName
+    $exeName = $exe.Name
+    $outputName = [System.IO.Path]::GetFileNameWithoutExtension($exeName)
+}
+
+$runtimeSrc = Join-Path $root "embedded_python_runtime"
+if (-not (Test-Path $runtimeSrc)) {
+    throw "embedded_python_runtime not found at $runtimeSrc"
+}
+$runtimeDst = Join-Path $buildBin "python_runtime"
+if (Test-Path $runtimeDst) {
+    Remove-Item -Recurse -Force $runtimeDst
+}
+Copy-Item -Recurse -Force $runtimeSrc $runtimeDst
+Trim-PythonRuntime -RuntimeRoot $runtimeDst
+
+$scriptsSrc = $embedDst
+$scriptsDst = Join-Path $buildBin "python"
+if (Test-Path $scriptsDst) {
+    Remove-Item -Recurse -Force $scriptsDst
+}
+Copy-Item -Recurse -Force $scriptsSrc $scriptsDst
+
+$zipPath = Join-Path $buildBin "$outputName-portable.zip"
+if (Test-Path $zipPath) {
+    Remove-Item -Force $zipPath
+}
+
+Push-Location $buildBin
+try {
+    Compress-Archive -Path $exeName, "python_runtime", "python" -DestinationPath $zipPath
+} finally {
+    Pop-Location
+}
+
+Write-Host "Portable package created: $zipPath"

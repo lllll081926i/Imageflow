@@ -48,130 +48,6 @@ class ImageConverter:
     def __init__(self):
         """Initialize the converter."""
         logger.info("ImageConverter initialized")
-        self._profile_dir = Path(__file__).resolve().parent / "profiles"
-        self._srgb_profile = None
-        self._srgb_profile_bytes = None
-        self._display_p3_profile = None
-        self._display_p3_profile_bytes = None
-
-    def _read_profile_bytes(self, name: str):
-        try:
-            return (self._profile_dir / name).read_bytes()
-        except Exception:
-            return None
-
-    def _get_srgb_profile(self):
-        if self._srgb_profile is not None:
-            return self._srgb_profile
-        try:
-            from PIL import ImageCms  # type: ignore
-        except Exception:
-            return None
-
-        icc_bytes = self._read_profile_bytes("sRGB-v4.icc")
-        if icc_bytes:
-            try:
-                self._srgb_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
-                self._srgb_profile_bytes = icc_bytes
-                return self._srgb_profile
-            except Exception:
-                pass
-
-        try:
-            self._srgb_profile = ImageCms.createProfile("sRGB")
-            try:
-                self._srgb_profile_bytes = self._srgb_profile.tobytes()
-            except Exception:
-                self._srgb_profile_bytes = None
-            return self._srgb_profile
-        except Exception:
-            return None
-
-    def _get_display_p3_profile(self):
-        if self._display_p3_profile is not None:
-            return self._display_p3_profile
-        try:
-            from PIL import ImageCms  # type: ignore
-        except Exception:
-            return None
-
-        icc_bytes = self._read_profile_bytes("DisplayP3-v4.icc")
-        if not icc_bytes:
-            return None
-        try:
-            self._display_p3_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
-            self._display_p3_profile_bytes = icc_bytes
-            return self._display_p3_profile
-        except Exception:
-            return None
-
-    def _apply_color_space(self, img, color_space, icc_profile_bytes):
-        cs = str(color_space or "").strip().lower()
-        if not cs or cs in ["keep", "original", "source"]:
-            return img, None, "", False
-
-        if cs == "cmyk":
-            try:
-                return img.convert("CMYK"), None, "", True
-            except Exception as e:
-                return None, None, str(e), False
-
-        try:
-            from PIL import ImageCms  # type: ignore
-        except Exception:
-            return None, None, "Pillow ImageCms not available", False
-
-        target_profile = None
-        target_bytes = None
-        if cs in ["srgb", "s-rgb"]:
-            target_profile = self._get_srgb_profile()
-            target_bytes = self._srgb_profile_bytes
-        elif cs in ["p3", "display-p3", "display_p3", "display p3"]:
-            target_profile = self._get_display_p3_profile()
-            target_bytes = self._display_p3_profile_bytes
-        else:
-            return None, None, f"Unsupported color space: {color_space}", False
-
-        if target_profile is None:
-            return None, None, f"Target profile not available for {color_space}", False
-
-        src_profile = None
-        if icc_profile_bytes:
-            try:
-                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile_bytes))
-            except Exception:
-                src_profile = None
-        if src_profile is None:
-            src_profile = self._get_srgb_profile()
-        if src_profile is None:
-            return None, None, "Source profile not available", False
-
-        work = img
-        alpha = None
-        if img.mode in ("RGBA", "LA"):
-            alpha = img.getchannel("A")
-            work = img.convert("RGB")
-        elif img.mode in ("P", "L"):
-            work = img.convert("RGB")
-        elif img.mode != "RGB":
-            try:
-                work = img.convert("RGB")
-            except Exception:
-                pass
-
-        try:
-            converted = ImageCms.profileToProfile(work, src_profile, target_profile, outputMode="RGB")
-        except Exception as e:
-            return None, None, str(e), False
-
-        if alpha is not None:
-            try:
-                converted = converted.convert("RGBA")
-                converted.putalpha(alpha)
-            except Exception:
-                pass
-
-        return converted, target_bytes, "", True
 
     def _parse_svg_intrinsic_size(self, svg_path: str):
         try:
@@ -380,8 +256,6 @@ class ImageConverter:
                 scale_percent=0,
                 long_edge=0,
                 keep_metadata=False,
-                color_space='',
-                dpi=0,
                 compress_level=6,
                 ico_sizes=None):
         """
@@ -443,22 +317,6 @@ class ImageConverter:
                 img = Image.open(input_path)
 
             exif_bytes = img.info.get('exif')
-            icc_profile = img.info.get('icc_profile')
-            output_icc_profile = None
-            color_space_applied = False
-            
-            if color_space:
-                converted, target_icc, err, applied = self._apply_color_space(img, color_space, icc_profile)
-                if err:
-                    return {
-                        'success': False,
-                        'error': f'Color space conversion failed: {err}'
-                    }
-                if converted is not None:
-                    img = converted
-                color_space_applied = applied
-                if target_icc:
-                    output_icc_profile = target_icc
 
             mode = str(resize_mode or '').strip().lower()
             if mode == 'percent' and int(scale_percent or 0) > 0:
@@ -488,19 +346,8 @@ class ImageConverter:
 
             # Prepare save parameters based on format
             save_params = self._get_save_params(format_type, quality, compress_level, ico_sizes)
-            if int(dpi or 0) > 0:
-                d = max(1, int(dpi))
-                save_params['dpi'] = (d, d)
-            if keep_metadata:
-                if exif_bytes:
-                    save_params['exif'] = exif_bytes
-                if output_icc_profile:
-                    save_params['icc_profile'] = output_icc_profile
-                elif icc_profile and not color_space_applied:
-                    save_params['icc_profile'] = icc_profile
-            else:
-                if output_icc_profile:
-                    save_params['icc_profile'] = output_icc_profile
+            if keep_metadata and exif_bytes:
+                save_params['exif'] = exif_bytes
             
             # Convert format names for Pillow
             pillow_format = self._convert_format_name(format_type)
@@ -722,9 +569,6 @@ def process(input_data):
         scale_percent = input_data.get('scale_percent', 0)
         long_edge = input_data.get('long_edge', 0)
         keep_metadata = input_data.get('keep_metadata', False)
-        color_space = input_data.get('color_space', '')
-        dpi = input_data.get('dpi', 0)
-
         compress_level = input_data.get('compress_level', 6)
         ico_sizes = input_data.get('ico_sizes', None)
 
@@ -749,8 +593,6 @@ def process(input_data):
             scale_percent=scale_percent,
             long_edge=long_edge,
             keep_metadata=keep_metadata,
-            color_space=color_space,
-            dpi=dpi,
             compress_level=compress_level,
             ico_sizes=ico_sizes
         )
@@ -790,8 +632,6 @@ def main():
         scale_percent = input_data.get('scale_percent', 0)
         long_edge = input_data.get('long_edge', 0)
         keep_metadata = input_data.get('keep_metadata', False)
-        color_space = input_data.get('color_space', '')
-        dpi = input_data.get('dpi', 0)
         compress_level = input_data.get('compress_level', 6)
         ico_sizes = input_data.get('ico_sizes', None)
         
@@ -816,8 +656,6 @@ def main():
                 scale_percent=scale_percent,
                 long_edge=long_edge,
                 keep_metadata=keep_metadata,
-                color_space=color_space,
-                dpi=dpi,
                 compress_level=compress_level,
                 ico_sizes=ico_sizes
             )

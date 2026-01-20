@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/imageflow/backend/models"
@@ -44,18 +46,37 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
 	// Initialize logger
-	logger, err := utils.NewLogger(utils.InfoLevel, true)
+	enableFile := os.Getenv("IMAGEFLOW_FILE_LOG") == "1"
+	logger, err := utils.NewLogger(utils.InfoLevel, enableFile)
 	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
 		return
 	}
 	a.logger = logger
 	a.logger.Info("ImageFlow backend starting...")
 
+	if os.Getenv("IMAGEFLOW_PYTHON_EXE") == "" {
+		if runtimeDir, err := utils.ExtractEmbeddedPythonRuntime(embeddedPythonFS, "embedded_python_runtime"); err == nil {
+			if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
+				_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
+				_ = os.Setenv("PYTHONHOME", runtimeDir)
+			}
+		} else if exe, err := os.Executable(); err == nil {
+			runtimeDir := filepath.Join(filepath.Dir(exe), "python_runtime")
+			if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
+				_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
+				_ = os.Setenv("PYTHONHOME", runtimeDir)
+			}
+		}
+	}
+
 	scriptsDir, err := utils.ResolvePythonScriptsDir()
 	if err != nil {
-		a.logger.Error("Failed to resolve Python scripts directory: %v", err)
-		return
+		embeddedDir, embedErr := utils.ExtractEmbeddedPythonScripts(embeddedPythonFS, "embedded_python")
+		if embedErr != nil {
+			a.logger.Error("Failed to resolve Python scripts directory: %v", embedErr)
+			return
+		}
+		scriptsDir = embeddedDir
 	}
 	a.scriptsDir = scriptsDir
 	a.logger.Info("Python scripts directory: %s", scriptsDir)

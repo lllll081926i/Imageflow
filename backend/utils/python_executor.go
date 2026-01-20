@@ -69,6 +69,7 @@ func (e *PythonExecutor) startWorkerLocked() error {
 
 	cmd := exec.Command(e.pythonCmd, args...)
 	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	applyHideWindow(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -333,6 +334,7 @@ func findPython() (string, []string, string, error) {
 		args := []string{"run", "--no-capture-output", "-n", "imageflow", "python"}
 
 		resolveCmd := exec.Command(condaPath, append(args, "-c", "import sys; print(sys.executable)")...)
+		applyHideWindow(resolveCmd)
 		resolveOut, resolveErr := resolveCmd.Output()
 		if resolveErr == nil {
 			pythonExe := strings.TrimSpace(string(resolveOut))
@@ -342,6 +344,7 @@ func findPython() (string, []string, string, error) {
 		}
 
 		cmd := exec.Command(condaPath, append(args, "--version")...)
+		applyHideWindow(cmd)
 		output, err := cmd.Output()
 		if err == nil && bytes.Contains(output, []byte("Python 3")) {
 			return condaPath, args, "conda run -n imageflow python", nil
@@ -353,6 +356,7 @@ func findPython() (string, []string, string, error) {
 
 func isPython3Executable(pythonPath string) bool {
 	cmd := exec.Command(pythonPath, "--version")
+	applyHideWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
