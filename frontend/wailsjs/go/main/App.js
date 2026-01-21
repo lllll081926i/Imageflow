@@ -54,6 +54,10 @@ export function GeneratePDF(arg1) {
   return window['go']['main']['App']['GeneratePDF'](arg1);
 }
 
+export function GetImagePreview(arg1) {
+  return window['go']['main']['App']['GetImagePreview'](arg1);
+}
+
 export function GetInfo(arg1) {
   return window['go']['main']['App']['GetInfo'](arg1);
 }

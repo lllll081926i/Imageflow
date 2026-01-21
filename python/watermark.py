@@ -70,15 +70,20 @@ class WatermarkApplier:
         try:
             # Open input image
             logger.info(f"Opening image: {input_path}")
-            img = Image.open(input_path)
-            
-            # Ensure image has alpha channel
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
+            with Image.open(input_path) as base_img:
+                original_mode = base_img.mode
+                img = base_img.convert('RGBA') if base_img.mode != 'RGBA' else base_img.copy()
             
             # Create transparent overlay
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
             
+            try:
+                watermark_scale = float(watermark_scale)
+            except (TypeError, ValueError):
+                watermark_scale = 0.2
+            if watermark_scale <= 0:
+                watermark_scale = 0.2
+
             # Apply watermark based on type
             if watermark_type == 'text':
                 self._apply_text_watermark(overlay, img.size, text, font,
@@ -98,7 +103,6 @@ class WatermarkApplier:
             watermarked = Image.alpha_composite(img, overlay)
             
             # Convert back to original mode if necessary
-            original_mode = Image.open(input_path).mode
             if original_mode != 'RGBA':
                 watermarked = watermarked.convert(original_mode)
             
@@ -188,16 +192,14 @@ class WatermarkApplier:
                               rotation, offset_x, offset_y):
         """Apply an image watermark to the overlay."""
         # Open watermark image
-        watermark = Image.open(watermark_path)
-        
-        # Ensure watermark has alpha channel
-        if watermark.mode != 'RGBA':
-            watermark = watermark.convert('RGBA')
+        with Image.open(watermark_path) as base_wm:
+            watermark = base_wm.convert('RGBA') if base_wm.mode != 'RGBA' else base_wm.copy()
         
         # Scale watermark
         orig_width, orig_height = watermark.size
-        new_width = int(img_size[0] * watermark_scale)
-        new_height = int(orig_height * new_width / orig_width)
+        scale = max(0.01, float(watermark_scale))
+        new_width = max(1, int(img_size[0] * scale))
+        new_height = max(1, int(orig_height * new_width / max(1, orig_width)))
         watermark = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
         # Apply opacity
@@ -263,13 +265,17 @@ class WatermarkApplier:
     
     def _parse_color(self, color_str, opacity):
         """Parse color string to RGBA tuple."""
-        # Remove # if present
-        color_str = color_str.lstrip('#')
-        
+        color_text = str(color_str or "").strip().lstrip("#")
+        if len(color_text) == 3:
+            color_text = "".join(ch * 2 for ch in color_text)
+        if len(color_text) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in color_text):
+            logger.warning("Invalid font color '%s', using white", color_str)
+            color_text = "FFFFFF"
+
         # Parse hex color
-        r = int(color_str[0:2], 16)
-        g = int(color_str[2:4], 16)
-        b = int(color_str[4:6], 16)
+        r = int(color_text[0:2], 16)
+        g = int(color_text[2:4], 16)
+        b = int(color_text[4:6], 16)
         a = int(opacity * 255)
         
         return (r, g, b, a)

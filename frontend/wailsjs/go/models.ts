@@ -253,11 +253,19 @@ export namespace models {
 	    }
 	}
 	export class GIFSplitRequest {
-	    input_path: string;
-	    output_dir: string;
-	    start_frame: number;
-	    end_frame: number;
-	    format: string;
+	    action?: string;
+	    input_path?: string;
+	    input_paths?: string[];
+	    output_dir?: string;
+	    output_path?: string;
+	    output_format?: string;
+	    frame_range?: string;
+	    start_frame?: number;
+	    end_frame?: number;
+	    format?: string;
+	    speed_factor?: number;
+	    fps?: number;
+	    loop?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new GIFSplitRequest(source);
@@ -265,19 +273,33 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.action = source["action"];
 	        this.input_path = source["input_path"];
+	        this.input_paths = source["input_paths"];
 	        this.output_dir = source["output_dir"];
+	        this.output_path = source["output_path"];
+	        this.output_format = source["output_format"];
+	        this.frame_range = source["frame_range"];
 	        this.start_frame = source["start_frame"];
 	        this.end_frame = source["end_frame"];
 	        this.format = source["format"];
+	        this.speed_factor = source["speed_factor"];
+	        this.fps = source["fps"];
+	        this.loop = source["loop"];
 	    }
 	}
 	export class GIFSplitResult {
 	    success: boolean;
-	    input_path: string;
-	    output_dir: string;
-	    frame_count: number;
-	    frame_paths: string[];
+	    input_path?: string;
+	    input_paths?: string[];
+	    output_dir?: string;
+	    output_path?: string;
+	    frame_count?: number;
+	    export_count?: number;
+	    frame_paths?: string[];
+	    speed_factor?: number;
+	    fps?: number;
+	    warning?: string;
 	    error?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -288,9 +310,15 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
 	        this.input_path = source["input_path"];
+	        this.input_paths = source["input_paths"];
 	        this.output_dir = source["output_dir"];
+	        this.output_path = source["output_path"];
 	        this.frame_count = source["frame_count"];
+	        this.export_count = source["export_count"];
 	        this.frame_paths = source["frame_paths"];
+	        this.speed_factor = source["speed_factor"];
+	        this.fps = source["fps"];
+	        this.warning = source["warning"];
 	        this.error = source["error"];
 	    }
 	}
@@ -421,6 +449,7 @@ export namespace models {
 	    layout: string;
 	    margin: number;
 	    compression_level: number;
+	    fit_mode?: string;
 	    title: string;
 	    author: string;
 	
@@ -436,6 +465,7 @@ export namespace models {
 	        this.layout = source["layout"];
 	        this.margin = source["margin"];
 	        this.compression_level = source["compression_level"];
+	        this.fit_mode = source["fit_mode"];
 	        this.title = source["title"];
 	        this.author = source["author"];
 	    }
@@ -457,6 +487,34 @@ export namespace models {
 	        this.output_path = source["output_path"];
 	        this.page_count = source["page_count"];
 	        this.file_size = source["file_size"];
+	        this.error = source["error"];
+	    }
+	}
+	export class PreviewRequest {
+	    input_path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreviewRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input_path = source["input_path"];
+	    }
+	}
+	export class PreviewResult {
+	    success: boolean;
+	    data_url?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreviewResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.data_url = source["data_url"];
 	        this.error = source["error"];
 	    }
 	}

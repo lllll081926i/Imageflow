@@ -56,6 +56,7 @@ type PDFRequest struct {
 	Layout     string   `json:"layout"`    // portrait, landscape
 	Margin     int      `json:"margin"`    // in points
 	CompressionLevel int `json:"compression_level"` // 0=none, 1-3 JPEG quality
+	FitMode   string   `json:"fit_mode,omitempty"` // contain, cover, original
 	Title      string   `json:"title"`
 	Author     string   `json:"author"`
 }
@@ -69,23 +70,37 @@ type PDFResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// GIFSplitRequest represents a request to split a GIF into frames
+// GIFSplitRequest represents a request to process GIF-related actions
 type GIFSplitRequest struct {
-	InputPath  string `json:"input_path"`
-	OutputDir  string `json:"output_dir"`
-	StartFrame int    `json:"start_frame"`
-	EndFrame   int    `json:"end_frame"`
-	Format     string `json:"format"` // png, jpg, etc.
+	Action       string   `json:"action,omitempty"`        // export_frames, reverse, change_speed, build_gif
+	InputPath    string   `json:"input_path,omitempty"`
+	InputPaths   []string `json:"input_paths,omitempty"`   // used for build_gif
+	OutputDir    string   `json:"output_dir,omitempty"`    // used for export_frames
+	OutputPath   string   `json:"output_path,omitempty"`   // used for reverse/change_speed/build_gif
+	OutputFormat string   `json:"output_format,omitempty"` // png, jpg, etc.
+	FrameRange   string   `json:"frame_range,omitempty"`   // all, start-end, start:step
+	StartFrame   int      `json:"start_frame,omitempty"`   // legacy support
+	EndFrame     int      `json:"end_frame,omitempty"`     // legacy support
+	Format       string   `json:"format,omitempty"`        // legacy support (png, jpg)
+	SpeedFactor  float64  `json:"speed_factor,omitempty"`  // 0.1-2.0
+	FPS          float64  `json:"fps,omitempty"`           // used for build_gif
+	Loop         int      `json:"loop,omitempty"`
 }
 
-// GIFSplitResult represents the result of GIF splitting
+// GIFSplitResult represents the result of GIF processing
 type GIFSplitResult struct {
-	Success    bool     `json:"success"`
-	InputPath  string   `json:"input_path"`
-	OutputDir  string   `json:"output_dir"`
-	FrameCount int      `json:"frame_count"`
-	FramePaths []string `json:"frame_paths"`
-	Error      string   `json:"error,omitempty"`
+	Success     bool     `json:"success"`
+	InputPath   string   `json:"input_path,omitempty"`
+	InputPaths  []string `json:"input_paths,omitempty"`
+	OutputDir   string   `json:"output_dir,omitempty"`
+	OutputPath  string   `json:"output_path,omitempty"`
+	FrameCount  int      `json:"frame_count,omitempty"`
+	ExportCount int      `json:"export_count,omitempty"`
+	FramePaths  []string `json:"frame_paths,omitempty"`
+	SpeedFactor float64  `json:"speed_factor,omitempty"`
+	FPS         float64  `json:"fps,omitempty"`
+	Warning     string   `json:"warning,omitempty"`
+	Error       string   `json:"error,omitempty"`
 }
 
 // InfoRequest represents a request to get image information
@@ -109,6 +124,18 @@ type InfoResult struct {
 	Metadata  map[string]map[string]string    `json:"metadata,omitempty"`
 	Histogram map[string][]int                `json:"histogram,omitempty"`
 	Error     string                          `json:"error,omitempty"`
+}
+
+// PreviewRequest represents a request to build a preview data URL.
+type PreviewRequest struct {
+	InputPath string `json:"input_path"`
+}
+
+// PreviewResult represents a data URL response for previewing.
+type PreviewResult struct {
+	Success bool   `json:"success"`
+	DataURL string `json:"data_url,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type MetadataStripRequest struct {
@@ -168,9 +195,9 @@ type AdjustRequest struct {
 	Rotate     int     `json:"rotate"`     // rotation angle
 	FlipH      bool    `json:"flip_h"`     // flip horizontal
 	FlipV      bool    `json:"flip_v"`     // flip vertical
-	Brightness float64 `json:"brightness"` // -1.0 to 1.0
-	Contrast   float64 `json:"contrast"`   // -1.0 to 1.0
-	Saturation float64 `json:"saturation"` // -1.0 to 1.0
+	Brightness float64 `json:"brightness"` // -100 to 100
+	Contrast   float64 `json:"contrast"`   // -100 to 100
+	Saturation float64 `json:"saturation"` // -100 to 100
 	Hue        float64 `json:"hue"`        // -180 to 180
 }
 

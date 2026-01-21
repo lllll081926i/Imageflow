@@ -1,4 +1,4 @@
-import React, { useMemo, useState, memo } from 'react';
+import React, { useMemo, useState, useEffect, memo } from 'react';
 import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
@@ -355,57 +355,102 @@ const WatermarkSettings = memo(() => {
     );
 });
 
-const AdjustSettings = memo(() => {
-    const [exposure, setExposure] = useState(0);
-    const [contrast, setContrast] = useState(0);
-    const [saturation, setSaturation] = useState(0);
-    const [sharpness, setSharpness] = useState(0);
-    const [vibrance, setVibrance] = useState(0);
-    const [hue, setHue] = useState(0);
+type AdjustSettingsProps = {
+    exposure: number;
+    setExposure: (v: number) => void;
+    contrast: number;
+    setContrast: (v: number) => void;
+    saturation: number;
+    setSaturation: (v: number) => void;
+    sharpness: number;
+    setSharpness: (v: number) => void;
+    vibrance: number;
+    setVibrance: (v: number) => void;
+    hue: number;
+    setHue: (v: number) => void;
+    showCrop?: boolean;
+};
+
+const AdjustCropControls = memo(() => (
+    <div className="space-y-2">
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">裁剪与旋转</label>
+        <div className="flex flex-wrap gap-2">
+            {['自由', '1:1', '4:3', '16:9', '9:16', '3:2'].map(r => (
+                <button key={r} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-xs font-medium bg-white dark:bg-white/5 whitespace-nowrap hover:border-[#007AFF] hover:text-[#007AFF] transition-colors">{r}</button>
+            ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-2">
+            <button className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
+                <Icon name="RotateCw" size={16} /> 向右旋转 90°
+            </button>
+            <button className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
+                <span className="scale-x-[-1] inline-block"><Icon name="RotateCw" size={16} /></span> 水平翻转
+            </button>
+        </div>
+    </div>
+));
+
+const AdjustSettings = memo(({
+    exposure,
+    setExposure,
+    contrast,
+    setContrast,
+    saturation,
+    setSaturation,
+    sharpness,
+    setSharpness,
+    vibrance,
+    setVibrance,
+    hue,
+    setHue,
+    showCrop = true,
+}: AdjustSettingsProps) => {
 
     return (
-        <div className="space-y-6">
-            <div className="space-y-3">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">裁剪与旋转</label>
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                    {['自由', '1:1', '4:3', '16:9', '9:16', '3:2'].map(r => (
-                         <button key={r} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-xs font-medium bg-white dark:bg-white/5 whitespace-nowrap hover:border-[#007AFF] hover:text-[#007AFF] transition-colors">{r}</button>
-                    ))}
-                </div>
-                <div className="grid grid-cols-2 gap-3 mt-2">
-                    <button className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
-                        <Icon name="RotateCw" size={16} /> 向右旋转 90°
-                    </button>
-                    <button className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
-                         <span className="scale-x-[-1] inline-block"><Icon name="RotateCw" size={16} /></span> 水平翻转
-                    </button>
-                </div>
-            </div>
+        <div className="space-y-4">
+            {showCrop && <AdjustCropControls />}
 
-            <div className="pt-4 border-t border-gray-100 dark:border-white/5">
+            <div className="pt-3 border-t border-gray-100 dark:border-white/5">
                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4 flex items-center gap-2">
                     <Icon name="Palette" size={16} className="text-[#007AFF]" />
                     专业调色
                  </label>
-                 <div className="space-y-5">
-                    <StyledSlider label="曝光度" value={exposure} min={-100} max={100} onChange={setExposure} />
-                    <StyledSlider label="对比度" value={contrast} min={-100} max={100} onChange={setContrast} />
-                    <StyledSlider label="自然饱和度" value={vibrance} min={-100} max={100} onChange={setVibrance} />
-                    <StyledSlider label="饱和度" value={saturation} min={-100} max={100} onChange={setSaturation} />
-                    <StyledSlider label="色相偏移" value={hue} min={-180} max={180} onChange={setHue} unit="°" />
-                    <StyledSlider label="锐化/模糊" value={sharpness} min={-100} max={100} onChange={setSharpness} />
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <StyledSlider label="曝光度" value={exposure} min={-100} max={100} onChange={setExposure} className="space-y-2" />
+                    <StyledSlider label="对比度" value={contrast} min={-100} max={100} onChange={setContrast} className="space-y-2" />
+                    <StyledSlider label="自然饱和度" value={vibrance} min={-100} max={100} onChange={setVibrance} className="space-y-2" />
+                    <StyledSlider label="饱和度" value={saturation} min={-100} max={100} onChange={setSaturation} className="space-y-2" />
+                    <StyledSlider label="色相偏移" value={hue} min={-180} max={180} onChange={setHue} unit="°" className="space-y-2" />
+                    <StyledSlider label="锐化/模糊" value={sharpness} min={-100} max={100} onChange={setSharpness} className="space-y-2" />
                  </div>
             </div>
         </div>
     );
 });
 
-const FilterSettings = memo(() => {
-    const [intensity, setIntensity] = useState(80);
-    const [grain, setGrain] = useState(0);
-    const [vignette, setVignette] = useState(0);
-    const [selected, setSelected] = useState(0);
-    const filters = ['原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博', '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得'];
+const FILTER_LABELS = ['原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博', '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得'];
+
+type FilterSettingsProps = {
+    intensity: number;
+    setIntensity: (v: number) => void;
+    grain: number;
+    setGrain: (v: number) => void;
+    vignette: number;
+    setVignette: (v: number) => void;
+    selected: number;
+    setSelected: (v: number) => void;
+};
+
+const FilterSettings = memo(({
+    intensity,
+    setIntensity,
+    grain,
+    setGrain,
+    vignette,
+    setVignette,
+    selected,
+    setSelected,
+}: FilterSettingsProps) => {
 
     return (
         <div className="flex flex-col h-full">
@@ -414,8 +459,8 @@ const FilterSettings = memo(() => {
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">滤镜库 (LUTs)</label>
                     <button onClick={() => setSelected(0)} className="text-xs text-[#007AFF] hover:underline font-medium">重置效果</button>
                 </div>
-                <div className="grid grid-cols-3 gap-2 overflow-y-auto no-scrollbar pr-1 pb-1 content-start">
-                    {filters.map((f, i) => (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 overflow-y-auto no-scrollbar pr-1 pb-1 content-start">
+                    {FILTER_LABELS.map((f, i) => (
                         <button 
                             key={i} 
                             onClick={() => setSelected(i)}
@@ -437,22 +482,28 @@ const FilterSettings = memo(() => {
                 </div>
             </div>
 
-            <div className="shrink-0 pt-4 border-t border-gray-100 dark:border-white/5 mt-4 space-y-4">
-                 <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" />
-                 <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} />
-                 <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} />
+            <div className="shrink-0 pt-3 border-t border-gray-100 dark:border-white/5 mt-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" className="space-y-2" />
+                    <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} className="space-y-2" />
+                    <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} className="space-y-2 col-span-2" />
+                </div>
             </div>
         </div>
     );
 });
 
 type PdfSettingsProps = {
+    fileName: string;
+    setFileName: (v: string) => void;
     size: string;
     setSize: (v: string) => void;
     layout: string;
     setLayout: (v: string) => void;
     fit: string;
     setFit: (v: string) => void;
+    marginMm: number;
+    setMarginMm: (v: number) => void;
     compression: string;
     setCompression: (v: string) => void;
     title: string;
@@ -462,12 +513,16 @@ type PdfSettingsProps = {
 };
 
 const PdfSettings = memo(({
+    fileName,
+    setFileName,
     size,
     setSize,
     layout,
     setLayout,
     fit,
     setFit,
+    marginMm,
+    setMarginMm,
     compression,
     setCompression,
     title,
@@ -480,7 +535,22 @@ const PdfSettings = memo(({
          <div className="space-y-6">
             <CustomSelect 
                 label="纸张尺寸" 
-                options={['A4 (210 x 297 mm)', 'A3 (297 x 420 mm)', 'Letter', 'Legal', '原图尺寸混合']} 
+                options={[
+                    'A0 (841 x 1189 mm)',
+                    'A1 (594 x 841 mm)',
+                    'A2 (420 x 594 mm)',
+                    'A3 (297 x 420 mm)',
+                    'A4 (210 x 297 mm)',
+                    'A5 (148 x 210 mm)',
+                    'A6 (105 x 148 mm)',
+                    'B4 (250 x 353 mm)',
+                    'B5 (176 x 250 mm)',
+                    'B6 (125 x 176 mm)',
+                    'Letter (8.5 x 11 in)',
+                    'Legal (8.5 x 14 in)',
+                    'Tabloid (11 x 17 in)',
+                    'Ledger (17 x 11 in)',
+                ]} 
                 value={size}
                 onChange={setSize}
             />
@@ -496,6 +566,33 @@ const PdfSettings = memo(({
                 value={fit}
                 onChange={setFit}
             />
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">页面边距 (mm)</label>
+                <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    step={1}
+                    value={marginMm}
+                    onChange={(e) => setMarginMm(Number(e.target.value || 0))}
+                    className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件名</label>
+                <div className="flex items-center gap-2">
+                    <input
+                        type="text"
+                        value={fileName}
+                        onChange={(e) => setFileName(e.target.value)}
+                        placeholder="自动生成"
+                        className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
+                    />
+                    <span className="text-xs text-gray-400 shrink-0">.pdf</span>
+                </div>
+            </div>
 
             <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
                  <div className="space-y-3">
@@ -517,38 +614,102 @@ const PdfSettings = memo(({
     );
 });
 
-const GifSettings = memo(() => {
-     const [mode, setMode] = useState('导出序列帧');
-     const [fps, setFps] = useState(12);
-     const [loop, setLoop] = useState('无限循环');
+type GifSettingsProps = {
+    mode: string;
+    setMode: (v: string) => void;
+    exportFormat: string;
+    setExportFormat: (v: string) => void;
+    speedPercent: number;
+    setSpeedPercent: (v: number) => void;
+    sourceType: 'gif' | 'images' | 'mixed' | 'empty';
+    buildFps: number;
+    setBuildFps: (v: number) => void;
+};
 
-     return (
-         <div className="space-y-6">
+const GifSettings = memo(({
+    mode,
+    setMode,
+    exportFormat,
+    setExportFormat,
+    speedPercent,
+    setSpeedPercent,
+    sourceType,
+    buildFps,
+    setBuildFps,
+}: GifSettingsProps) => {
+    if (sourceType === 'images') {
+        return (
+            <div className="space-y-6">
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">合成 GIF</label>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        PNG/JPG 直接合成，其它格式会先转为 JPG。
+                    </div>
+                </div>
+                <div className="space-y-3 animate-enter">
+                    <StyledSlider
+                        label="合成帧率 (FPS)"
+                        value={buildFps}
+                        min={1}
+                        max={60}
+                        onChange={setBuildFps}
+                    />
+                </div>
+                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-xs text-purple-700 dark:text-purple-400 mt-2 border border-purple-100 dark:border-purple-500/10">
+                    当前为图片序列模式，将输出合成 GIF。
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6">
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
-                <SegmentedControl 
-                    options={['导出序列帧', '倒放 GIF', '修改帧率', '视频转 GIF']}
+                <SegmentedControl
+                    options={['导出', '倒放', '修改帧率']}
                     value={mode}
                     onChange={setMode}
                 />
             </div>
 
-            {mode === '导出序列帧' && (
-                <div className="space-y-4 animate-enter">
-                    <CustomSelect label="导出格式" options={['PNG (无损)', 'JPG (小体积)', 'WEBP']} value="PNG (无损)" onChange={()=>{}} />
-                    <Switch label="打包为 ZIP" checked={true} onChange={()=>{}} />
+            {mode === '导出' && (
+                <div className="space-y-3 animate-enter">
+                    <CustomSelect
+                        label="导出帧格式"
+                        options={['PNG', 'JPG']}
+                        value={exportFormat}
+                        onChange={setExportFormat}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        GIF 输入导出帧，图片输入合成 GIF（非 PNG/JPG 会先转为 JPG）。
+                    </div>
                 </div>
             )}
 
             {mode === '修改帧率' && (
-                <div className="animate-enter space-y-4">
-                     <StyledSlider label="目标帧率 (FPS)" value={fps} min={1} max={60} onChange={setFps} />
-                     <CustomSelect label="循环模式" options={['无限循环', '播放一次', '播放三次']} value={loop} onChange={setLoop} />
+                <div className="animate-enter space-y-3">
+                    <StyledSlider
+                        label="帧率倍数 (10%-200%)"
+                        value={speedPercent}
+                        min={10}
+                        max={200}
+                        onChange={setSpeedPercent}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        10% 表示 10 倍慢，200% 表示 2 倍快。
+                    </div>
                 </div>
             )}
-            
+
+            {sourceType === 'mixed' && (
+                <div className="text-xs text-red-500">
+                    请只选择 GIF 或图片序列，混合输入会导致操作失败。
+                </div>
+            )}
+
             <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-xs text-purple-700 dark:text-purple-400 mt-2 border border-purple-100 dark:border-purple-500/10">
-                高性能 GIF 引擎，支持解析全局调色板、透明通道及帧延迟信息。
+                仅保留导出、倒放与帧率调整三项核心操作。
             </div>
         </div>
     );
@@ -560,6 +721,187 @@ type InfoSettingsProps = {
     onExportJSON: () => void;
     onClearPrivacy: () => void;
     onEditMetadata: (key: string, value: any) => Promise<void>;
+};
+
+const META_GROUP_LABELS: Record<string, string> = {
+    Basic: '基础信息',
+    Image: '图像',
+    EXIF: 'EXIF',
+    Exif: 'EXIF',
+    GPS: 'GPS',
+    Interop: '互操作',
+    IFD0: '主图像',
+    IFD1: '缩略图',
+    '0th': '主图像',
+    '1st': '缩略图',
+    Thumbnail: '缩略图',
+    PNG: 'PNG',
+    JPEG: 'JPEG',
+    TIFF: 'TIFF',
+    XMP: 'XMP',
+    IPTC: 'IPTC',
+    MakerNote: '厂商注释',
+    exifread: 'EXIF',
+    piexif: 'EXIF',
+    extra: '扩展信息',
+};
+
+const META_TAG_LABELS: Record<string, string> = {
+    Path: '路径',
+    Size: '大小',
+    Width: '宽度',
+    Height: '高度',
+    Dimensions: '尺寸',
+    DPI: 'DPI',
+    Make: '相机厂商',
+    Model: '相机型号',
+    Software: '软件',
+    Artist: '作者',
+    Copyright: '版权',
+    ImageDescription: '图像描述',
+    Orientation: '方向',
+    XResolution: '水平分辨率',
+    YResolution: '垂直分辨率',
+    ResolutionUnit: '分辨率单位',
+    DateTime: '修改时间',
+    DateTimeOriginal: '拍摄时间',
+    DateTimeDigitized: '数字化时间',
+    SubSecTime: '亚秒时间',
+    SubSecTimeOriginal: '亚秒拍摄时间',
+    SubSecTimeDigitized: '亚秒数字化时间',
+    ExifVersion: 'EXIF 版本',
+    FlashpixVersion: 'Flashpix 版本',
+    ColorSpace: '色彩空间',
+    ComponentsConfiguration: '分量配置',
+    CompressedBitsPerPixel: '压缩位深',
+    ExposureTime: '快门速度',
+    FNumber: '光圈',
+    ExposureProgram: '曝光程序',
+    ExposureBiasValue: '曝光补偿',
+    ExposureMode: '曝光模式',
+    ShutterSpeedValue: '快门速度值',
+    ApertureValue: '光圈值',
+    MaxApertureValue: '最大光圈值',
+    BrightnessValue: '亮度值',
+    ISOSpeedRatings: 'ISO',
+    PhotographicSensitivity: 'ISO',
+    SensitivityType: '感光度类型',
+    FocalLength: '焦距',
+    FocalLengthIn35mmFilm: '35mm 等效焦距',
+    LensMake: '镜头厂商',
+    LensModel: '镜头型号',
+    LensSpecification: '镜头规格',
+    WhiteBalance: '白平衡',
+    MeteringMode: '测光模式',
+    LightSource: '光源',
+    Flash: '闪光灯',
+    SceneType: '场景类型',
+    SceneCaptureType: '场景捕捉类型',
+    SensingMethod: '感光方式',
+    FileSource: '文件来源',
+    CustomRendered: '渲染设置',
+    DigitalZoomRatio: '数字变焦',
+    GainControl: '增益控制',
+    Contrast: '对比度',
+    Saturation: '饱和度',
+    Sharpness: '锐度',
+    SubjectDistance: '主体距离',
+    SubjectDistanceRange: '主体距离范围',
+    SubjectArea: '主体区域',
+    ImageWidth: '图像宽度',
+    ImageLength: '图像高度',
+    ExifImageWidth: '图像宽度',
+    ExifImageLength: '图像高度',
+    PixelXDimension: '像素宽度',
+    PixelYDimension: '像素高度',
+    BitsPerSample: '每样本位数',
+    SamplesPerPixel: '每像素采样数',
+    Compression: '压缩方式',
+    PlanarConfiguration: '平面配置',
+    YCbCrSubSampling: '色度采样',
+    YCbCrPositioning: '色度位置',
+    GPSLatitude: '纬度',
+    GPSLatitudeRef: '纬度参考',
+    GPSLongitude: '经度',
+    GPSLongitudeRef: '经度参考',
+    GPSAltitude: '海拔',
+    GPSAltitudeRef: '海拔参考',
+    GPSTimeStamp: 'GPS 时间',
+    GPSDateStamp: 'GPS 日期',
+    GPSMapDatum: '地理基准',
+    GPSDOP: 'GPS 精度',
+    GPSSpeed: '速度',
+    GPSSpeedRef: '速度单位',
+    GPSTrack: '航向',
+    GPSTrackRef: '航向参考',
+    GPSImgDirection: '拍摄方向',
+    GPSImgDirectionRef: '方向参考',
+    GPSProcessingMethod: '定位方式',
+    GPSAreaInformation: '区域信息',
+    GPSDestLatitude: '目标纬度',
+    GPSDestLatitudeRef: '目标纬度参考',
+    GPSDestLongitude: '目标经度',
+    GPSDestLongitudeRef: '目标经度参考',
+    GPSDestBearing: '目标方位',
+    GPSDestBearingRef: '目标方位参考',
+    GPSDestDistance: '目标距离',
+    GPSDestDistanceRef: '目标距离单位',
+    GPSDifferential: '差分校正',
+    GPSHPositioningError: '水平定位误差',
+    UserComment: '用户注释',
+    XPTitle: '标题',
+    XPSubject: '主题',
+    XPComment: '备注',
+    XPKeywords: '关键词',
+    XPAuthor: '作者',
+    ThumbnailOffset: '缩略图偏移',
+    ThumbnailLength: '缩略图长度',
+    ThumbnailImageWidth: '缩略图宽度',
+    ThumbnailImageLength: '缩略图高度',
+    thumbnail_bytes: '缩略图数据',
+};
+
+const META_SOURCE_GROUPS = new Set(['exifread', 'piexif']);
+
+const splitMetaKey = (key: string) => {
+    const colonIndex = key.indexOf(':');
+    if (colonIndex > 0) {
+        return { group: key.slice(0, colonIndex), tag: key.slice(colonIndex + 1) };
+    }
+    const spaceIndex = key.indexOf(' ');
+    if (spaceIndex > 0) {
+        const maybeGroup = key.slice(0, spaceIndex);
+        if (META_GROUP_LABELS[maybeGroup]) {
+            return { group: maybeGroup, tag: key.slice(spaceIndex + 1) };
+        }
+    }
+    return { group: '', tag: key };
+};
+
+const translateMetaTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed) return '';
+    if (META_TAG_LABELS[trimmed]) return META_TAG_LABELS[trimmed];
+    const { group, tag: inner } = splitMetaKey(trimmed);
+    if (group) {
+        const groupLabel = META_GROUP_LABELS[group] || group;
+        const innerLabel = META_TAG_LABELS[inner] || inner;
+        return `${groupLabel}：${innerLabel}`;
+    }
+    return trimmed;
+};
+
+const translateMetaLabel = (rawKey: string) => {
+    const trimmed = rawKey.trim();
+    if (!trimmed) return rawKey;
+    const { group, tag } = splitMetaKey(trimmed);
+    const translatedTag = translateMetaTag(tag);
+    if (group && META_SOURCE_GROUPS.has(group)) {
+        return translatedTag || trimmed;
+    }
+    const groupLabel = META_GROUP_LABELS[group];
+    if (!groupLabel) return translatedTag || trimmed;
+    return `${groupLabel}：${translatedTag || tag}`;
 };
 
 const InfoSettings = memo(({
@@ -577,7 +919,8 @@ const InfoSettings = memo(({
         return Object.keys(data)
             .sort((a, b) => a.localeCompare(b))
             .map((key) => ({
-                label: key,
+                rawKey: key,
+                label: translateMetaLabel(key),
                 value: String(data[key]),
                 editKey: key.startsWith('piexif:') ? key.slice('piexif:'.length) : key,
                 editable: Boolean(editableKeys?.has(key.startsWith('piexif:') ? key.slice('piexif:'.length) : key))
@@ -696,14 +1039,14 @@ const InfoSettings = memo(({
     const flatMeta = buildFlatMetadata();
     let rows = buildRowsFromMap(flatMeta, editableKeys);
     if (!info?.success && info?.error) {
-        rows = [{ label: '错误', value: String(info.error), editKey: '', editable: false }];
+        rows = [{ rawKey: '错误', label: '错误', value: String(info.error), editKey: '', editable: false }];
     }
 
     const name = filePath ? filePath.replace(/\\/g, '/').split('/').pop() || filePath : '';
     const isEmpty = rows.length === 0;
 
-    const startEdit = (label: string, value: string) => {
-        setEditingKey(label);
+    const startEdit = (key: string, value: string) => {
+        setEditingKey(key);
         setEditingValue(value);
     };
 
@@ -733,10 +1076,10 @@ const InfoSettings = memo(({
                     <table className="w-full">
                         <tbody>
                             {rows.map((item, i) => {
-                                const isEditing = editingKey === item.label;
+                                const isEditing = editingKey === item.rawKey;
                                 const isEditable = Boolean(item.editable) && !(item.value || '').startsWith('hex:');
                                 return (
-                                    <tr key={`${item.label}-${i}`} className="border-b border-gray-100 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                    <tr key={`${item.rawKey}-${i}`} className="border-b border-gray-100 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                                         <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400 w-1/3">{item.label}</td>
                                         <td className="py-2.5 px-4 text-gray-900 dark:text-white font-mono text-xs break-all">
                                             {isEditing ? (
@@ -757,7 +1100,7 @@ const InfoSettings = memo(({
                                             ) : (
                                                 <button
                                                     type="button"
-                                                    onClick={() => isEditable && startEdit(item.label, item.value)}
+                                                    onClick={() => isEditable && startEdit(item.rawKey, item.value)}
                                                     className={`text-left w-full ${isEditable ? 'cursor-text hover:text-[#007AFF]' : 'cursor-default'}`}
                                                 >
                                                     {item.value}
@@ -784,6 +1127,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     if (!feature) return null;
 
     const isInfo = id === 'info';
+    const isAdjustOrFilter = id === 'adjust' || id === 'filter';
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [preserveFolderStructure, setPreserveFolderStructure] = useState(true);
     const [outputDir, setOutputDir] = useState('');
@@ -814,11 +1158,96 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [pdfSize, setPdfSize] = useState('A4 (210 x 297 mm)');
     const [pdfLayout, setPdfLayout] = useState('纵向');
     const [pdfFit, setPdfFit] = useState('适应页面 (保持比例)');
+    const [pdfMarginMm, setPdfMarginMm] = useState(25.4);
     const [pdfCompression, setPdfCompression] = useState('不压缩');
+    const [pdfFileName, setPdfFileName] = useState('');
     const [pdfTitle, setPdfTitle] = useState('');
     const [pdfAuthor, setPdfAuthor] = useState('');
+    const [adjustExposure, setAdjustExposure] = useState(0);
+    const [adjustContrast, setAdjustContrast] = useState(0);
+    const [adjustSaturation, setAdjustSaturation] = useState(0);
+    const [adjustSharpness, setAdjustSharpness] = useState(0);
+    const [adjustVibrance, setAdjustVibrance] = useState(0);
+    const [adjustHue, setAdjustHue] = useState(0);
+    const [filterIntensity, setFilterIntensity] = useState(80);
+    const [filterGrain, setFilterGrain] = useState(0);
+    const [filterVignette, setFilterVignette] = useState(0);
+    const [filterSelected, setFilterSelected] = useState(0);
+    const [gifMode, setGifMode] = useState('导出');
+    const [gifExportFormat, setGifExportFormat] = useState('PNG');
+    const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
+    const [gifBuildFps, setGifBuildFps] = useState(10);
     const [infoFilePath, setInfoFilePath] = useState('');
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
+    const [previewPath, setPreviewPath] = useState('');
+    const [previewDataUrl, setPreviewDataUrl] = useState('');
+
+    const isGifPath = (p: string) => {
+        const normalized = p.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('.');
+        if (idx === -1) return false;
+        return normalized.slice(idx + 1).toLowerCase() === 'gif';
+    };
+
+    const gifInputType = useMemo(() => {
+        const list = dropResult?.files || [];
+        if (list.length === 0) return 'empty' as const;
+        let hasGif = false;
+        let hasOther = false;
+        list.forEach((f) => {
+            if (isGifPath(f.input_path)) {
+                hasGif = true;
+            } else {
+                hasOther = true;
+            }
+        });
+        if (hasGif && !hasOther) return 'gif' as const;
+        if (!hasGif && hasOther) return 'images' as const;
+        return 'mixed' as const;
+    }, [dropResult]);
+
+    const previewSrc = useMemo(() => {
+        if (!previewPath) return '';
+        if (previewDataUrl) return previewDataUrl;
+        return toFileUrl(previewPath);
+    }, [previewDataUrl, previewPath]);
+    const previewFilter = useMemo(() => {
+        if (!isAdjustOrFilter) return '';
+        if (id === 'adjust') {
+            return buildAdjustPreviewFilter(
+                adjustExposure,
+                adjustContrast,
+                adjustSaturation,
+                adjustVibrance,
+                adjustHue,
+                adjustSharpness,
+            );
+        }
+        return buildFilterPreviewFilter(filterSelected, filterIntensity);
+    }, [
+        adjustExposure,
+        adjustContrast,
+        adjustSaturation,
+        adjustVibrance,
+        adjustHue,
+        adjustSharpness,
+        filterSelected,
+        filterIntensity,
+        id,
+        isAdjustOrFilter,
+    ]);
+    const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
+        ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
+        : 0;
+    const previewVignetteOpacity = isAdjustOrFilter && id === 'filter'
+        ? clampNumber(filterVignette / 100 * 0.6, 0, 0.6)
+        : 0;
+
+    useEffect(() => {
+        if (gifInputType === 'images' && gifMode !== '导出') {
+            setGifMode('导出');
+        }
+    }, [gifInputType, gifMode]);
 
     const renderSettings = () => {
         switch(id) {
@@ -871,17 +1300,50 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     />
                 );
             case 'watermark': return <WatermarkSettings />;
-            case 'adjust': return <AdjustSettings />;
-            case 'filter': return <FilterSettings />;
+            case 'adjust':
+                return (
+                    <AdjustSettings
+                        exposure={adjustExposure}
+                        setExposure={setAdjustExposure}
+                        contrast={adjustContrast}
+                        setContrast={setAdjustContrast}
+                        saturation={adjustSaturation}
+                        setSaturation={setAdjustSaturation}
+                        sharpness={adjustSharpness}
+                        setSharpness={setAdjustSharpness}
+                        vibrance={adjustVibrance}
+                        setVibrance={setAdjustVibrance}
+                        hue={adjustHue}
+                        setHue={setAdjustHue}
+                        showCrop={false}
+                    />
+                );
+            case 'filter':
+                return (
+                    <FilterSettings
+                        intensity={filterIntensity}
+                        setIntensity={setFilterIntensity}
+                        grain={filterGrain}
+                        setGrain={setFilterGrain}
+                        vignette={filterVignette}
+                        setVignette={setFilterVignette}
+                        selected={filterSelected}
+                        setSelected={setFilterSelected}
+                    />
+                );
             case 'pdf':
                 return (
                     <PdfSettings
+                        fileName={pdfFileName}
+                        setFileName={(value) => setPdfFileName(sanitizePdfInputName(value))}
                         size={pdfSize}
                         setSize={setPdfSize}
                         layout={pdfLayout}
                         setLayout={setPdfLayout}
                         fit={pdfFit}
                         setFit={setPdfFit}
+                        marginMm={pdfMarginMm}
+                        setMarginMm={setPdfMarginMm}
                         compression={pdfCompression}
                         setCompression={setPdfCompression}
                         title={pdfTitle}
@@ -890,7 +1352,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         setAuthor={setPdfAuthor}
                     />
                 );
-            case 'gif': return <GifSettings />;
+            case 'gif':
+                return (
+                    <GifSettings
+                        mode={gifMode}
+                        setMode={setGifMode}
+                        exportFormat={gifExportFormat}
+                        setExportFormat={setGifExportFormat}
+                        speedPercent={gifSpeedPercent}
+                        setSpeedPercent={setGifSpeedPercent}
+                        sourceType={gifInputType}
+                        buildFps={gifBuildFps}
+                        setBuildFps={setGifBuildFps}
+                    />
+                );
             case 'info': {
                 const onExportJSON = () => {
                     if (!infoPreview?.success) return;
@@ -1044,6 +1519,131 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         return `${normalized.slice(0, idx)}${suffix}${normalized.slice(idx)}`;
     };
     const sanitizeFilePrefix = (prefix: string) => (prefix || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+    const sanitizeFileName = (name: string) => (name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+    const stripExtension = (name: string) => {
+        const idx = name.lastIndexOf('.');
+        if (idx <= 0) return name;
+        return name.slice(0, idx);
+    };
+    const sanitizePdfInputName = (name: string) => sanitizeFileName(stripExtension(name || ''));
+    const normalizePdfFileName = (name: string) => {
+        const cleaned = sanitizeFileName(stripExtension(name || ''));
+        return cleaned || 'document';
+    };
+    const buildSuggestedPdfName = (list: DroppedFile[], hasDirectory?: boolean) => {
+        if (!list.length) return 'document';
+        const baseFromPath = (p: string) => stripExtension(basename(p));
+        let name = '';
+        if (hasDirectory && list[0]?.source_root) {
+            name = baseFromPath(list[0].source_root);
+        }
+        const baseNames = list.map((f) => baseFromPath(f.input_path)).filter(Boolean);
+        if (!name && baseNames.length > 0) {
+            if (baseNames.length === 1) {
+                name = baseNames[0];
+            } else {
+                let prefix = baseNames[0];
+                for (const item of baseNames.slice(1)) {
+                    while (prefix && !item.startsWith(prefix)) {
+                        prefix = prefix.slice(0, -1);
+                    }
+                    if (!prefix) break;
+                }
+                const trimmed = prefix.replace(/[_\-\s.]+$/g, '').trim();
+                name = trimmed.length >= 3 ? trimmed : baseNames[0];
+                if (!hasDirectory) {
+                    name = `${name}_merged`;
+                }
+            }
+        }
+        return normalizePdfFileName(name);
+    };
+    const clampTwoLinesStyle: React.CSSProperties = {
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+    };
+    function toFileUrl(p: string) {
+        if (!p) return '';
+        const normalized = p.replace(/\\/g, '/');
+        if (/^[a-zA-Z]:/.test(normalized)) {
+            return `file:///${encodeURI(normalized)}`;
+        }
+        if (normalized.startsWith('/')) {
+            return `file://${encodeURI(normalized)}`;
+        }
+        return `file:///${encodeURI(normalized)}`;
+    }
+    function clampNumber(value: number, min: number, max: number) {
+        return Math.min(max, Math.max(min, value));
+    }
+    function buildAdjustPreviewFilter(
+        exposure: number,
+        contrast: number,
+        saturation: number,
+        vibrance: number,
+        hue: number,
+        sharpness: number,
+    ) {
+        const brightness = clampNumber(1 + exposure / 100, 0, 2);
+        const baseContrast = clampNumber(1 + contrast / 100, 0, 2);
+        const satCombined = saturation + vibrance * 0.6;
+        const saturate = clampNumber(1 + satCombined / 100, 0, 3);
+        const blurPx = sharpness < 0 ? clampNumber(Math.abs(sharpness) / 35, 0, 6) : 0;
+        const sharpnessBoost = sharpness > 0 ? clampNumber(1 + sharpness / 200, 1, 1.8) : 1;
+        const hueDeg = clampNumber(hue, -180, 180);
+
+        const parts = [
+            `brightness(${brightness})`,
+            `contrast(${(baseContrast * sharpnessBoost).toFixed(3)})`,
+            `saturate(${saturate})`,
+            `hue-rotate(${hueDeg}deg)`,
+        ];
+        if (blurPx > 0) {
+            parts.push(`blur(${blurPx.toFixed(2)}px)`);
+        }
+        return parts.join(' ');
+    }
+    function buildFilterPreviewFilter(index: number, intensity: number) {
+        const t = clampNumber(intensity / 100, 0, 1);
+        const mix = (base: number, target: number) => base + (target - base) * t;
+
+        switch (index) {
+            case 1: // 鲜艳
+                return `saturate(${mix(1, 1.8)}) contrast(${mix(1, 1.2)})`;
+            case 2: // 黑白
+                return `grayscale(${t}) contrast(${mix(1, 1.1)})`;
+            case 3: // 复古
+                return `sepia(${mix(0, 0.8)}) contrast(${mix(1, 1.15)})`;
+            case 4: // 冷调
+                return `saturate(${mix(1, 1.2)}) hue-rotate(${mix(0, -18)}deg)`;
+            case 5: // 暖阳
+                return `sepia(${mix(0, 0.35)}) hue-rotate(${mix(0, 12)}deg) saturate(${mix(1, 1.2)})`;
+            case 6: // 胶片
+                return `sepia(${mix(0, 0.4)}) contrast(${mix(1, 1.2)}) brightness(${mix(1, 1.05)})`;
+            case 7: // 赛博
+                return `hue-rotate(${mix(0, 90)}deg) saturate(${mix(1, 1.5)}) contrast(${mix(1, 1.1)})`;
+            case 8: // 清新
+                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 1.15)})`;
+            case 9: // 日系
+                return `brightness(${mix(1, 1.12)}) contrast(${mix(1, 0.95)}) saturate(${mix(1, 1.05)})`;
+            case 10: // Lomo
+                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 1.35)})`;
+            case 11: // HDR
+                return `contrast(${mix(1, 1.4)}) saturate(${mix(1, 1.2)})`;
+            case 12: // 褪色
+                return `saturate(${mix(1, 0.7)}) brightness(${mix(1, 1.08)})`;
+            case 13: // 磨砂
+                return `blur(${mix(0, 2.2)}px)`;
+            case 14: // 电影
+                return `contrast(${mix(1, 1.18)}) saturate(${mix(1, 1.1)}) brightness(${mix(1, 0.98)})`;
+            case 15: // 拍立得
+                return `sepia(${mix(0, 0.55)}) contrast(${mix(1, 1.1)})`;
+            default:
+                return '';
+        }
+    }
     const addPrefixToRelPath = (rel: string, prefix: string) => {
         const p = sanitizeFilePrefix(prefix);
         if (!p) return rel;
@@ -1053,6 +1653,64 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
         return `${dir}${p}_${name}`;
     };
+
+    useEffect(() => {
+        if (!dropResult || dropResult.files.length === 0) {
+            setPdfFileName('');
+            return;
+        }
+        const suggested = buildSuggestedPdfName(dropResult.files, dropResult.has_directory);
+        setPdfFileName(suggested);
+    }, [dropResult]);
+
+    useEffect(() => {
+        if (!isAdjustOrFilter) {
+            setPreviewPath('');
+            return;
+        }
+        const first = dropResult?.files?.[0];
+        if (first?.input_path) {
+            setPreviewPath(normalizePath(first.input_path));
+        } else {
+            setPreviewPath('');
+        }
+    }, [dropResult, isAdjustOrFilter]);
+
+    useEffect(() => {
+        if (!isAdjustOrFilter) {
+            setPreviewDataUrl('');
+            return;
+        }
+        if (!previewPath) {
+            setPreviewDataUrl('');
+            return;
+        }
+        let cancelled = false;
+        const appAny = window.go?.main?.App as any;
+        if (!appAny?.GetImagePreview) {
+            setPreviewDataUrl('');
+            return;
+        }
+        setPreviewDataUrl('');
+        (async () => {
+            try {
+                const res = await appAny.GetImagePreview({ input_path: previewPath });
+                if (cancelled) return;
+                if (res?.success && res.data_url) {
+                    setPreviewDataUrl(res.data_url);
+                } else {
+                    setPreviewDataUrl('');
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setPreviewDataUrl('');
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [previewPath, isAdjustOrFilter]);
 
     const loadInfoForPath = async (p: string) => {
         if (!window.go?.main?.App?.GetInfo) {
@@ -1318,10 +1976,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
             if (id === 'pdf') {
                 const sizeMap: Record<string, string> = {
-                    'A4 (210 x 297 mm)': 'A4',
+                    'A0 (841 x 1189 mm)': 'A0',
+                    'A1 (594 x 841 mm)': 'A1',
+                    'A2 (420 x 594 mm)': 'A2',
                     'A3 (297 x 420 mm)': 'A3',
-                    'Letter': 'Letter',
-                    'Legal': 'Legal',
+                    'A4 (210 x 297 mm)': 'A4',
+                    'A5 (148 x 210 mm)': 'A5',
+                    'A6 (105 x 148 mm)': 'A6',
+                    'B4 (250 x 353 mm)': 'B4',
+                    'B5 (176 x 250 mm)': 'B5',
+                    'B6 (125 x 176 mm)': 'B6',
+                    'Letter (8.5 x 11 in)': 'Letter',
+                    'Legal (8.5 x 14 in)': 'Legal',
+                    'Tabloid (11 x 17 in)': 'Tabloid',
+                    'Ledger (17 x 11 in)': 'Ledger',
                 };
                 const compressionMap: Record<string, number> = {
                     '不压缩': 0,
@@ -1329,13 +1997,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     '标准': 2,
                     '强力': 3,
                 };
-                const req = {
+                const fitMap: Record<string, string> = {
+                    '适应页面 (保持比例)': 'contain',
+                    '充满页面 (可能裁剪)': 'cover',
+                    '原始大小 (居中)': 'original',
+                };
+                const marginPoints = Math.max(0, Math.round((Number(pdfMarginMm) || 0) * 72 / 25.4));
+                const pdfBaseName = normalizePdfFileName(pdfFileName);
+                const req: any = {
                     image_paths: files.map(f => normalizePath(f.input_path)),
-                    output_path: joinPath(outDir, 'output.pdf'),
+                    output_path: joinPath(outDir, `${pdfBaseName}.pdf`),
                     page_size: sizeMap[pdfSize] ?? 'A4',
                     layout: pdfLayout === '横向' ? 'landscape' : 'portrait',
-                    margin: 72,
+                    margin: marginPoints,
                     compression_level: compressionMap[pdfCompression] ?? 0,
+                    fit_mode: fitMap[pdfFit] ?? 'contain',
                     title: pdfTitle.trim(),
                     author: pdfAuthor.trim(),
                 };
@@ -1346,24 +2022,113 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             }
 
             if (id === 'gif') {
-                for (const f of files) {
-                    const name = basename(f.input_path).replace(/\.[^.]+$/, '');
-                    const req = {
-                        input_path: normalizePath(f.input_path),
-                        output_dir: joinPath(outDir, `${name}_frames`),
-                        start_frame: 0,
-                        end_frame: 0,
-                        format: 'png',
-                    };
+                const appAny = window.go?.main?.App as any;
+                if (!appAny?.SplitGIF) {
+                    setLastMessage('后端未接入 GIF 接口');
+                    return;
+                }
+
+                const isGifFile = (path: string) => extname(path) === 'gif';
+                const gifFiles = files.filter(f => isGifFile(f.input_path));
+                const otherFiles = files.filter(f => !isGifFile(f.input_path));
+
+                if (gifMode === '导出') {
+                    if (gifFiles.length > 0 && otherFiles.length > 0) {
+                        setLastMessage('导出模式请只选择 GIF 或图片序列');
+                        return;
+                    }
+
+                    if (gifFiles.length > 0) {
+                        const outputFormat = gifExportFormat.toLowerCase();
+                        let failed = 0;
+                        for (const f of gifFiles) {
+                            const name = basename(f.input_path).replace(/\.[^.]+$/, '');
+                            const outputDir = joinPath(outDir, `${name}_frames`);
+                            const req = {
+                                action: 'export_frames',
+                                input_path: normalizePath(f.input_path),
+                                output_dir: outputDir,
+                                output_format: outputFormat,
+                            };
+                            try {
+                                const res = await appAny.SplitGIF(req);
+                                if (!res?.success) failed++;
+                            } catch (err) {
+                                console.error(`Failed to export GIF frames ${f.input_path}:`, err);
+                                failed++;
+                            }
+                            completed++;
+                            setProgress((completed / gifFiles.length) * 100);
+                        }
+                        const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                        setLastMessage(`导出完成：${completed}/${gifFiles.length} 项${extra}`);
+                        return;
+                    }
+
+                    const first = files[0];
+                    const baseName = dropResult?.has_directory && first?.source_root
+                        ? basename(first.source_root)
+                        : basename(first.input_path).replace(/\.[^.]+$/, '');
+                    const safeName = baseName || 'output';
+                    const outputPath = joinPath(outDir, `${safeName}_combined.gif`);
                     try {
-                        await window.go.main.App.SplitGIF(req);
+                        const res = await appAny.SplitGIF({
+                            action: 'build_gif',
+                            input_paths: files.map(f => normalizePath(f.input_path)),
+                            output_path: outputPath,
+                            fps: gifBuildFps,
+                        });
+                        if (res?.success) {
+                            setLastMessage(`合成完成：${res.output_path || outputPath}`);
+                        } else {
+                            setLastMessage(res?.error || '合成失败');
+                        }
                     } catch (err) {
-                        console.error(`Failed to split gif ${f.input_path}:`, err);
+                        console.error('Failed to build GIF:', err);
+                        setLastMessage('合成失败');
+                    } finally {
+                        setProgress(100);
+                    }
+                    return;
+                }
+
+                if (gifFiles.length === 0) {
+                    setLastMessage('请先选择 GIF 文件');
+                    return;
+                }
+                if (otherFiles.length > 0) {
+                    setLastMessage('倒放与修改帧率只支持 GIF 输入');
+                    return;
+                }
+
+                const action = gifMode === '倒放' ? 'reverse' : 'change_speed';
+                const speedFactor = gifSpeedPercent / 100;
+                let failed = 0;
+                for (const f of gifFiles) {
+                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
+                    const suffix = action === 'reverse' ? '_reverse' : `_speed_${gifSpeedPercent}`;
+                    const outRel = addSuffix(rel, suffix);
+                    const outputPath = joinPath(outDir, outRel);
+                    const req: any = {
+                        action,
+                        input_path: normalizePath(f.input_path),
+                        output_path: outputPath,
+                    };
+                    if (action === 'change_speed') {
+                        req.speed_factor = speedFactor;
+                    }
+                    try {
+                        const res = await appAny.SplitGIF(req);
+                        if (!res?.success) failed++;
+                    } catch (err) {
+                        console.error(`Failed to process GIF ${f.input_path}:`, err);
+                        failed++;
                     }
                     completed++;
-                    setProgress((completed / total) * 100);
+                    setProgress((completed / gifFiles.length) * 100);
                 }
-                setLastMessage(`GIF 拆分完成：${completed}/${total} 项`);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                setLastMessage(`${gifMode}完成：${completed}/${gifFiles.length} 项${extra}`);
                 return;
             }
 
@@ -1382,100 +2147,204 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         }
     };
 
+    const selectedDropPath = id === 'info' ? infoFilePath : isAdjustOrFilter ? previewPath : undefined;
+    const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
+
+    const dropZone = (
+        <FileDropZone 
+            isActive={isActive}
+            onFilesSelected={handleFilesSelected}
+            onPathsExpanded={(result) => {
+                setDropResult(result);
+                if (id !== 'info') {
+                    setLastMessage('');
+                    setProgress(0);
+                    return;
+                }
+                const selected = infoFilePath
+                    ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
+                    : false;
+                if (selected) return;
+                const first = result?.files?.[0];
+                if (first?.input_path) {
+                    loadInfoForPath(first.input_path);
+                    return;
+                }
+                setInfoFilePath('');
+                setInfoPreview(null);
+                setLastMessage('');
+            }}
+            onItemSelect={(file) => {
+                if (!file?.input_path) return;
+                if (id === 'info') {
+                    loadInfoForPath(file.input_path);
+                    return;
+                }
+                if (isAdjustOrFilter) {
+                    setPreviewPath(normalizePath(file.input_path));
+                }
+            }}
+            selectedPath={selectedDropPath}
+            acceptedFormats="image/*,.svg"
+            allowMultiple={true}
+            title="拖拽文件 / 文件夹到这里"
+            subTitle=""
+        />
+    );
+
+    const showInputInSettings = !isInfo && id !== 'adjust';
+    const showActionInSettings = !isInfo && id !== 'adjust';
+
+    const renderInputSection = (compact = false) => (
+        <div className={`${compact ? 'space-y-2 pb-3' : 'space-y-3 pb-4'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-3' : 'mb-4'}`}>
+            <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
+                <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+            </div>
+            {dropResult?.has_directory && (
+                <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
+            )}
+            <button
+                onClick={handleSelectOutputDir}
+                className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
+            >
+                选择输出文件夹
+            </button>
+            {effectiveOutputDir && (
+                <div
+                    className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2"
+                    style={clampTwoLinesStyle}
+                >
+                    {effectiveOutputDir}
+                </div>
+            )}
+            {lastMessage && (
+                <div
+                    className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
+                    style={clampTwoLinesStyle}
+                >
+                    {lastMessage}
+                </div>
+            )}
+        </div>
+    );
+
+    const renderActionSection = (compact = false) => (
+        <div className={`${compact ? 'pt-3' : 'pt-4'} border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3`}>
+            {(isProcessing || progress > 0) && (
+                <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
+            )}
+            <button 
+                onClick={handleStartProcessing} 
+                disabled={isProcessing}
+                className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+            >
+                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
+            </button>
+        </div>
+    );
+
+    const settingsPanel = (
+        <div
+            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden ${
+                isAdjustOrFilter ? 'flex-1 min-h-0' : 'h-full'
+            } ${isInfo ? 'lg:col-span-4' : ''}`}
+        >
+            {showInputInSettings && renderInputSection()}
+            {isInfo && lastMessage && (
+                <div
+                    className="mb-4 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
+                    style={clampTwoLinesStyle}
+                >
+                    {lastMessage}
+                </div>
+            )}
+            
+            <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
+                {renderSettings()}
+            </div>
+
+            {showActionInSettings && renderActionSection()}
+        </div>
+    );
+
+    const previewPanel = (
+        <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
+                {previewLabel && (
+                    <span className="text-[11px] text-gray-400 font-mono truncate max-w-[180px]">
+                        {previewLabel}
+                    </span>
+                )}
+            </div>
+            <div className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center">
+                {previewSrc ? (
+                    <>
+                        <img
+                            src={previewSrc}
+                            className="max-w-full max-h-full object-contain transition-all duration-150"
+                            style={{ filter: previewFilter || 'none' }}
+                            alt="preview"
+                        />
+                        <div
+                            className="pointer-events-none absolute inset-0 transition-opacity duration-150"
+                            style={{
+                                opacity: previewVignetteOpacity,
+                                background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
+                            }}
+                        />
+                        <div
+                            className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
+                            style={{
+                                opacity: previewGrainOpacity,
+                                backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
+                            }}
+                        />
+                    </>
+                ) : (
+                    <div className="text-xs text-gray-400">拖入图片后显示预览</div>
+                )}
+            </div>
+        </div>
+    );
+
     return (
         <div className="h-full flex flex-col p-1">
-            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
+            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className={`h-full ${isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
-                    <FileDropZone 
-                        isActive={isActive}
-                        onFilesSelected={handleFilesSelected}
-                        onPathsExpanded={(result) => {
-                            setDropResult(result);
-                            if (id !== 'info') {
-                                setLastMessage('');
-                                setProgress(0);
-                                return;
-                            }
-                            const selected = infoFilePath
-                                ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
-                                : false;
-                            if (selected) return;
-                            const first = result?.files?.[0];
-                            if (first?.input_path) {
-                                loadInfoForPath(first.input_path);
-                                return;
-                            }
-                            setInfoFilePath('');
-                            setInfoPreview(null);
-                            setLastMessage('');
-                        }}
-                        onItemSelect={(file) => {
-                            if (id !== 'info') return;
-                            if (file?.input_path) {
-                                loadInfoForPath(file.input_path);
-                            }
-                        }}
-                        selectedPath={id === 'info' ? infoFilePath : undefined}
-                        acceptedFormats="image/*,.svg"
-                        allowMultiple={true}
-                        title="拖拽文件 / 文件夹到这里"
-                        subTitle=""
-                    />
+                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
+                    {id === 'adjust' ? (
+                        <div className="h-full flex flex-col gap-4 min-h-0">
+                            <div className="flex-1 min-h-0">
+                                {dropZone}
+                            </div>
+                            <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4 min-h-0 overflow-hidden">
+                                <div className="flex-1 overflow-y-auto no-scrollbar">
+                                    {renderInputSection(true)}
+                                    <AdjustCropControls />
+                                </div>
+                                {renderActionSection(true)}
+                            </div>
+                        </div>
+                    ) : (
+                        dropZone
+                    )}
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
-                <div className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full overflow-hidden ${isInfo ? 'lg:col-span-4' : ''}`}>
-                    {!isInfo && (
-                        <div className="space-y-3 pb-4 border-b border-gray-100 dark:border-white/5 mb-4 shrink-0">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
-                                <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-4' : ''}`}>
+                    {isAdjustOrFilter ? (
+                        <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
+                            <div className="flex-1 min-h-0">
+                                {previewPanel}
                             </div>
-                            {dropResult?.has_directory && (
-                                <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
-                            )}
-                            <button
-                                onClick={handleSelectOutputDir}
-                                className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
-                            >
-                                选择输出文件夹
-                            </button>
-                            {effectiveOutputDir && (
-                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
-                                    {effectiveOutputDir}
-                                </div>
-                            )}
-                            {lastMessage && (
-                                <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
-                                    {lastMessage}
-                                </div>
-                            )}
+                            <div className="shrink-0">
+                                {settingsPanel}
+                            </div>
                         </div>
-                    )}
-                    {isInfo && lastMessage && (
-                        <div className="mb-4 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
-                            {lastMessage}
-                        </div>
-                    )}
-                    
-                    <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
-                        {renderSettings()}
-                    </div>
-
-                    {!isInfo && (
-                        <div className="pt-4 border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3">
-                            {(isProcessing || progress > 0) && (
-                                <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
-                            )}
-                            <button 
-                                onClick={handleStartProcessing} 
-                                disabled={isProcessing}
-                                className={`w-full py-3.5 rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
-                            >
-                                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
-                            </button>
-                        </div>
+                    ) : (
+                        settingsPanel
                     )}
                 </div>
             </div>

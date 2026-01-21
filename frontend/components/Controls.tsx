@@ -670,9 +670,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                 <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
                                     已添加 {previewResult?.files.length} 项
                                 </div>
-                                <div className="text-[10px] font-mono text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-white/10 px-1.5 py-0.5 rounded">
-                                    {acceptedFormats.replace(/image\//g, '').replace(/\*/g, '').toUpperCase()}
-                                </div>
                             </div>
                             
                             <button

@@ -2,6 +2,8 @@ package services
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
 )
@@ -28,17 +30,26 @@ func (s *PDFGeneratorService) GeneratePDF(req models.PDFRequest) (models.PDFResu
 	if req.Layout == "landscape" {
 		portrait = false
 	}
+	fitMode := req.FitMode
+	if strings.TrimSpace(fitMode) == "" {
+		fitMode = "contain"
+	}
+	margin := req.Margin
+	if margin < 0 {
+		margin = 0
+	}
 
 	payload := map[string]interface{}{
 		"images":      req.ImagePaths,
 		"output_path": req.OutputPath,
 		"page_size":   req.PageSize,
-		"margin":      req.Margin,
+		"margin":      margin,
 		"title":       req.Title,
 		"author":      req.Author,
 		"portrait":    portrait,
 		"layout":      "single",
 		"compression_level": req.CompressionLevel,
+		"fit_mode":   fitMode,
 	}
 
 	var result models.PDFResult

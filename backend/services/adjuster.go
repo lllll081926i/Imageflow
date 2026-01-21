@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
 )
@@ -44,12 +46,19 @@ func (s *AdjusterService) Adjust(req models.AdjustRequest) (models.AdjustResult,
 func (s *AdjusterService) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResult, error) {
 	s.logger.Info("Starting batch adjustment for %d images", len(requests))
 
-	results := make([]models.AdjustResult, 0, len(requests))
-	for _, req := range requests {
-		res, _ := s.Adjust(req)
-		results = append(results, res)
+	results := make([]models.AdjustResult, len(requests))
+	var errs []error
+	for i, req := range requests {
+		res, err := s.Adjust(req)
+		results[i] = res
+		if err != nil {
+			errs = append(errs, fmt.Errorf("adjust[%d]: %w", i, err))
+		}
 	}
 
 	s.logger.Info("Batch adjustment completed")
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

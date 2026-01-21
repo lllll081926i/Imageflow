@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-GIF Splitter Script
+GIF Tools Script
 
-This script splits animated GIFs into individual frames using the Pillow library.
-It supports frame range selection and multiple output formats.
+This script handles GIF operations using the Pillow library:
+- export frames from a GIF
+- reverse a GIF
+- change GIF playback speed
+- build a GIF from input images
 
 Usage:
     python gif_splitter.py
@@ -11,134 +14,196 @@ Usage:
     (Output is provided via JSON on stdout)
 """
 
-import sys
 import json
-import os
-from pathlib import Path
-from PIL import Image
 import logging
+import os
+import sys
+from pathlib import Path
+
+from PIL import Image, ImageSequence, UnidentifiedImageError
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+DEFAULT_FPS = 10
+MIN_SPEED_FACTOR = 0.1
+MAX_SPEED_FACTOR = 2.0
+FRAME_OUTPUT_FORMATS = {"png", "jpg", "jpeg", "bmp"}
+DIRECT_GIF_INPUT_EXTS = {".jpg", ".jpeg", ".png"}
 
-class GIFSplitter:
-    """Handles GIF splitting operations."""
-    
-    # Supported output formats
-    OUTPUT_FORMATS = ['png', 'jpg', 'bmp']
-    
+
+class GIFTool:
+    """Handles GIF operations."""
+
     def __init__(self):
-        """Initialize the GIF splitter."""
-        logger.info("GIFSplitter initialized")
-    
-    def split(self, input_path, output_dir, output_format='png', frame_range='all'):
-        """
-        Split a GIF animation into individual frames.
-        
-        Args:
-            input_path (str): Path to the input GIF file
-            output_dir (str): Directory to save the extracted frames
-            output_format (str): Output format (png, jpg, bmp)
-            frame_range (str): Frame range specification:
-                - 'all': Export all frames
-                - 'start-end': Export frames from start to end (e.g., '0-10')
-                - 'start:step': Export frames with step (e.g., '0:3' for every 3rd frame)
-        
-        Returns:
-            dict: Splitting result with success status and metadata
-        """
+        logger.info("GIFTool initialized")
+
+    def export_frames(self, input_path, output_dir, output_format="png", frame_range="all"):
         try:
-            # Validate output format
-            output_format = output_format.lower()
-            if output_format not in self.OUTPUT_FORMATS:
+            output_format = (output_format or "png").lower()
+            if output_format == "jpeg":
+                output_format = "jpg"
+            if output_format not in FRAME_OUTPUT_FORMATS:
+                return {"success": False, "error": f"Unsupported output format: {output_format}"}
+
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+
+                frame_count = self._get_frame_count(gif)
+                frame_indices = self._parse_frame_range(frame_range, frame_count)
+                frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
+                if not frame_indices:
+                    return {"success": False, "error": "No frames selected for export"}
+
+                os.makedirs(output_dir, exist_ok=True)
+                base_name = Path(input_path).stem
+                frame_files = []
+
+                for frame_idx in frame_indices:
+                    gif.seek(frame_idx)
+                    frame = gif.copy()
+
+                    output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
+                    output_path = os.path.join(output_dir, output_filename)
+
+                    if output_format == "jpg" and frame.mode in ("RGBA", "LA", "P"):
+                        frame = self._flatten_to_rgb(frame)
+
+                    save_format = "JPEG" if output_format == "jpg" else output_format.upper()
+                    frame.save(output_path, format=save_format)
+                    frame_files.append(output_path)
+
                 return {
-                    'success': False,
-                    'error': f'Unsupported output format: {output_format}'
+                    "success": True,
+                    "input_path": input_path,
+                    "output_dir": output_dir,
+                    "frame_count": frame_count,
+                    "export_count": len(frame_files),
+                    "frame_paths": frame_files,
                 }
-            
-            # Open GIF image
-            logger.info(f"Opening GIF: {input_path}")
-            gif = Image.open(input_path)
-            
-            # Get total frame count
-            frame_count = self._get_frame_count(gif)
-            logger.info(f"GIF contains {frame_count} frames")
-            
-            # Parse frame range
-            frame_indices = self._parse_frame_range(frame_range, frame_count)
-            logger.info(f"Exporting {len(frame_indices)} frames: {frame_indices}")
-            
-            # Create output directory
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Extract frames
-            frame_files = []
-            base_name = Path(input_path).stem
-            
-            for i, frame_idx in enumerate(frame_indices):
-                # Seek to the frame
-                gif.seek(frame_idx)
-                
-                # Copy the frame to ensure we don't lose it when seeking
-                frame = gif.copy()
-                
-                # Construct output filename
-                output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
-                output_path = os.path.join(output_dir, output_filename)
-                
-                # Handle transparency for JPEG output
-                if output_format == 'jpg' and frame.mode in ('RGBA', 'LA', 'P'):
-                    background = Image.new('RGB', frame.size, (255, 255, 255))
-                    if frame.mode == 'P':
-                        frame = frame.convert('RGBA')
-                    background.paste(frame, mask=frame.split()[-1] if len(frame.split()) > 1 else None)
-                    frame = background
-                
-                # Save the frame
-                frame.save(output_path, format=output_format.upper())
-                frame_files.append(output_path)
-                
-                logger.debug(f"Saved frame {frame_idx} to {output_path}")
-            
-            logger.info(f"Successfully exported {len(frame_files)} frames to {output_dir}")
-            
+
+        except FileNotFoundError:
+            return {"success": False, "error": f"Input file not found: {input_path}"}
+        except UnidentifiedImageError:
+            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+        except Exception as exc:
+            logger.error("GIF export failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    def reverse_gif(self, input_path, output_path, loop=None):
+        try:
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+                frames, durations, gif_loop = self._extract_gif_frames(gif)
+            frames.reverse()
+            durations.reverse()
+
+            loop_value = gif_loop if loop is None else loop
+            self._ensure_parent_dir(output_path)
+            self._save_gif(frames, output_path, durations, loop_value)
+
             return {
-                'success': True,
-                'input_path': input_path,
-                'output_dir': output_dir,
-                'frame_count': frame_count,
-                'export_count': len(frame_files),
-                'frame_files': frame_files
+                "success": True,
+                "input_path": input_path,
+                "output_path": output_path,
+                "frame_count": len(frames),
             }
-            
-        except FileNotFoundError as e:
-            logger.error(f"File not found: {e}")
+        except FileNotFoundError:
+            return {"success": False, "error": f"Input file not found: {input_path}"}
+        except UnidentifiedImageError:
+            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+        except Exception as exc:
+            logger.error("GIF reverse failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    def change_speed(self, input_path, output_path, speed_factor, loop=None):
+        try:
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+                frames, durations, gif_loop = self._extract_gif_frames(gif)
+            factor = self._clamp_speed_factor(speed_factor)
+            new_durations = [max(1, int(d / factor)) for d in durations]
+
+            loop_value = gif_loop if loop is None else loop
+            self._ensure_parent_dir(output_path)
+            self._save_gif(frames, output_path, new_durations, loop_value)
+
             return {
-                'success': False,
-                'error': f'Input file not found: {input_path}'
+                "success": True,
+                "input_path": input_path,
+                "output_path": output_path,
+                "frame_count": len(frames),
+                "speed_factor": factor,
             }
-        except Exception as e:
-            logger.error(f"GIF splitting failed: {e}", exc_info=True)
+        except FileNotFoundError:
+            return {"success": False, "error": f"Input file not found: {input_path}"}
+        except UnidentifiedImageError:
+            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+        except Exception as exc:
+            logger.error("GIF speed change failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    def build_gif(self, input_paths, output_path, fps=None, loop=0):
+        try:
+            paths = [p for p in (input_paths or []) if p]
+            if not paths:
+                return {"success": False, "error": "No input images provided"}
+
+            fps_value = self._sanitize_fps(fps)
+            duration_ms = max(1, int(1000 / fps_value))
+
+            frames = []
+            sizes = []
+            for path in paths:
+                with Image.open(path) as img:
+                    ext = Path(path).suffix.lower()
+                    if ext not in DIRECT_GIF_INPUT_EXTS:
+                        logger.info("Converting %s to JPG before GIF", path)
+                        img = self._flatten_to_rgb(img)
+                    elif ext in (".jpg", ".jpeg"):
+                        img = img.convert("RGB")
+                    else:
+                        img = img.convert("RGBA")
+
+                    if img.mode != "RGBA":
+                        img = img.convert("RGBA")
+
+                    frame = img.copy()
+                frames.append(frame)
+                sizes.append(frame.size)
+
+            canvas_size = self._choose_canvas_size(sizes)
+            frames = [self._pad_to_size(frame, canvas_size) for frame in frames]
+
+            self._ensure_parent_dir(output_path)
+            self._save_gif(frames, output_path, [duration_ms] * len(frames), loop)
+
             return {
-                'success': False,
-                'error': str(e)
+                "success": True,
+                "input_paths": paths,
+                "output_path": output_path,
+                "frame_count": len(frames),
+                "fps": fps_value,
             }
-    
+        except FileNotFoundError as exc:
+            return {"success": False, "error": f"Input file not found: {exc.filename}"}
+        except UnidentifiedImageError as exc:
+            return {"success": False, "error": f"Unsupported image format: {exc}"}
+        except Exception as exc:
+            logger.error("GIF build failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    def _open_gif(self, input_path):
+        gif = Image.open(input_path)
+        if gif.format != "GIF":
+            raise ValueError("Input file is not a GIF")
+        return gif
+
     def _get_frame_count(self, gif):
-        """
-        Get the total number of frames in a GIF.
-        
-        Args:
-            gif: PIL Image object (GIF)
-        
-        Returns:
-            int: Number of frames
-        """
         frame_count = 0
         try:
             while True:
@@ -146,170 +211,222 @@ class GIFSplitter:
                 frame_count += 1
         except EOFError:
             pass
-        
         return frame_count
-    
+
+    def _extract_gif_frames(self, gif):
+        frames = []
+        durations = []
+        default_duration = gif.info.get("duration", 100)
+        for frame in ImageSequence.Iterator(gif):
+            frames.append(frame.copy())
+            duration = frame.info.get("duration", default_duration)
+            if not isinstance(duration, int) or duration <= 0:
+                duration = default_duration
+            durations.append(duration)
+        loop = gif.info.get("loop", 0)
+        return frames, durations, loop
+
     def _parse_frame_range(self, frame_range, total_frames):
-        """
-        Parse frame range specification and return list of frame indices.
-        
-        Args:
-            frame_range (str): Frame range specification
-            total_frames (int): Total number of frames in the GIF
-        
-        Returns:
-            list: List of frame indices to export
-        """
-        if frame_range == 'all':
+        if not frame_range or frame_range == "all":
             return list(range(total_frames))
-        
+
         try:
-            if '-' in frame_range:
-                # Range specification: start-end
-                start, end = map(int, frame_range.split('-'))
+            if "-" in frame_range:
+                start, end = map(int, frame_range.split("-"))
                 return list(range(start, min(end + 1, total_frames)))
-            
-            elif ':' in frame_range:
-                # Interval specification: start:step
-                parts = frame_range.split(':')
+            if ":" in frame_range:
+                parts = frame_range.split(":")
                 if len(parts) == 2:
                     start, step = map(int, parts)
                     return list(range(start, total_frames, step))
-            
-            # Single frame
             return [int(frame_range)]
-            
-        except (ValueError, IndexError) as e:
-            logger.warning(f"Invalid frame range '{frame_range}': {e}. Using all frames.")
+        except (ValueError, IndexError) as exc:
+            logger.warning("Invalid frame range '%s': %s. Using all frames.", frame_range, exc)
             return list(range(total_frames))
+
+    def _save_gif(self, frames, output_path, durations, loop):
+        if not frames:
+            raise ValueError("No frames to save")
+        first, rest = frames[0], frames[1:]
+        first.save(
+            output_path,
+            save_all=True,
+            append_images=rest,
+            duration=durations,
+            loop=loop if loop is not None else 0,
+            optimize=False,
+        )
+
+    def _flatten_to_rgb(self, img):
+        if img.mode in ("RGBA", "LA", "P"):
+            rgba = img.convert("RGBA")
+            background = Image.new("RGB", rgba.size, (255, 255, 255))
+            background.paste(rgba, mask=rgba.split()[-1])
+            return background
+        return img.convert("RGB")
+
+    def _pad_to_size(self, img, size):
+        if img.size == size:
+            return img
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        canvas.paste(img, (0, 0))
+        return canvas
+
+    def _choose_canvas_size(self, sizes):
+        if not sizes:
+            return (0, 0)
+        max_w = max(size[0] for size in sizes)
+        max_h = max(size[1] for size in sizes)
+        return (max_w, max_h)
+
+    def _clamp_speed_factor(self, value):
+        try:
+            factor = float(value)
+        except (TypeError, ValueError):
+            factor = 1.0
+        if factor <= 0:
+            factor = 1.0
+        return max(MIN_SPEED_FACTOR, min(MAX_SPEED_FACTOR, factor))
+
+    def _sanitize_fps(self, value):
+        try:
+            fps = float(value)
+        except (TypeError, ValueError):
+            fps = float(DEFAULT_FPS)
+        if fps <= 0:
+            fps = float(DEFAULT_FPS)
+        return fps
+
+    def _ensure_parent_dir(self, path):
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+
+def _build_frame_range_from_request(input_data):
+    frame_range = str(input_data.get("frame_range") or "").strip()
+    if frame_range:
+        return frame_range
+
+    start = input_data.get("start_frame")
+    end = input_data.get("end_frame")
+    if isinstance(start, int) or isinstance(end, int):
+        start_value = start if isinstance(start, int) else 0
+        end_value = end if isinstance(end, int) else 0
+        if start_value == 0 and end_value == 0:
+            return "all"
+        if end_value <= 0:
+            return str(start_value)
+        return f"{start_value}-{end_value}"
+
+    return "all"
+
+
+def _normalize_action(value):
+    action = str(value or "").strip().lower()
+    if action in ("", "split", "export", "export_frames"):
+        return "export_frames"
+    if action in ("reverse", "reverse_gif"):
+        return "reverse"
+    if action in ("change_speed", "change_frame_rate", "speed"):
+        return "change_speed"
+    if action in ("build", "compose", "combine", "build_gif", "make_gif"):
+        return "build_gif"
+    if action == "get_frame_count":
+        return "get_frame_count"
+    return action
+
+
+def _coerce_input_paths(input_data):
+    paths = input_data.get("input_paths")
+    if isinstance(paths, list):
+        return [p for p in paths if p]
+    single = input_data.get("input_path")
+    if single:
+        return [single]
+    return []
+
+
+def handle_request(input_data):
+    tool = GIFTool()
+    action = _normalize_action(input_data.get("action"))
+
+    if action == "get_frame_count":
+        input_path = input_data.get("input_path")
+        if not input_path:
+            return {"success": False, "error": "Missing input_path"}
+        try:
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+                return {
+                    "success": True,
+                    "input_path": input_path,
+                    "frame_count": tool._get_frame_count(gif),
+                }
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    if action == "export_frames":
+        input_path = input_data.get("input_path")
+        output_dir = input_data.get("output_dir")
+        if not input_path or not output_dir:
+            return {"success": False, "error": "Missing input_path or output_dir"}
+        output_format = input_data.get("output_format") or input_data.get("format") or "png"
+        frame_range = _build_frame_range_from_request(input_data)
+        return tool.export_frames(input_path, output_dir, output_format, frame_range)
+
+    if action == "reverse":
+        input_path = input_data.get("input_path")
+        output_path = input_data.get("output_path")
+        loop = input_data.get("loop")
+        if not input_path or not output_path:
+            return {"success": False, "error": "Missing input_path or output_path"}
+        return tool.reverse_gif(input_path, output_path, loop)
+
+    if action == "change_speed":
+        input_path = input_data.get("input_path")
+        output_path = input_data.get("output_path")
+        speed_factor = input_data.get("speed_factor")
+        loop = input_data.get("loop")
+        if not input_path or not output_path:
+            return {"success": False, "error": "Missing input_path or output_path"}
+        return tool.change_speed(input_path, output_path, speed_factor, loop)
+
+    if action == "build_gif":
+        output_path = input_data.get("output_path")
+        fps = input_data.get("fps")
+        loop = input_data.get("loop", 0)
+        input_paths = _coerce_input_paths(input_data)
+        if not output_path:
+            return {"success": False, "error": "Missing output_path"}
+        return tool.build_gif(input_paths, output_path, fps, loop)
+
+    return {"success": False, "error": f"Unsupported action: {action}"}
 
 
 def process(input_data):
-    """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
-
-    Args:
-        input_data (dict): Input parameters
-
-    Returns:
-        dict: Processing result
-    """
     try:
-        # Check for special action to get frame count only
-        action = input_data.get('action')
-        if action == 'get_frame_count':
-            input_path = input_data.get('input_path')
-            try:
-                gif = Image.open(input_path)
-                frame_count = 0
-                while True:
-                    gif.seek(frame_count)
-                    frame_count += 1
-            except EOFError:
-                pass
-
-            return {
-                'frame_count': frame_count
-            }
-
-        # Extract parameters for normal splitting
-        input_path = input_data.get('input_path')
-        output_dir = input_data.get('output_dir')
-        output_format = input_data.get('output_format', 'png')
-        frame_range = input_data.get('frame_range', 'all')
-
-        # Validate required parameters
-        if not input_path or not output_dir:
-            return {
-                'success': False,
-                'error': 'Missing required parameters: input_path or output_dir'
-            }
-
-        # Create splitter and perform splitting
-        splitter = GIFSplitter()
-        result = splitter.split(
-            input_path=input_path,
-            output_dir=output_dir,
-            output_format=output_format,
-            frame_range=frame_range
-        )
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Process function error: {e}", exc_info=True)
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return handle_request(input_data)
+    except Exception as exc:
+        logger.error("Process function error: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
 
 
 def main():
-    """Main entry point for the GIF splitter script."""
     try:
-        # Read input from stdin
         input_data = json.load(sys.stdin)
-        logger.info(f"Received GIF split request: {input_data.get('input_path')}")
-        
-        # Check for special action to get frame count only
-        action = input_data.get('action')
-        if action == 'get_frame_count':
-            input_path = input_data.get('input_path')
-            try:
-                gif = Image.open(input_path)
-                frame_count = 0
-                while True:
-                    gif.seek(frame_count)
-                    frame_count += 1
-            except EOFError:
-                pass
-            
-            result = {
-                'frame_count': frame_count
-            }
-            json.dump(result, sys.stdout)
-            return
-        
-        # Extract parameters
-        input_path = input_data.get('input_path')
-        output_dir = input_data.get('output_dir')
-        output_format = input_data.get('output_format', 'png')
-        frame_range = input_data.get('frame_range', 'all')
-        
-        # Validate required parameters
-        if not input_path or not output_dir:
-            result = {
-                'success': False,
-                'error': 'Missing required parameters: input_path or output_dir'
-            }
-        else:
-            # Create splitter and perform splitting
-            splitter = GIFSplitter()
-            result = splitter.split(
-                input_path=input_path,
-                output_dir=output_dir,
-                output_format=output_format,
-                frame_range=frame_range
-            )
-        
-        # Write result to stdout
-        logger.info(f"GIF splitting completed: {result.get('success')}")
+        logger.info("Received GIF request: %s", input_data.get("action") or "export_frames")
+        result = handle_request(input_data)
+        logger.info("GIF request completed: %s", result.get("success"))
         json.dump(result, sys.stdout)
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON input: {e}")
-        json.dump({
-            'success': False,
-            'error': f'Invalid JSON input: {str(e)}'
-        }, sys.stdout)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        json.dump({
-            'success': False,
-            'error': str(e)
-        }, sys.stdout)
+    except json.JSONDecodeError as exc:
+        logger.error("Invalid JSON input: %s", exc)
+        json.dump({"success": False, "error": f"Invalid JSON input: {str(exc)}"}, sys.stdout)
+    except Exception as exc:
+        logger.error("Unexpected error: %s", exc, exc_info=True)
+        json.dump({"success": False, "error": str(exc)}, sys.stdout)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -51,6 +51,18 @@ function Trim-PythonRuntime {
         Remove-Item -Recurse -Force $scriptsDir
     }
 
+    $removeAtRoot = @(
+        ".keep",
+        "LICENSE.txt",
+        "python.cat"
+    )
+    foreach ($name in $removeAtRoot) {
+        $p = Join-Path $RuntimeRoot $name
+        if (Test-Path $p) {
+            Remove-Item -Force $p -ErrorAction SilentlyContinue
+        }
+    }
+
     $sitePackages = Join-Path $RuntimeRoot "Lib\\site-packages"
     if (Test-Path $sitePackages) {
         $removeTop = @(
@@ -58,6 +70,9 @@ function Trim-PythonRuntime {
             "pip-*.dist-info",
             "wheel",
             "wheel-*.dist-info",
+            "setuptools",
+            "setuptools-*.dist-info",
+            "pkg_resources",
             "__pycache__"
         )
         foreach ($pattern in $removeTop) {
@@ -65,13 +80,45 @@ function Trim-PythonRuntime {
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
         }
 
+        Get-ChildItem -Path $sitePackages -Force -Directory |
+            Where-Object { $_.Name -like "*.dist-info" } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
         Get-ChildItem -Path $sitePackages -Recurse -Force -Directory |
             Where-Object { $_.Name -in @("tests", "test", "__pycache__") } |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+        Get-ChildItem -Path $sitePackages -Recurse -Force -Directory |
+            Where-Object { $_.Name -in @("include", "includes", "__pyinstaller") } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+        Get-ChildItem -Path $sitePackages -Recurse -Force -File -Include *.pyi, *.pyx, *.pxd, *.h, *.c, *.cpp, *.lib |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+
+        Get-ChildItem -Path $sitePackages -Recurse -Force -File -Include py.typed |
+            Remove-Item -Force -ErrorAction SilentlyContinue
     }
 
     Get-ChildItem -Path $RuntimeRoot -Recurse -Force -Include *.pyc, *.pyo |
         Remove-Item -Force -ErrorAction SilentlyContinue
+
+    Get-ChildItem -Path $RuntimeRoot -Force -Filter "python*._pth" -ErrorAction SilentlyContinue | ForEach-Object {
+        $pthPath = $_.FullName
+        $lines = Get-Content -LiteralPath $pthPath -ErrorAction SilentlyContinue
+        if ($lines -and ($lines -notcontains "..\\python")) {
+            $out = New-Object System.Collections.Generic.List[string]
+            foreach ($l in $lines) {
+                if ($l -eq "import site") {
+                    $out.Add("..\\python")
+                }
+                $out.Add($l)
+            }
+            if ($out -notcontains "..\\python") {
+                $out.Insert([Math]::Min(2, $out.Count), "..\\python")
+            }
+            Set-Content -LiteralPath $pthPath -Value $out -Encoding ASCII
+        }
+    }
 }
 
 $src = Find-PythonDir -Start $root

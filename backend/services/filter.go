@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
 )
@@ -51,12 +53,19 @@ func (s *FilterService) ApplyFilter(req models.FilterRequest) (models.FilterResu
 func (s *FilterService) ApplyFilterBatch(requests []models.FilterRequest) ([]models.FilterResult, error) {
 	s.logger.Info("Starting batch filter application for %d images", len(requests))
 
-	results := make([]models.FilterResult, 0, len(requests))
-	for _, req := range requests {
-		res, _ := s.ApplyFilter(req)
-		results = append(results, res)
+	results := make([]models.FilterResult, len(requests))
+	var errs []error
+	for i, req := range requests {
+		res, err := s.ApplyFilter(req)
+		results[i] = res
+		if err != nil {
+			errs = append(errs, fmt.Errorf("filter[%d]: %w", i, err))
+		}
 	}
 
 	s.logger.Info("Batch filter application completed")
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

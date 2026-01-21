@@ -30,13 +30,24 @@ type PythonExecutor struct {
 	workerRunning bool
 }
 
+var (
+	pythonResolveOnce   sync.Once
+	pythonLogOnce       sync.Once
+	cachedPythonCmd     string
+	cachedPythonArgs    []string
+	cachedPythonDisplay string
+	cachedPythonErr     error
+)
+
 func NewPythonExecutor(scriptsDir string, logger *Logger) (*PythonExecutor, error) {
-	pythonCmd, pythonArgs, display, err := findPython()
+	pythonCmd, pythonArgs, display, err := resolvePython()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find Python: %w", err)
 	}
 
-	logger.Info("Found Python at: %s", display)
+	pythonLogOnce.Do(func() {
+		logger.Info("Found Python at: %s", display)
+	})
 
 	return &PythonExecutor{
 		pythonCmd:  pythonCmd,
@@ -352,6 +363,13 @@ func findPython() (string, []string, string, error) {
 	}
 
 	return "", nil, "", fmt.Errorf("python executable not found (tried: bundled python, %v, conda imageflow)", candidates)
+}
+
+func resolvePython() (string, []string, string, error) {
+	pythonResolveOnce.Do(func() {
+		cachedPythonCmd, cachedPythonArgs, cachedPythonDisplay, cachedPythonErr = findPython()
+	})
+	return cachedPythonCmd, cachedPythonArgs, cachedPythonDisplay, cachedPythonErr
 }
 
 func isPython3Executable(pythonPath string) bool {

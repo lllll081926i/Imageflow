@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/imageflow/backend/models"
@@ -304,7 +307,7 @@ func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
 	return a.pdfGeneratorService.GeneratePDF(req)
 }
 
-// SplitGIF splits a GIF into individual frames
+// SplitGIF handles GIF-related actions (export_frames, reverse, change_speed, build_gif)
 func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
 	return a.gifSplitterService.SplitGIF(req)
 }
@@ -312,6 +315,43 @@ func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error
 // GetInfo retrieves image information
 func (a *App) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
 	return a.infoViewerService.GetInfo(req)
+}
+
+// GetImagePreview builds a data URL for previewing images in the frontend.
+func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, error) {
+	if strings.TrimSpace(req.InputPath) == "" {
+		return models.PreviewResult{Success: false, Error: "输入路径为空"}, errors.New("input path is empty")
+	}
+
+	data, err := os.ReadFile(req.InputPath)
+	if err != nil {
+		return models.PreviewResult{Success: false, Error: err.Error()}, err
+	}
+
+	mimeType := http.DetectContentType(data)
+	if strings.HasPrefix(mimeType, "application/octet-stream") || strings.HasPrefix(mimeType, "text/plain") {
+		ext := strings.ToLower(filepath.Ext(req.InputPath))
+		switch ext {
+		case ".jpg", ".jpeg":
+			mimeType = "image/jpeg"
+		case ".png":
+			mimeType = "image/png"
+		case ".webp":
+			mimeType = "image/webp"
+		case ".gif":
+			mimeType = "image/gif"
+		case ".bmp":
+			mimeType = "image/bmp"
+		case ".tif", ".tiff":
+			mimeType = "image/tiff"
+		case ".svg":
+			mimeType = "image/svg+xml"
+		}
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
+	return models.PreviewResult{Success: true, DataURL: dataURL}, nil
 }
 
 // EditMetadata edits image metadata (EXIF)
@@ -335,6 +375,8 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 	if n == 0 {
 		return results, nil
 	}
+	var errsMu sync.Mutex
+	var errs []error
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -353,8 +395,13 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				res, _ := a.watermarkService.AddWatermark(requests[idx])
+				res, err := a.watermarkService.AddWatermark(requests[idx])
 				results[idx] = res
+				if err != nil {
+					errsMu.Lock()
+					errs = append(errs, fmt.Errorf("watermark[%d]: %w", idx, err))
+					errsMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -363,6 +410,9 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 	}
 	close(jobs)
 	wg.Wait()
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }
 
@@ -378,6 +428,8 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 	if n == 0 {
 		return results, nil
 	}
+	var errsMu sync.Mutex
+	var errs []error
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -396,8 +448,13 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				res, _ := a.adjusterService.Adjust(requests[idx])
+				res, err := a.adjusterService.Adjust(requests[idx])
 				results[idx] = res
+				if err != nil {
+					errsMu.Lock()
+					errs = append(errs, fmt.Errorf("adjust[%d]: %w", idx, err))
+					errsMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -406,6 +463,9 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 	}
 	close(jobs)
 	wg.Wait()
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }
 
@@ -421,6 +481,8 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 	if n == 0 {
 		return results, nil
 	}
+	var errsMu sync.Mutex
+	var errs []error
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -439,8 +501,13 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				res, _ := a.filterService.ApplyFilter(requests[idx])
+				res, err := a.filterService.ApplyFilter(requests[idx])
 				results[idx] = res
+				if err != nil {
+					errsMu.Lock()
+					errs = append(errs, fmt.Errorf("filter[%d]: %w", idx, err))
+					errsMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -449,5 +516,8 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 	}
 	close(jobs)
 	wg.Wait()
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

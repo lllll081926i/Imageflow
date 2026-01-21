@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
 )
@@ -79,12 +81,19 @@ func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.Wat
 func (s *WatermarkService) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.WatermarkResult, error) {
 	s.logger.Info("Starting batch watermark application for %d images", len(requests))
 
-	results := make([]models.WatermarkResult, 0, len(requests))
-	for _, req := range requests {
-		res, _ := s.AddWatermark(req)
-		results = append(results, res)
+	results := make([]models.WatermarkResult, len(requests))
+	var errs []error
+	for i, req := range requests {
+		res, err := s.AddWatermark(req)
+		results[i] = res
+		if err != nil {
+			errs = append(errs, fmt.Errorf("watermark[%d]: %w", i, err))
+		}
 	}
 
 	s.logger.Info("Batch watermark application completed")
+	if len(errs) > 0 {
+		return results, errors.Join(errs...)
+	}
 	return results, nil
 }

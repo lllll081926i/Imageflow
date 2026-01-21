@@ -123,7 +123,7 @@ class ImageCompressor:
         """
         tmp_output_path = None
         try:
-            strip_metadata = True
+            strip_metadata = bool(strip_metadata)
             # Validate compression level
             if not CompressionLevel.validate(level):
                 logger.warning(f"Invalid compression level: {level}, using MEDIUM")
