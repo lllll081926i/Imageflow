@@ -1,20 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
-import DetailView from './components/DetailView';
-import SettingsView from './components/SettingsView';
 import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
 import { ViewState, Theme } from './types';
 import { FEATURES } from './constants';
 
 const FEATURE_IDS = FEATURES.map((feature) => feature.id);
+const loadDetailView = () => import('./components/DetailView');
+const loadSettingsView = () => import('./components/SettingsView');
+const DetailView = lazy(loadDetailView);
+const SettingsView = lazy(loadSettingsView);
 
 const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
+    const [loadedFeatureViews, setLoadedFeatureViews] = useState<ViewState[]>([]);
     const isSecondaryView = activeView !== 'dashboard';
+    const isFeatureView = FEATURE_IDS.includes(activeView);
+    const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
+        ? [...loadedFeatureViews, activeView]
+        : loadedFeatureViews;
 
     useEffect(() => {
         // Prevent default drag behaviors to stop opening files in browser
@@ -58,6 +65,30 @@ const App: React.FC = () => {
             window.removeEventListener('keydown', preventCtrlKeyZoom);
         };
     }, []);
+
+    useEffect(() => {
+        const win = window as Window & {
+            requestIdleCallback?: (cb: IdleRequestCallback, options?: IdleRequestOptions) => number;
+            cancelIdleCallback?: (handle: number) => void;
+        };
+        const prefetchViews = () => {
+            void loadDetailView();
+            void loadSettingsView();
+        };
+
+        if (win.requestIdleCallback) {
+            const handle = win.requestIdleCallback(prefetchViews, { timeout: 1200 });
+            return () => win.cancelIdleCallback?.(handle);
+        }
+
+        const timer = window.setTimeout(prefetchViews, 200);
+        return () => window.clearTimeout(timer);
+    }, []);
+
+    useEffect(() => {
+        if (!isFeatureView) return;
+        setLoadedFeatureViews((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]));
+    }, [activeView, isFeatureView]);
 
     const toggleTheme = () => {
         if (theme === 'light') {
@@ -120,18 +151,20 @@ const App: React.FC = () => {
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
                                     <Dashboard onSelect={handleNavigate} />
                                 </div>
-                                <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
-                                    <SettingsView />
-                                </div>
-                                {FEATURE_IDS.map((viewId) => (
-                                    <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
-                                        <DetailView
-                                            id={viewId}
-                                            isActive={activeView === viewId}
-                                            onBack={() => handleNavigate('dashboard')}
-                                        />
+                                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-400">加载中...</div>}>
+                                    <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
+                                        <SettingsView />
                                     </div>
-                                ))}
+                                    {visibleFeatureViews.map((viewId) => (
+                                        <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
+                                            <DetailView
+                                                id={viewId}
+                                                isActive={activeView === viewId}
+                                                onBack={() => handleNavigate('dashboard')}
+                                            />
+                                        </div>
+                                    ))}
+                                </Suspense>
                             </div>
                         </div>
                     </div>
