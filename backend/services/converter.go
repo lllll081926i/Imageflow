@@ -3,10 +3,12 @@ package services
 import (
 	"errors"
 	"fmt"
-	"github.com/imageflow/backend/models"
-	"github.com/imageflow/backend/utils"
+	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/imageflow/backend/models"
+	"github.com/imageflow/backend/utils"
 )
 
 // ConverterService handles image format conversion
@@ -25,6 +27,13 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 
 // Convert converts an image to a different format
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
+	req.InputPath = resolveInputPath(req.InputPath, req.OutputPath)
+	if req.OutputPath != "" && !filepath.IsAbs(req.OutputPath) {
+		if abs, err := filepath.Abs(req.OutputPath); err == nil {
+			req.OutputPath = abs
+		}
+	}
+
 	s.logger.Info("Converting image: %s -> %s (format: %s)", req.InputPath, req.OutputPath, req.Format)
 
 	if strings.EqualFold(filepath.Ext(req.InputPath), ".svg") {
@@ -57,6 +66,41 @@ func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertRes
 
 	s.logger.Info("Conversion completed successfully")
 	return result, nil
+}
+
+func resolveInputPath(inputPath, outputPath string) string {
+	cleaned := strings.TrimSpace(inputPath)
+	if cleaned == "" {
+		return inputPath
+	}
+	if filepath.IsAbs(cleaned) {
+		return cleaned
+	}
+
+	candidates := []string{}
+	if outputPath != "" && filepath.IsAbs(outputPath) {
+		candidates = append(candidates, filepath.Join(filepath.Dir(outputPath), cleaned))
+	}
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		candidates = append(candidates, filepath.Join(wd, cleaned))
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		if exeDir != "" {
+			candidates = append(candidates, filepath.Join(exeDir, cleaned))
+		}
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		return abs
+	}
+	return cleaned
 }
 
 // ConvertBatch converts multiple images concurrently

@@ -36,6 +36,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _resolve_path(path_value, base_dirs):
+    if not path_value:
+        return path_value
+    if os.path.isabs(path_value):
+        return path_value
+    for base in base_dirs:
+        if not base:
+            continue
+        candidate = os.path.join(base, path_value)
+        if os.path.exists(candidate):
+            return os.path.abspath(candidate)
+    return os.path.abspath(path_value)
+
+
+def _normalize_paths(input_path, output_path):
+    output_abs = None
+    if output_path:
+        output_abs = output_path if os.path.isabs(output_path) else os.path.abspath(output_path)
+    base_dirs = []
+    if output_abs:
+        base_dirs.append(os.path.dirname(output_abs))
+    base_dirs.append(os.getcwd())
+    base_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    input_abs = _resolve_path(input_path, base_dirs)
+    return input_abs, output_abs or output_path
+
+
 class ImageConverter:
     """Handles image format conversion operations."""
     
@@ -560,6 +587,7 @@ def process(input_data):
         # Extract parameters
         input_path = input_data.get('input_path')
         output_path = input_data.get('output_path')
+        input_path, output_path = _normalize_paths(input_path, output_path)
         format_type = input_data.get('format', 'jpg')
         quality = input_data.get('quality', 95)
         width = input_data.get('width', 0)
@@ -623,6 +651,7 @@ def main():
         # Extract parameters
         input_path = input_data.get('input_path')
         output_path = input_data.get('output_path')
+        input_path, output_path = _normalize_paths(input_path, output_path)
         format_type = input_data.get('format', 'jpg')
         quality = input_data.get('quality', 95)
         width = input_data.get('width', 0)
