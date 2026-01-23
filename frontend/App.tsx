@@ -67,22 +67,15 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const win = window as Window & {
-            requestIdleCallback?: (cb: IdleRequestCallback, options?: IdleRequestOptions) => number;
-            cancelIdleCallback?: (handle: number) => void;
-        };
         const prefetchViews = () => {
             void loadDetailView();
             void loadSettingsView();
         };
 
-        if (win.requestIdleCallback) {
-            const handle = win.requestIdleCallback(prefetchViews, { timeout: 1200 });
-            return () => win.cancelIdleCallback?.(handle);
-        }
-
-        const timer = window.setTimeout(prefetchViews, 200);
-        return () => window.clearTimeout(timer);
+        const frame = window.requestAnimationFrame(prefetchViews);
+        return () => {
+            window.cancelAnimationFrame(frame);
+        };
     }, []);
 
     useEffect(() => {
