@@ -35,7 +35,8 @@ class ImageAdjuster:
         logger.info("ImageAdjuster initialized")
     
     def adjust(self, input_path, output_path, rotate=0, flip_h=False, flip_v=False,
-               brightness=0, contrast=0, saturation=0, hue=0):
+               brightness=0, contrast=0, saturation=0, hue=0,
+               exposure=0, vibrance=0, sharpness=0, crop_ratio="", crop_mode=""):
         """
         Apply adjustments to an image.
         
@@ -64,10 +65,14 @@ class ImageAdjuster:
             # Apply adjustments in order
             img = self._apply_rotation(img, rotate)
             img = self._apply_flip(img, flip_h, flip_v)
+            img = self._apply_crop_ratio(img, crop_ratio, crop_mode)
+            brightness = self._merge_exposure(brightness, exposure)
             img = self._apply_brightness(img, brightness)
             img = self._apply_contrast(img, contrast)
             img = self._apply_saturation(img, saturation)
+            img = self._apply_vibrance(img, vibrance)
             img = self._apply_hue(img, hue)
+            img = self._apply_sharpness(img, sharpness)
             
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
@@ -225,6 +230,108 @@ class ImageAdjuster:
         
         enhancer = ImageEnhance.Color(img)
         return enhancer.enhance(factor)
+
+    def _apply_vibrance(self, img, adjustment):
+        """
+        Apply vibrance adjustment (boost low-saturation colors more).
+        """
+        if adjustment == 0:
+            return img
+
+        try:
+            factor = max(-100.0, min(100.0, float(adjustment))) / 100.0
+        except Exception:
+            return img
+
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
+        alpha = None
+        if img.mode == "RGBA":
+            alpha = img.split()[3]
+            rgb = img.convert("RGB")
+        else:
+            rgb = img
+
+        hsv = rgb.convert("HSV")
+        h, s, v = hsv.split()
+        if factor >= 0:
+            lut = [min(255, int(x + (255 - x) * factor)) for x in range(256)]
+        else:
+            lut = [max(0, int(x * (1 + factor))) for x in range(256)]
+        s = s.point(lut)
+        out = Image.merge("HSV", (h, s, v)).convert("RGB")
+
+        if alpha is not None:
+            out = out.convert("RGBA")
+            out.putalpha(alpha)
+        return out
+
+    def _apply_sharpness(self, img, adjustment):
+        """
+        Apply sharpness adjustment (-100 to 100).
+        """
+        if adjustment == 0:
+            return img
+
+        try:
+            factor = 1.0 + (float(adjustment) / 100.0)
+        except Exception:
+            return img
+
+        factor = max(0.0, min(3.0, factor))
+        enhancer = ImageEnhance.Sharpness(img)
+        return enhancer.enhance(factor)
+
+    def _merge_exposure(self, brightness, exposure):
+        try:
+            base = float(brightness)
+        except Exception:
+            base = 0.0
+        try:
+            exp = float(exposure)
+        except Exception:
+            exp = 0.0
+        merged = max(-100.0, min(100.0, base + exp))
+        return merged
+
+    def _apply_crop_ratio(self, img, crop_ratio, crop_mode):
+        ratio_text = str(crop_ratio or "").strip().lower()
+        if ratio_text in ("", "free", "original", "none", "原图", "自由"):
+            return img
+        if ":" not in ratio_text:
+            return img
+        try:
+            parts = ratio_text.split(":")
+            rw = float(parts[0])
+            rh = float(parts[1])
+            if rw <= 0 or rh <= 0:
+                return img
+            target_ratio = rw / rh
+        except Exception:
+            return img
+
+        width, height = img.size
+        if width <= 0 or height <= 0:
+            return img
+
+        current_ratio = width / float(height)
+        if abs(current_ratio - target_ratio) < 1e-6:
+            return img
+
+        if current_ratio > target_ratio:
+            new_width = int(height * target_ratio)
+            left = max(0, (width - new_width) // 2)
+            box = (left, 0, left + new_width, height)
+        else:
+            new_height = int(width / target_ratio)
+            top = max(0, (height - new_height) // 2)
+            box = (0, top, width, top + new_height)
+
+        mode = str(crop_mode or "").strip().lower()
+        if mode not in ("", "center", "centre"):
+            return img
+        return img.crop(box)
     
     def _apply_hue(self, img, adjustment):
         """
@@ -332,6 +439,11 @@ def process(input_data):
         contrast = input_data.get('contrast', 0)
         saturation = input_data.get('saturation', 0)
         hue = input_data.get('hue', 0)
+        exposure = input_data.get('exposure', 0)
+        vibrance = input_data.get('vibrance', 0)
+        sharpness = input_data.get('sharpness', 0)
+        crop_ratio = input_data.get('crop_ratio', '')
+        crop_mode = input_data.get('crop_mode', '')
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -351,7 +463,12 @@ def process(input_data):
             brightness=brightness,
             contrast=contrast,
             saturation=saturation,
-            hue=hue
+            hue=hue,
+            exposure=exposure,
+            vibrance=vibrance,
+            sharpness=sharpness,
+            crop_ratio=crop_ratio,
+            crop_mode=crop_mode
         )
 
         return result
@@ -381,6 +498,11 @@ def main():
         contrast = input_data.get('contrast', 0)
         saturation = input_data.get('saturation', 0)
         hue = input_data.get('hue', 0)
+        exposure = input_data.get('exposure', 0)
+        vibrance = input_data.get('vibrance', 0)
+        sharpness = input_data.get('sharpness', 0)
+        crop_ratio = input_data.get('crop_ratio', '')
+        crop_mode = input_data.get('crop_mode', '')
         
         # Validate required parameters
         if not input_path or not output_path:
@@ -400,7 +522,12 @@ def main():
                 brightness=brightness,
                 contrast=contrast,
                 saturation=saturation,
-                hue=hue
+                hue=hue,
+                exposure=exposure,
+                vibrance=vibrance,
+                sharpness=sharpness,
+                crop_ratio=crop_ratio,
+                crop_mode=crop_mode
             )
         
         # Write result to stdout

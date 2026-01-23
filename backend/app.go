@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -38,6 +39,12 @@ type App struct {
 	adjusterService     *services.AdjusterService
 	filterService       *services.FilterService
 }
+
+const (
+	defaultPreviewMaxBytes = int64(4 * 1024 * 1024)
+	previewMaxEdge         = 1280
+	previewJPEGQuality     = 85
+)
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -317,20 +324,22 @@ func (a *App) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
 	return a.infoViewerService.GetInfo(req)
 }
 
-// GetImagePreview builds a data URL for previewing images in the frontend.
-func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, error) {
-	if strings.TrimSpace(req.InputPath) == "" {
-		return models.PreviewResult{Success: false, Error: "输入路径为空"}, errors.New("input path is empty")
+func getPreviewMaxBytes() int64 {
+	value := strings.TrimSpace(os.Getenv("IMAGEFLOW_PREVIEW_MAX_BYTES"))
+	if value == "" {
+		return defaultPreviewMaxBytes
 	}
-
-	data, err := os.ReadFile(req.InputPath)
-	if err != nil {
-		return models.PreviewResult{Success: false, Error: err.Error()}, err
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return defaultPreviewMaxBytes
 	}
+	return parsed
+}
 
+func detectPreviewMimeType(data []byte, inputPath string) string {
 	mimeType := http.DetectContentType(data)
 	if strings.HasPrefix(mimeType, "application/octet-stream") || strings.HasPrefix(mimeType, "text/plain") {
-		ext := strings.ToLower(filepath.Ext(req.InputPath))
+		ext := strings.ToLower(filepath.Ext(inputPath))
 		switch ext {
 		case ".jpg", ".jpeg":
 			mimeType = "image/jpeg"
@@ -348,9 +357,74 @@ func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, 
 			mimeType = "image/svg+xml"
 		}
 	}
+	return mimeType
+}
 
+func buildDataURL(data []byte, mimeType string) string {
 	encoded := base64.StdEncoding.EncodeToString(data)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, encoded)
+}
+
+func (a *App) buildPreviewFromConverter(inputPath string) (models.PreviewResult, error) {
+	if a.converterService == nil {
+		return models.PreviewResult{Success: false, Error: "PREVIEW_SKIPPED"}, errors.New("converter service not ready")
+	}
+
+	tmp, err := os.CreateTemp("", "imageflow-preview-*.jpg")
+	if err != nil {
+		return models.PreviewResult{Success: false, Error: err.Error()}, err
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+
+	req := models.ConvertRequest{
+		InputPath:  inputPath,
+		OutputPath: tmpPath,
+		Format:     "jpg",
+		Quality:    previewJPEGQuality,
+		MaintainAR: true,
+		ResizeMode: "long_edge",
+		LongEdge:   previewMaxEdge,
+	}
+
+	if _, err := a.converterService.Convert(req); err != nil {
+		return models.PreviewResult{Success: false, Error: "PREVIEW_SKIPPED"}, err
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return models.PreviewResult{Success: false, Error: err.Error()}, err
+	}
+
+	dataURL := buildDataURL(data, "image/jpeg")
+	return models.PreviewResult{Success: true, DataURL: dataURL}, nil
+}
+
+// GetImagePreview builds a data URL for previewing images in the frontend.
+func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, error) {
+	if strings.TrimSpace(req.InputPath) == "" {
+		return models.PreviewResult{Success: false, Error: "输入路径为空"}, errors.New("input path is empty")
+	}
+
+	maxPreviewBytes := getPreviewMaxBytes()
+	if info, err := os.Stat(req.InputPath); err == nil && info.Size() > maxPreviewBytes {
+		preview, err := a.buildPreviewFromConverter(req.InputPath)
+		if err == nil && preview.Success && preview.DataURL != "" {
+			return preview, nil
+		}
+		return models.PreviewResult{Success: false, Error: "PREVIEW_SKIPPED"}, nil
+	}
+
+	data, err := os.ReadFile(req.InputPath)
+	if err != nil {
+		return models.PreviewResult{Success: false, Error: err.Error()}, err
+	}
+
+	mimeType := detectPreviewMimeType(data, req.InputPath)
+	dataURL := buildDataURL(data, mimeType)
 	return models.PreviewResult{Success: true, DataURL: dataURL}, nil
 }
 
@@ -361,6 +435,36 @@ func (a *App) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditR
 
 func (a *App) StripMetadata(req models.MetadataStripRequest) (models.MetadataStripResult, error) {
 	return a.metadataService.StripMetadata(req)
+}
+
+// ResolveOutputPath resolves an output path with conflict strategy (rename).
+func (a *App) ResolveOutputPath(req models.ResolveOutputPathRequest) (models.ResolveOutputPathResult, error) {
+	base := strings.TrimSpace(req.BasePath)
+	if base == "" {
+		return models.ResolveOutputPathResult{Success: false, Error: "输出路径为空"}, errors.New("base path is empty")
+	}
+	strategy := strings.ToLower(strings.TrimSpace(req.Strategy))
+	if strategy == "" {
+		strategy = "rename"
+	}
+	if strategy != "rename" {
+		strategy = "rename"
+	}
+
+	reserved := make(map[string]struct{}, len(req.Reserved))
+	for _, p := range req.Reserved {
+		normalized := strings.TrimSpace(p)
+		if normalized == "" {
+			continue
+		}
+		reserved[filepath.Clean(normalized)] = struct{}{}
+	}
+
+	path, err := utils.ResolveOutputPath(filepath.Clean(base), reserved)
+	if err != nil {
+		return models.ResolveOutputPathResult{Success: false, Error: err.Error()}, err
+	}
+	return models.ResolveOutputPathResult{Success: true, OutputPath: path}, nil
 }
 
 // AddWatermark adds a watermark to an image

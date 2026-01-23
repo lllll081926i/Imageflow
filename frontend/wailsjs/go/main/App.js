@@ -70,6 +70,10 @@ export function Ping() {
   return window['go']['main']['App']['Ping']();
 }
 
+export function ResolveOutputPath(arg1) {
+  return window['go']['main']['App']['ResolveOutputPath'](arg1);
+}
+
 export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }

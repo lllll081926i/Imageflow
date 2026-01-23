@@ -14,9 +14,9 @@ export const Switch: React.FC<{ checked: boolean; onChange: (checked: boolean) =
 ));
 
 export const PositionGrid: React.FC<{ value: string; onChange: (val: string) => void }> = memo(({ value, onChange }) => {
-    const positions = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'];
+    const positions = ['tl', 'tc', 'tr', 'cl', 'c', 'cr', 'bl', 'bc', 'br'];
     return (
-        <div className="grid grid-cols-3 gap-1 w-24 h-24 bg-gray-100 dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10 shrink-0">
+        <div className="grid grid-cols-3 gap-1 w-[88px] h-[88px] bg-gray-100 dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10 shrink-0">
             {positions.map(pos => (
                 <button
                     key={pos}
@@ -76,9 +76,9 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
 
     return (
         <div className={`space-y-3 select-none ${className}`}>
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-3">
                 {label !== undefined && (
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <label className="flex-1 min-w-0 text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
                         {label}
                     </label>
                 )}
@@ -279,6 +279,21 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
     };
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
+    const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
+        if (!base) return incoming;
+        const seen = new Set(base.files.map((f) => normalizePath(f.input_path)));
+        const merged = base.files.slice();
+        for (const f of incoming.files) {
+            const key = normalizePath(f.input_path);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(f);
+        }
+        return {
+            has_directory: base.has_directory || incoming.has_directory,
+            files: merged,
+        };
+    };
 
     // Helper to build a recursive file tree structure
     const buildFileTree = (files: DroppedFile[]) => {
@@ -343,8 +358,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
             try {
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
-                setPreviewResult(result as ExpandDroppedPathsResult);
-                onPathsExpanded?.(result as ExpandDroppedPathsResult);
+                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
+                setPreviewResult(merged);
+                onPathsExpanded?.(merged);
             } catch (e) {
                 console.error(e);
             }
@@ -353,7 +369,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         return () => {
             window.runtime?.OnFileDropOff?.();
         };
-    }, [onPathsExpanded, isActive]);
+    }, [onPathsExpanded, isActive, previewResult]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -371,7 +387,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const files: File[] = Array.from(e.dataTransfer.files);
             onFilesSelected(files);
-            const result = {
+            const result: ExpandDroppedPathsResult = {
                 has_directory: false,
                 files: files.map((f: File) => ({
                     input_path: f.name,
@@ -382,8 +398,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
                 }))
             };
-            setPreviewResult(result);
-            onPathsExpanded?.(result);
+            const merged = mergeResults(previewResult, result);
+            setPreviewResult(merged);
+            onPathsExpanded?.(merged);
         }
     };
 
@@ -406,8 +423,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 if (!window.go?.main?.App?.ExpandDroppedPaths) return;
 
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
-                setPreviewResult(result as ExpandDroppedPathsResult);
-                onPathsExpanded?.(result as ExpandDroppedPathsResult);
+                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
+                setPreviewResult(merged);
+                onPathsExpanded?.(merged);
                 return;
             }
         } catch (e) {
@@ -420,7 +438,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         if (e.target.files && e.target.files.length > 0) {
             const files: File[] = Array.from(e.target.files);
             onFilesSelected(files);
-            const result = {
+            const result: ExpandDroppedPathsResult = {
                 has_directory: false,
                 files: files.map((f: File) => ({
                     input_path: f.name,
@@ -431,8 +449,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
                 }))
             };
-            setPreviewResult(result);
-            onPathsExpanded?.(result);
+            const merged = mergeResults(previewResult, result);
+            setPreviewResult(merged);
+            onPathsExpanded?.(merged);
         }
     };
 

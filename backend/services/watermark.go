@@ -56,9 +56,15 @@ func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.Wat
 		"position":        position,
 		"opacity":         req.Opacity,
 		"watermark_scale": req.Scale,
+		"font":            req.FontName,
 		"font_size":       req.FontSize,
 		"font_color":      req.FontColor,
 		"rotation":        req.Rotation,
+		"blend_mode":      req.BlendMode,
+		"tiled":           req.Tiled,
+		"shadow":          req.Shadow,
+		"offset_x":        req.OffsetX,
+		"offset_y":        req.OffsetY,
 	}
 
 	var result models.WatermarkResult

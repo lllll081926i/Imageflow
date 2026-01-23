@@ -1,14 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from './Icon';
+import { Switch } from './Controls';
 
 type AppSettings = {
     max_concurrency: number;
+    output_prefix: string;
+    output_template: string;
+    preserve_folder_structure: boolean;
+    conflict_strategy: string;
 };
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const defaultSettings: AppSettings = {
+    max_concurrency: 8,
+    output_prefix: 'IF',
+    output_template: '{prefix}{basename}',
+    preserve_folder_structure: true,
+    conflict_strategy: 'rename',
+};
 
 const SettingsView: React.FC = () => {
-    const [settings, setSettings] = useState<AppSettings>({ max_concurrency: 8 });
+    const [settings, setSettings] = useState<AppSettings>(defaultSettings);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string>('');
 
@@ -16,10 +28,25 @@ const SettingsView: React.FC = () => {
 
     useEffect(() => {
         const run = async () => {
+            const app = window.go?.main?.App;
+            if (!app?.GetSettings) {
+                setMessage('未检测到 Wails 运行环境');
+                return;
+            }
             try {
-                const res = await window.go.main.App.GetSettings();
-                if (res && typeof res.max_concurrency === 'number') {
-                    setSettings({ max_concurrency: clamp(res.max_concurrency, 1, 32) });
+                const res = await app.GetSettings();
+                if (res) {
+                    setSettings({
+                        max_concurrency: clamp(Number(res.max_concurrency || defaultSettings.max_concurrency), 1, 32),
+                        output_prefix: (typeof res.output_prefix === 'string' ? res.output_prefix : defaultSettings.output_prefix),
+                        output_template: (typeof res.output_template === 'string' ? res.output_template : defaultSettings.output_template),
+                        preserve_folder_structure: typeof res.preserve_folder_structure === 'boolean'
+                            ? res.preserve_folder_structure
+                            : defaultSettings.preserve_folder_structure,
+                        conflict_strategy: (typeof res.conflict_strategy === 'string' && res.conflict_strategy === 'rename')
+                            ? 'rename'
+                            : defaultSettings.conflict_strategy,
+                    });
                 }
             } catch (e) {
                 console.error(e);
@@ -29,14 +56,34 @@ const SettingsView: React.FC = () => {
     }, []);
 
     const save = async (next: AppSettings) => {
+        if (!window.go?.main?.App?.SaveSettings) {
+            setMessage('未检测到 Wails 运行环境');
+            return;
+        }
         setSaving(true);
         setMessage('');
         try {
             const saved = await window.go.main.App.SaveSettings(next);
             if (saved && typeof saved.max_concurrency === 'number') {
-                setSettings({ max_concurrency: clamp(saved.max_concurrency, 1, 32) });
+                setSettings({
+                    max_concurrency: clamp(Number(saved.max_concurrency || defaultSettings.max_concurrency), 1, 32),
+                    output_prefix: (typeof saved.output_prefix === 'string' ? saved.output_prefix : next.output_prefix),
+                    output_template: (typeof saved.output_template === 'string' ? saved.output_template : next.output_template),
+                    preserve_folder_structure: typeof saved.preserve_folder_structure === 'boolean'
+                        ? saved.preserve_folder_structure
+                        : next.preserve_folder_structure,
+                    conflict_strategy: (typeof saved.conflict_strategy === 'string' && saved.conflict_strategy === 'rename')
+                        ? 'rename'
+                        : next.conflict_strategy,
+                });
             } else {
-                setSettings({ max_concurrency: clamp(next.max_concurrency, 1, 32) });
+                setSettings({
+                    max_concurrency: clamp(next.max_concurrency, 1, 32),
+                    output_prefix: next.output_prefix,
+                    output_template: next.output_template,
+                    preserve_folder_structure: next.preserve_folder_structure,
+                    conflict_strategy: next.conflict_strategy,
+                });
             }
             setMessage('已保存');
             setTimeout(() => setMessage(''), 1500);
@@ -57,7 +104,6 @@ const SettingsView: React.FC = () => {
                     </div>
                     <div>
                         <div className="text-xl font-semibold text-gray-900 dark:text-white">全局设置</div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400">影响批量处理性能与稳定性</div>
                     </div>
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -69,8 +115,7 @@ const SettingsView: React.FC = () => {
                 <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-6 flex flex-col min-h-0">
                     <div className="flex items-center justify-between mb-5">
                         <div>
-                            <div className="text-sm font-semibold text-gray-900 dark:text-white">最大并发</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">默认 8，最高 32。调高会更快但更吃 CPU/内存</div>
+                            <div className="text-sm font-semibold text-gray-900 dark:text-white">全局并发数</div>
                         </div>
                         <div className="flex items-center gap-2">
                             <input
@@ -83,7 +128,11 @@ const SettingsView: React.FC = () => {
                             />
                             <button
                                 disabled={saving}
-                                onClick={() => save({ max_concurrency: maxConcurrency })}
+                                onClick={() => save({
+                                    ...settings,
+                                    max_concurrency: maxConcurrency,
+                                    conflict_strategy: 'rename',
+                                })}
                                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${saving ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
                             >
                                 {saving ? '保存中...' : '保存'}
@@ -114,12 +163,50 @@ const SettingsView: React.FC = () => {
                 </div>
 
                 <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-6 flex flex-col min-h-0">
-                    <div className="text-sm font-semibold text-gray-900 dark:text-white mb-2">说明</div>
-                    <div className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
-                        并发会创建多个 Python Worker 以并行处理任务。格式转换内部仍有单任务超时保护，避免单个文件拖垮整批处理。
+                    <div className="text-sm font-semibold text-gray-900 dark:text-white mb-4">输出规则（全局）</div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">命名模板</label>
+                        <input
+                            type="text"
+                            value={settings.output_template}
+                            onChange={(e) => setSettings(s => ({ ...s, output_template: e.target.value }))}
+                            placeholder="{prefix}{basename}_{date:YYYYMMDD}_{seq:3}"
+                            className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
+                        />
                     </div>
-                    <div className="mt-5 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                        建议：普通电脑保持 8；高性能电脑可调到 16 或 32。若出现系统卡顿或失败率上升，降低并发。
+
+                    <div className="mt-4 space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">默认前缀</label>
+                        <input
+                            type="text"
+                            value={settings.output_prefix}
+                            onChange={(e) => setSettings(s => ({ ...s, output_prefix: e.target.value }))}
+                            placeholder="例如: IF"
+                            className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
+                        />
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                        <Switch
+                            checked={settings.preserve_folder_structure}
+                            onChange={(checked) => setSettings(s => ({ ...s, preserve_folder_structure: checked }))}
+                            label="保持原文件夹结构"
+                        />
+                    </div>
+
+                    <div className="mt-4">
+                        <button
+                            disabled={saving}
+                            onClick={() => save({
+                                ...settings,
+                                max_concurrency: maxConcurrency,
+                                conflict_strategy: 'rename',
+                            })}
+                            className={`w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${saving ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
+                        >
+                            {saving ? '保存中...' : '保存输出规则'}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -128,4 +215,3 @@ const SettingsView: React.FC = () => {
 };
 
 export default SettingsView;
-

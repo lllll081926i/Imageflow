@@ -15,7 +15,7 @@ import sys
 import json
 import os
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageChops
 import logging
 
 # Configure logging
@@ -44,7 +44,8 @@ class WatermarkApplier:
               text='', font='arial', font_size=36, font_color='#FFFFFF',
               watermark_path='', watermark_scale=0.2,
               opacity=1.0, position='center', rotation=0,
-              offset_x=0, offset_y=0):
+              offset_x=0, offset_y=0, blend_mode='normal',
+              tiled=False, shadow=False):
         """
         Apply a watermark to an image.
         
@@ -63,6 +64,9 @@ class WatermarkApplier:
             rotation (float): Rotation angle in degrees
             offset_x (int): Horizontal offset in pixels
             offset_y (int): Vertical offset in pixels
+            blend_mode (str): Blend mode (normal, multiply, screen, overlay, soft_light)
+            tiled (bool): Tile watermark across the image
+            shadow (bool): Add a soft shadow behind the watermark
         
         Returns:
             dict: Watermark application result
@@ -76,6 +80,9 @@ class WatermarkApplier:
             
             # Create transparent overlay
             overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+            blend_mode = str(blend_mode or 'normal').strip().lower()
+            tiled = bool(tiled)
+            shadow = bool(shadow)
             
             try:
                 watermark_scale = float(watermark_scale)
@@ -86,13 +93,25 @@ class WatermarkApplier:
 
             # Apply watermark based on type
             if watermark_type == 'text':
-                self._apply_text_watermark(overlay, img.size, text, font,
-                                         font_size, font_color, opacity,
-                                         position, rotation, offset_x, offset_y)
+                if tiled:
+                    tile_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
+                    if rotation != 0:
+                        tile_img = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                    self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                else:
+                    self._apply_text_watermark(overlay, img.size, text, font,
+                                             font_size, font_color, opacity,
+                                             position, rotation, offset_x, offset_y, shadow)
             elif watermark_type == 'image':
-                self._apply_image_watermark(overlay, img.size, watermark_path,
-                                          watermark_scale, opacity, position,
-                                          rotation, offset_x, offset_y)
+                if tiled:
+                    tile_img = self._build_image_watermark(watermark_path, img.size, watermark_scale, opacity)
+                    if rotation != 0:
+                        tile_img = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                    self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                else:
+                    self._apply_image_watermark(overlay, img.size, watermark_path,
+                                              watermark_scale, opacity, position,
+                                              rotation, offset_x, offset_y, shadow)
             else:
                 return {
                     'success': False,
@@ -100,7 +119,7 @@ class WatermarkApplier:
                 }
             
             # Composite watermark onto original image
-            watermarked = Image.alpha_composite(img, overlay)
+            watermarked = self._blend_overlay(img, overlay, blend_mode)
             
             # Convert back to original mode if necessary
             if original_mode != 'RGBA':
@@ -140,88 +159,159 @@ class WatermarkApplier:
     
     def _apply_text_watermark(self, overlay, img_size, text, font,
                              font_size, font_color, opacity, position,
-                             rotation, offset_x, offset_y):
+                             rotation, offset_x, offset_y, shadow=False):
         """Apply a text watermark to the overlay."""
         try:
-            # Get font
-            try:
-                pil_font = ImageFont.truetype(font, font_size)
-            except:
-                # Fall back to default font
-                logger.warning(f"Font '{font}' not found, using default font")
-                pil_font = ImageFont.load_default()
-            
-            # Create drawing context
-            draw = ImageDraw.Draw(overlay)
-            
-            # Get text bounding box
-            bbox = draw.textbbox((0, 0), text, font=pil_font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            
-            # Calculate position
-            x, y = self._calculate_position(
-                img_size, (text_width, text_height), position, offset_x, offset_y
-            )
-            
-            # Create text image with alpha channel
-            text_img = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
-            text_draw = ImageDraw.Draw(text_img)
-            
-            # Parse color and apply opacity
-            color = self._parse_color(font_color, opacity)
-            
-            # Draw text
-            text_draw.text((0, 0), text, font=pil_font, fill=color)
-            
-            # Rotate if necessary
+            text_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
             if rotation != 0:
                 text_img = text_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-            
-            # Paste text onto overlay
+
+            wm_width, wm_height = text_img.size
+            x, y = self._calculate_position(
+                img_size, (wm_width, wm_height), position, offset_x, offset_y
+            )
             overlay.paste(text_img, (x, y), text_img)
-            
             logger.debug(f"Applied text watermark at ({x}, {y})")
-            
         except Exception as e:
             logger.error(f"Failed to apply text watermark: {e}")
             raise
-    
+
+    def _build_text_watermark(self, text, font, font_size, font_color, opacity, shadow):
+        try:
+            try:
+                pil_font = ImageFont.truetype(font, font_size)
+            except Exception:
+                logger.warning(f"Font '{font}' not found, using default font")
+                pil_font = ImageFont.load_default()
+
+            tmp = Image.new('RGBA', (10, 10), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(tmp)
+            bbox = draw.textbbox((0, 0), text, font=pil_font)
+            text_width = max(1, bbox[2] - bbox[0])
+            text_height = max(1, bbox[3] - bbox[1])
+
+            color = self._parse_color(font_color, opacity)
+            text_img = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_img)
+            text_draw.text((0, 0), text, font=pil_font, fill=color)
+
+            if not shadow:
+                return text_img
+
+            shadow_offset = max(2, int(font_size * 0.08))
+            shadow_radius = max(1, int(font_size * 0.06))
+            shadow_color = (0, 0, 0, int(255 * opacity * 0.5))
+            shadow_canvas = Image.new(
+                'RGBA',
+                (text_width + shadow_offset * 2, text_height + shadow_offset * 2),
+                (0, 0, 0, 0)
+            )
+            shadow_draw = ImageDraw.Draw(shadow_canvas)
+            shadow_draw.text((shadow_offset, shadow_offset), text, font=pil_font, fill=shadow_color)
+            shadow_canvas = shadow_canvas.filter(ImageFilter.GaussianBlur(radius=shadow_radius))
+            shadow_canvas.paste(text_img, (shadow_offset, shadow_offset), text_img)
+            return shadow_canvas
+        except Exception as e:
+            logger.error(f"Failed to build text watermark: {e}")
+            raise
+
     def _apply_image_watermark(self, overlay, img_size, watermark_path,
                               watermark_scale, opacity, position,
-                              rotation, offset_x, offset_y):
+                              rotation, offset_x, offset_y, shadow=False):
         """Apply an image watermark to the overlay."""
-        # Open watermark image
-        with Image.open(watermark_path) as base_wm:
-            watermark = base_wm.convert('RGBA') if base_wm.mode != 'RGBA' else base_wm.copy()
-        
-        # Scale watermark
-        orig_width, orig_height = watermark.size
-        scale = max(0.01, float(watermark_scale))
-        new_width = max(1, int(img_size[0] * scale))
-        new_height = max(1, int(orig_height * new_width / max(1, orig_width)))
-        watermark = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Apply opacity
-        if opacity < 1.0:
-            alpha = watermark.split()[3]
-            alpha = ImageEnhance.Brightness(alpha).enhance(opacity)
-            watermark.putalpha(alpha)
-        
-        # Rotate if necessary
+        watermark = self._build_image_watermark(watermark_path, img_size, watermark_scale, opacity)
         if rotation != 0:
             watermark = watermark.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-        
-        # Calculate position
+
         wm_width, wm_height = watermark.size
         x, y = self._calculate_position(
             img_size, (wm_width, wm_height), position, offset_x, offset_y
         )
-        
-        # Paste watermark onto overlay
+
+        if shadow:
+            shadow_img, shadow_offset = self._create_shadow_image(watermark, opacity)
+            overlay.paste(shadow_img, (x + shadow_offset, y + shadow_offset), shadow_img)
+
         overlay.paste(watermark, (x, y), watermark)
-        
         logger.debug(f"Applied image watermark at ({x}, {y})")
+
+    def _build_image_watermark(self, watermark_path, img_size, watermark_scale, opacity):
+        with Image.open(watermark_path) as base_wm:
+            watermark = base_wm.convert('RGBA') if base_wm.mode != 'RGBA' else base_wm.copy()
+
+        orig_width, orig_height = watermark.size
+        try:
+            scale = float(watermark_scale)
+        except (TypeError, ValueError):
+            scale = 0.2
+        scale = max(0.01, scale)
+        new_width = max(1, int(img_size[0] * scale))
+        new_height = max(1, int(orig_height * new_width / max(1, orig_width)))
+        watermark = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        if opacity < 1.0:
+            alpha = watermark.split()[3]
+            alpha = ImageEnhance.Brightness(alpha).enhance(opacity)
+            watermark.putalpha(alpha)
+
+        return watermark
+
+    def _create_shadow_image(self, watermark, opacity):
+        alpha = watermark.split()[3]
+        shadow_alpha = ImageEnhance.Brightness(alpha).enhance(0.6)
+        shadow = Image.new('RGBA', watermark.size, (0, 0, 0, 0))
+        shadow.putalpha(shadow_alpha)
+        blur_radius = max(1, int(min(watermark.size) * 0.04))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        shadow_offset = max(2, int(min(watermark.size) * 0.02))
+        return shadow, shadow_offset
+
+    def _tile_overlay(self, overlay, tile_img, offset_x, offset_y):
+        if tile_img.size[0] <= 0 or tile_img.size[1] <= 0:
+            return
+        gap_x = max(0, int(offset_x))
+        gap_y = max(0, int(offset_y))
+        step_x = max(1, tile_img.size[0] + gap_x)
+        step_y = max(1, tile_img.size[1] + gap_y)
+
+        start_x = -tile_img.size[0]
+        start_y = -tile_img.size[1]
+        for y in range(start_y, overlay.size[1] + tile_img.size[1], step_y):
+            for x in range(start_x, overlay.size[0] + tile_img.size[0], step_x):
+                overlay.paste(tile_img, (x, y), tile_img)
+
+    def _blend_overlay(self, base_img, overlay, blend_mode):
+        base = base_img.convert('RGBA')
+        layer = overlay.convert('RGBA')
+        mode = str(blend_mode or 'normal').strip().lower()
+        if mode in ('', 'normal'):
+            return Image.alpha_composite(base, layer)
+
+        base_rgb = base.convert('RGB')
+        layer_rgb = layer.convert('RGB')
+        alpha = layer.split()[3]
+
+        if mode == 'multiply':
+            blended = ImageChops.multiply(base_rgb, layer_rgb)
+        elif mode == 'screen':
+            blended = ImageChops.screen(base_rgb, layer_rgb)
+        elif mode == 'overlay':
+            if hasattr(ImageChops, 'overlay'):
+                blended = ImageChops.overlay(base_rgb, layer_rgb)
+            else:
+                blended = ImageChops.multiply(base_rgb, layer_rgb)
+        elif mode in ('soft_light', 'softlight'):
+            if hasattr(ImageChops, 'soft_light'):
+                blended = ImageChops.soft_light(base_rgb, layer_rgb)
+            else:
+                blended = ImageChops.screen(base_rgb, layer_rgb)
+        else:
+            blended = layer_rgb
+
+        out_rgb = Image.composite(blended, base_rgb, alpha)
+        out = out_rgb.convert('RGBA')
+        out.putalpha(base.split()[3])
+        return out
     
     def _calculate_position(self, img_size, wm_size, position, offset_x, offset_y):
         """Calculate watermark position based on position string."""
@@ -314,6 +404,9 @@ def process(input_data):
         rotation = input_data.get('rotation', 0)
         offset_x = input_data.get('offset_x', 0)
         offset_y = input_data.get('offset_y', 0)
+        blend_mode = input_data.get('blend_mode', 'normal')
+        tiled = input_data.get('tiled', False)
+        shadow = input_data.get('shadow', False)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -338,7 +431,10 @@ def process(input_data):
             position=position,
             rotation=rotation,
             offset_x=offset_x,
-            offset_y=offset_y
+            offset_y=offset_y,
+            blend_mode=blend_mode,
+            tiled=tiled,
+            shadow=shadow
         )
 
         return result
@@ -379,6 +475,9 @@ def main():
         rotation = input_data.get('rotation', 0)
         offset_x = input_data.get('offset_x', 0)
         offset_y = input_data.get('offset_y', 0)
+        blend_mode = input_data.get('blend_mode', 'normal')
+        tiled = input_data.get('tiled', False)
+        shadow = input_data.get('shadow', False)
         
         # Validate required parameters
         if not input_path or not output_path:
@@ -403,7 +502,10 @@ def main():
                 position=position,
                 rotation=rotation,
                 offset_x=offset_x,
-                offset_y=offset_y
+                offset_y=offset_y,
+                blend_mode=blend_mode,
+                tiled=tiled,
+                shadow=shadow
             )
         
         # Write result to stdout

@@ -39,6 +39,11 @@ class ImageFilterApplier:
     ADVANCED_FILTERS = [
         'blur_gaussian', 'blur_motion', 'sharpen', 'noise', 'vignette', 'color_offset'
     ]
+
+    PRESET_FILTERS = [
+        'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber',
+        'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid'
+    ]
     
     def __init__(self):
         """Initialize the filter applier."""
@@ -46,7 +51,8 @@ class ImageFilterApplier:
     
     def apply(self, input_path, output_path, filter_name, intensity=1.0,
               blur_radius=2.0, sharpen_factor=2.0, noise_level=0.1,
-              vignette_strength=0.5, color_offset_x=5, color_offset_y=5):
+              vignette_strength=0.5, color_offset_x=5, color_offset_y=5,
+              grain=0.0, vignette=0.0):
         """
         Apply a filter to an image.
         
@@ -77,8 +83,14 @@ class ImageFilterApplier:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
+            filter_name = str(filter_name or '').strip().lower()
+
             # Apply filter based on type
-            if filter_name in self.BASIC_FILTERS:
+            if filter_name in ("", "none", "original", "raw"):
+                pass
+            elif filter_name in self.PRESET_FILTERS:
+                img = self._apply_preset_filter(img, filter_name, intensity)
+            elif filter_name in self.BASIC_FILTERS:
                 img = self._apply_basic_filter(img, filter_name, intensity)
             elif filter_name in self.ADVANCED_FILTERS:
                 img = self._apply_advanced_filter(
@@ -90,6 +102,21 @@ class ImageFilterApplier:
                     'success': False,
                     'error': f'Unknown filter: {filter_name}'
                 }
+
+            # Apply extra grain/vignette after base filter
+            try:
+                grain_level = max(0.0, min(1.0, float(grain)))
+            except (TypeError, ValueError):
+                grain_level = 0.0
+            if grain_level > 0:
+                img = self._add_noise(img, grain_level)
+
+            try:
+                vignette_level = max(0.0, min(1.0, float(vignette)))
+            except (TypeError, ValueError):
+                vignette_level = 0.0
+            if vignette_level > 0:
+                img = self._add_vignette(img, vignette_level)
             
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
@@ -201,6 +228,94 @@ class ImageFilterApplier:
                 img = Image.blend(img, blurred, 0.5)
         
         return img
+
+    def _apply_preset_filter(self, img, preset, intensity):
+        """Apply a preset filter by combining simple adjustments."""
+        try:
+            t = max(0.0, min(1.0, float(intensity)))
+        except (TypeError, ValueError):
+            t = 1.0
+
+        def enhance_color(image, factor):
+            enhancer = ImageEnhance.Color(image)
+            return enhancer.enhance(factor)
+
+        def enhance_contrast(image, factor):
+            enhancer = ImageEnhance.Contrast(image)
+            return enhancer.enhance(factor)
+
+        def enhance_brightness(image, factor):
+            enhancer = ImageEnhance.Brightness(image)
+            return enhancer.enhance(factor)
+
+        def enhance_sharpness(image, factor):
+            enhancer = ImageEnhance.Sharpness(image)
+            return enhancer.enhance(factor)
+
+        base = img
+        if preset == 'vivid':
+            out = enhance_color(base, 1 + 0.8 * t)
+            out = enhance_contrast(out, 1 + 0.25 * t)
+            return out
+        if preset == 'bw':
+            gray = ImageOps.grayscale(base).convert('RGB')
+            return Image.blend(base, gray, t)
+        if preset == 'retro':
+            sepia = self._apply_basic_filter(base, 'sepia', 1.0)
+            sepia = enhance_contrast(sepia, 1 + 0.15 * t)
+            return Image.blend(base, sepia, t)
+        if preset == 'cool':
+            cool = self._apply_basic_filter(base, 'cool', 1.0)
+            return Image.blend(base, cool, t)
+        if preset == 'warm':
+            warm = self._apply_basic_filter(base, 'warm', 1.0)
+            return Image.blend(base, warm, t)
+        if preset == 'film':
+            out = self._apply_basic_filter(base, 'sepia', 1.0)
+            out = enhance_contrast(out, 1 + 0.2 * t)
+            out = enhance_brightness(out, 1 + 0.05 * t)
+            return Image.blend(base, out, t)
+        if preset == 'cyber':
+            out = enhance_color(base, 1 + 0.5 * t)
+            out = enhance_contrast(out, 1 + 0.2 * t)
+            out = self._add_color_offset(out, int(6 * t), int(3 * t))
+            return out
+        if preset == 'fresh':
+            out = enhance_brightness(base, 1 + 0.08 * t)
+            out = enhance_color(out, 1 + 0.25 * t)
+            return out
+        if preset == 'japan':
+            out = enhance_brightness(base, 1 + 0.12 * t)
+            out = enhance_contrast(out, 1 - 0.12 * t)
+            out = enhance_color(out, 1 + 0.1 * t)
+            return out
+        if preset == 'lomo':
+            out = enhance_contrast(base, 1 + 0.3 * t)
+            out = enhance_color(out, 1 + 0.35 * t)
+            return out
+        if preset == 'hdr':
+            out = enhance_contrast(base, 1 + 0.45 * t)
+            out = enhance_color(out, 1 + 0.2 * t)
+            out = enhance_sharpness(out, 1 + 0.3 * t)
+            return out
+        if preset == 'fade':
+            out = enhance_color(base, 1 - 0.35 * t)
+            out = enhance_brightness(out, 1 + 0.08 * t)
+            out = enhance_contrast(out, 1 - 0.1 * t)
+            return out
+        if preset == 'frosted':
+            blur = base.filter(ImageFilter.GaussianBlur(radius=2.0 * t))
+            return Image.blend(base, blur, 0.6 * t)
+        if preset == 'cinema':
+            out = enhance_contrast(base, 1 + 0.25 * t)
+            out = enhance_color(out, 1 - 0.1 * t)
+            return out
+        if preset == 'polaroid':
+            out = self._apply_basic_filter(base, 'sepia', 1.0)
+            out = enhance_brightness(out, 1 + 0.08 * t)
+            out = enhance_contrast(out, 1 + 0.1 * t)
+            return Image.blend(base, out, t)
+        return base
     
     def _apply_advanced_filter(self, img, filter_name, intensity,
                             blur_radius, sharpen_factor, noise_level,
@@ -246,11 +361,30 @@ class ImageFilterApplier:
     
     def _add_noise(self, img, noise_level):
         """Add random noise to an image."""
+        try:
+            level = max(0.0, min(1.0, float(noise_level)))
+        except (TypeError, ValueError):
+            return img
+        if level <= 0:
+            return img
+
+        try:
+            base = img.convert('RGB') if img.mode != 'RGB' else img
+            sigma = max(1.0, 72.0 * level)
+            noise = Image.effect_noise(base.size, sigma)
+            noise = ImageOps.autocontrast(noise)
+            noise_rgb = Image.merge('RGB', (noise, noise, noise))
+            noisy = ImageChops.add(base, noise_rgb, scale=1.0, offset=-128)
+            return Image.blend(base, noisy, level)
+        except Exception:
+            return self._add_noise_slow(img, level)
+
+    def _add_noise_slow(self, img, noise_level):
         import random
-        
+
         pixels = img.load()
         width, height = img.size
-        
+
         for y in range(height):
             for x in range(width):
                 r, g, b = pixels[x, y]
@@ -260,33 +394,52 @@ class ImageFilterApplier:
                     max(0, min(255, g + noise)),
                     max(0, min(255, b + noise))
                 )
-        
+
         return img
     
     def _add_vignette(self, img, strength):
         """Add a vignette effect to an image."""
+        try:
+            level = max(0.0, min(1.0, float(strength)))
+        except (TypeError, ValueError):
+            return img
+        if level <= 0:
+            return img
+
+        try:
+            width, height = img.size
+            gradient = Image.radial_gradient("L")
+            center = gradient.getpixel((gradient.width // 2, gradient.height // 2))
+            edge = gradient.getpixel((0, 0))
+            if center > edge:
+                gradient = ImageOps.invert(gradient)
+            mask = gradient.resize((width, height), Image.Resampling.LANCZOS)
+            mask = mask.point(lambda x: int(x * level))
+
+            dark = ImageEnhance.Brightness(img).enhance(1 - 0.7 * level)
+            return Image.composite(dark, img, mask)
+        except Exception:
+            return self._add_vignette_slow(img, level)
+
+    def _add_vignette_slow(self, img, strength):
         width, height = img.size
-        
-        # Create a gradient overlay
+
         overlay = Image.new('L', (width, height), 0)
         draw = ImageDraw.Draw(overlay)
-        
-        # Draw radial gradient
+
         center_x, center_y = width // 2, height // 2
         max_radius = int((width ** 2 + height ** 2) ** 0.5 / 2)
-        
+
         for radius in range(max_radius, 0, -1):
             alpha = int(255 * (1 - (radius / max_radius) ** 2) * strength)
             draw.ellipse([
                 center_x - radius, center_y - radius,
                 center_x + radius, center_y + radius
             ], fill=alpha)
-        
-        # Apply vignette
+
         img_with_vignette = img.copy()
         img_with_vignette.putalpha(overlay)
-        
-        # Blend with original
+
         vignette_rgb = img_with_vignette.convert('RGB')
         return Image.blend(img, vignette_rgb, strength)
     
@@ -324,7 +477,7 @@ def process(input_data):
         # Extract parameters
         input_path = input_data.get('input_path')
         output_path = input_data.get('output_path')
-        filter_name = input_data.get('filter')
+        filter_name = input_data.get('filter') or input_data.get('filter_type') or input_data.get('preset')
         intensity = input_data.get('intensity', 1.0)
         blur_radius = input_data.get('blur_radius', 2.0)
         sharpen_factor = input_data.get('sharpen_factor', 2.0)
@@ -332,6 +485,8 @@ def process(input_data):
         vignette_strength = input_data.get('vignette_strength', 0.5)
         color_offset_x = input_data.get('color_offset_x', 5)
         color_offset_y = input_data.get('color_offset_y', 5)
+        grain = input_data.get('grain', 0.0)
+        vignette = input_data.get('vignette', 0.0)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -357,7 +512,9 @@ def process(input_data):
             noise_level=noise_level,
             vignette_strength=vignette_strength,
             color_offset_x=color_offset_x,
-            color_offset_y=color_offset_y
+            color_offset_y=color_offset_y,
+            grain=grain,
+            vignette=vignette
         )
 
         return result
@@ -380,7 +537,7 @@ def main():
         # Extract parameters
         input_path = input_data.get('input_path')
         output_path = input_data.get('output_path')
-        filter_name = input_data.get('filter')
+        filter_name = input_data.get('filter') or input_data.get('filter_type') or input_data.get('preset')
         intensity = input_data.get('intensity', 1.0)
         blur_radius = input_data.get('blur_radius', 2.0)
         sharpen_factor = input_data.get('sharpen_factor', 2.0)
@@ -388,6 +545,8 @@ def main():
         vignette_strength = input_data.get('vignette_strength', 0.5)
         color_offset_x = input_data.get('color_offset_x', 5)
         color_offset_y = input_data.get('color_offset_y', 5)
+        grain = input_data.get('grain', 0.0)
+        vignette = input_data.get('vignette', 0.0)
         
         # Validate required parameters
         if not input_path or not output_path:
@@ -413,7 +572,9 @@ def main():
                 noise_level=noise_level,
                 vignette_strength=vignette_strength,
                 color_offset_x=color_offset_x,
-                color_offset_y=color_offset_y
+                color_offset_y=color_offset_y,
+                grain=grain,
+                vignette=vignette
             )
         
         # Write result to stdout

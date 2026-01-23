@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect, memo } from 'react';
+import React, { useMemo, useState, useEffect, useRef, memo } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
@@ -20,6 +21,20 @@ type DroppedFile = {
 type ExpandDroppedPathsResult = {
     files: DroppedFile[];
     has_directory: boolean;
+};
+
+type OutputSettings = {
+    output_prefix: string;
+    output_template: string;
+    preserve_folder_structure: boolean;
+    conflict_strategy: string;
+};
+
+const defaultOutputSettings: OutputSettings = {
+    output_prefix: 'IF',
+    output_template: '{prefix}{basename}',
+    preserve_folder_structure: true,
+    conflict_strategy: 'rename',
 };
 
 // --- Feature Settings Panels (Memoized) ---
@@ -47,8 +62,6 @@ type ConverterSettingsProps = {
     setKeepMetadata: (v: boolean) => void;
     maintainAR: boolean;
     setMaintainAR: (v: boolean) => void;
-    filePrefix: string;
-    setFilePrefix: (v: string) => void;
     overwriteSource: boolean;
     setOverwriteSource: (v: boolean) => void;
 };
@@ -76,8 +89,6 @@ const ConverterSettings = memo(({
     setKeepMetadata,
     maintainAR,
     setMaintainAR,
-    filePrefix,
-    setFilePrefix,
     overwriteSource,
     setOverwriteSource,
 }: ConverterSettingsProps) => {
@@ -200,10 +211,6 @@ const ConverterSettings = memo(({
             </div>
 
             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件前缀</label>
-                    <input type="text" value={filePrefix} onChange={e => setFilePrefix(e.target.value)} placeholder="例如: IF" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
-                </div>
                 <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
             </div>
         </div>
@@ -219,8 +226,6 @@ type CompressorSettingsProps = {
     setTargetSizeKB: (v: number) => void;
     engine: string;
     setEngine: (v: string) => void;
-    filePrefix: string;
-    setFilePrefix: (v: string) => void;
     overwriteSource: boolean;
     setOverwriteSource: (v: boolean) => void;
 };
@@ -234,8 +239,6 @@ const CompressorSettings = memo(({
     setTargetSizeKB,
     engine,
     setEngine,
-    filePrefix,
-    setFilePrefix,
     overwriteSource,
     setOverwriteSource,
 }: CompressorSettingsProps) => {
@@ -262,38 +265,141 @@ const CompressorSettings = memo(({
                 )}
             </div>
 
-             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
-                 <div className="p-3 rounded-xl bg-green-50 dark:bg-green-500/10 text-xs text-green-700 dark:text-green-400 leading-relaxed border border-green-100 dark:border-green-500/10">
-                    {mode === '无损' ? '无损优化：JPG 使用 MozJPEG，PNG 使用 OxiPNG。' : `引擎选择：${engine}。目标大小会按需逐步降低质量直至满足。`}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                    默认移除隐私元数据，保留 DPI 与色域信息。
-                </div>
-            </div>
-
             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件前缀</label>
-                    <input type="text" value={filePrefix} onChange={e => setFilePrefix(e.target.value)} placeholder="例如: IF" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" />
-                </div>
                 <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
             </div>
         </div>
     );
 });
 
-const WatermarkSettings = memo(() => {
-    const [type, setType] = useState('文字');
-    const [position, setPosition] = useState('br');
-    const [opacity, setOpacity] = useState(85);
-    const [rotate, setRotate] = useState(0);
-    const [size, setSize] = useState(40);
-    const [tiled, setTiled] = useState(false);
-    const [blendMode, setBlendMode] = useState('正常');
-    const [shadow, setShadow] = useState(false);
-    const [margin, setMargin] = useState({x: 20, y: 20});
-    // Fix: Added state for font selection
-    const [font, setFont] = useState('Sans Serif');
+type WatermarkSettingsProps = {
+    type: string;
+    setType: (v: string) => void;
+    text: string;
+    setText: (v: string) => void;
+    imagePath: string;
+    setImagePath: (v: string) => void;
+    position: string;
+    setPosition: (v: string) => void;
+    opacity: number;
+    setOpacity: (v: number) => void;
+    rotate: number;
+    setRotate: (v: number) => void;
+    size: number;
+    setSize: (v: number) => void;
+    tiled: boolean;
+    setTiled: (v: boolean) => void;
+    blendMode: string;
+    setBlendMode: (v: string) => void;
+    shadow: boolean;
+    setShadow: (v: boolean) => void;
+    margin: { x: number; y: number };
+    setMargin: (v: { x: number; y: number }) => void;
+    font: string;
+    setFont: (v: string) => void;
+    color: string;
+    setColor: (v: string) => void;
+};
+
+const WatermarkSettings = memo(({
+    type,
+    setType,
+    text,
+    setText,
+    imagePath,
+    setImagePath,
+    position,
+    setPosition,
+    opacity,
+    setOpacity,
+    rotate,
+    setRotate,
+    size,
+    setSize,
+    tiled,
+    setTiled,
+    blendMode,
+    setBlendMode,
+    shadow,
+    setShadow,
+    margin,
+    setMargin,
+    font,
+    setFont,
+    color,
+    setColor,
+}: WatermarkSettingsProps) => {
+    const [colorInput, setColorInput] = useState(color.toUpperCase());
+    const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
+    const [colorPickerStyle, setColorPickerStyle] = useState<{ top: number; left: number } | null>(null);
+    const colorPickerRef = useRef<HTMLDivElement>(null);
+    const colorButtonRef = useRef<HTMLButtonElement>(null);
+    const colorPopoverRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setColorInput(color.toUpperCase());
+    }, [color]);
+
+    useEffect(() => {
+        if (!isColorPickerOpen) return;
+        const handleClickOutside = (event: MouseEvent) => {
+            if (!(event.target instanceof Node)) return;
+            if (colorPickerRef.current?.contains(event.target)) return;
+            if (colorPopoverRef.current?.contains(event.target)) return;
+            setIsColorPickerOpen(false);
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isColorPickerOpen]);
+
+    useEffect(() => {
+        if (!isColorPickerOpen || !colorButtonRef.current) return;
+        const rect = colorButtonRef.current.getBoundingClientRect();
+        const popoverWidth = 192;
+        const left = Math.min(Math.max(8, rect.left), window.innerWidth - popoverWidth - 8);
+        const top = rect.bottom + 8;
+        setColorPickerStyle({ top, left });
+    }, [isColorPickerOpen]);
+
+    const presetColors = ['#FFFFFF', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#5AC8FA', '#5856D6', '#AF52DE', '#FF2D55', '#8E8E93'];
+    const normalizeHex = (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) return '';
+        return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+    };
+    const isValidHex = (value: string) => /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(value);
+    const applyHex = (value: string) => {
+        const normalized = normalizeHex(value).toUpperCase();
+        if (isValidHex(normalized)) {
+            setColor(normalized);
+            return normalized;
+        }
+        return '';
+    };
+
+    const handleSelectImage = async () => {
+        try {
+            if (window.runtime?.OpenFileDialog) {
+                const res = await window.runtime.OpenFileDialog({
+                    title: '选择水印图片',
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: false,
+                    filters: [{
+                        DisplayName: "Images",
+                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.svg"
+                    }]
+                } as any);
+                const picked = Array.isArray(res) ? res[0] : res;
+                if (typeof picked === 'string' && picked) {
+                    setImagePath(picked);
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    };
+    const imageLabel = imagePath ? imagePath.replace(/\\/g, '/').split('/').pop() || imagePath : '点击上传水印图';
 
     return (
         <div className="space-y-6">
@@ -304,9 +410,65 @@ const WatermarkSettings = memo(() => {
 
             {type === '文字' ? (
                 <div className="space-y-3 animate-enter">
-                    <input type="text" placeholder="© ImageFlow Pro" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                    <div className="flex gap-2">
-                         <div className="w-10 h-10 rounded-lg bg-black cursor-pointer border-2 border-white/20 shadow-sm shrink-0" title="Text Color" />
+                    <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                    <div className="flex gap-2 items-center">
+                         <div ref={colorPickerRef} className="relative">
+                             <button
+                                 ref={colorButtonRef}
+                                 type="button"
+                                 onClick={() => setIsColorPickerOpen(prev => !prev)}
+                                 className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
+                                 style={{ backgroundColor: color }}
+                                 aria-label="文字颜色"
+                                 title="文字颜色"
+                             />
+                             {isColorPickerOpen && colorPickerStyle && createPortal(
+                                 <div
+                                     ref={colorPopoverRef}
+                                     className="fixed z-[9999] w-48 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] shadow-xl p-3 animate-enter"
+                                     style={colorPickerStyle}
+                                 >
+                                     <div className="grid grid-cols-6 gap-1.5">
+                                         {presetColors.map((hex) => (
+                                             <button
+                                                 key={hex}
+                                                 type="button"
+                                                 onClick={() => {
+                                                     setColor(hex);
+                                                     setColorInput(hex);
+                                                     setIsColorPickerOpen(false);
+                                                 }}
+                                                 className={`w-6 h-6 rounded-full border transition-all ${color.toUpperCase() === hex ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : 'border-gray-200 dark:border-white/10 hover:scale-105'}`}
+                                                 style={{ backgroundColor: hex }}
+                                                 aria-label={`选择颜色 ${hex}`}
+                                             />
+                                         ))}
+                                     </div>
+                                     <div className="mt-3 flex items-center gap-2">
+                                         <div
+                                             className="w-7 h-7 rounded-md border border-gray-200 dark:border-white/10"
+                                             style={{ backgroundColor: color }}
+                                         />
+                                         <input
+                                             type="text"
+                                             value={colorInput}
+                                             onChange={(e) => {
+                                                 const next = e.target.value;
+                                                 setColorInput(next);
+                                                 applyHex(next);
+                                             }}
+                                             onBlur={() => {
+                                                 const applied = applyHex(colorInput);
+                                                 if (!applied) setColorInput(color);
+                                             }}
+                                             placeholder="#FFFFFF"
+                                             className="flex-1 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
+                                         />
+                                     </div>
+                                 </div>,
+                                 document.body
+                             )}
+                         </div>
                          <div className="flex-1">
                              <CustomSelect 
                                 options={['Sans Serif', 'Serif', 'Mono', 'Handwriting']} 
@@ -317,33 +479,49 @@ const WatermarkSettings = memo(() => {
                     </div>
                 </div>
             ) : (
-                <div className="w-full h-24 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter">
+                <div className="w-full h-24 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
                     <Icon name="Upload" size={20} className="mb-2 opacity-50" />
-                    <span>点击上传水印图</span>
+                    <span className="text-xs text-gray-500">{imageLabel}</span>
                 </div>
             )}
 
-            <div className="grid grid-cols-[1fr_auto] gap-6 pt-2">
-                <div className="space-y-5">
+            <div className="grid grid-cols-1 xl:grid-cols-[1fr_140px] gap-6 pt-2">
+                <div className="space-y-[18px]">
                     <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
                     <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
                     <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
                 </div>
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300 block text-center">锚点位置</label>
-                    <PositionGrid value={position} onChange={setPosition} />
+                <div className="flex flex-col gap-4 min-w-0">
+                    <div className="space-y-2 w-full">
+                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
+                        <div className="flex justify-center">
+                            <PositionGrid value={position} onChange={setPosition} />
+                        </div>
+                    </div>
+                    <div className="space-y-2 w-full">
+                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
+                        <div className="grid grid-cols-1 gap-2 justify-items-center">
+                            <div className="relative w-24">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
+                                <input 
+                                    type="number" 
+                                    value={margin.x} 
+                                    onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
+                                    className="w-full pl-6 pr-2 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                />
+                            </div>
+                            <div className="relative w-24">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
+                                <input 
+                                    type="number" 
+                                    value={margin.y} 
+                                    onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
+                                    className="w-full pl-6 pr-2 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                />
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
-                     <label className="text-xs text-gray-500">水平边距 X</label>
-                     <input type="number" value={margin.x} onChange={e => setMargin({...margin, x: Number(e.target.value)})} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                 </div>
-                 <div className="space-y-1">
-                     <label className="text-xs text-gray-500">垂直边距 Y</label>
-                     <input type="number" value={margin.y} onChange={e => setMargin({...margin, y: Number(e.target.value)})} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                 </div>
             </div>
 
             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
@@ -369,21 +547,66 @@ type AdjustSettingsProps = {
     hue: number;
     setHue: (v: number) => void;
     showCrop?: boolean;
+    cropRatio?: string;
+    setCropRatio?: (v: string) => void;
+    rotate?: number;
+    setRotate?: (v: number) => void;
+    flipH?: boolean;
+    setFlipH?: (v: boolean) => void;
 };
 
-const AdjustCropControls = memo(() => (
+type AdjustCropControlsProps = {
+    cropRatio: string;
+    setCropRatio: (v: string) => void;
+    rotate: number;
+    setRotate: (v: number) => void;
+    flipH: boolean;
+    setFlipH: (v: boolean) => void;
+};
+
+const AdjustCropControls = memo(({
+    cropRatio,
+    setCropRatio,
+    rotate,
+    setRotate,
+    flipH,
+    setFlipH,
+}: AdjustCropControlsProps) => (
     <div className="space-y-2">
         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">裁剪与旋转</label>
         <div className="flex flex-wrap gap-2">
-            {['自由', '1:1', '4:3', '16:9', '9:16', '3:2'].map(r => (
-                <button key={r} className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-xs font-medium bg-white dark:bg-white/5 whitespace-nowrap hover:border-[#007AFF] hover:text-[#007AFF] transition-colors">{r}</button>
-            ))}
+            {['自由', '1:1', '4:3', '16:9', '9:16', '3:2'].map(r => {
+                const active = cropRatio === r;
+                return (
+                    <button
+                        key={r}
+                        onClick={() => setCropRatio(r)}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium whitespace-nowrap transition-colors ${
+                            active
+                                ? 'border-[#007AFF] text-[#007AFF] bg-[#007AFF]/10'
+                                : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 bg-white dark:bg-white/5 hover:border-[#007AFF] hover:text-[#007AFF]'
+                        }`}
+                    >
+                        {r}
+                    </button>
+                );
+            })}
         </div>
         <div className="grid grid-cols-2 gap-2 mt-2">
-            <button className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
+            <button
+                onClick={() => setRotate((rotate + 90) % 360)}
+                className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
+            >
                 <Icon name="RotateCw" size={16} /> 向右旋转 90°
             </button>
-            <button className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]">
+            <button
+                onClick={() => setFlipH(!flipH)}
+                className={`flex items-center justify-center gap-2 py-2 rounded-xl border transition-all text-sm font-medium ${
+                    flipH
+                        ? 'border-[#007AFF]/60 text-[#007AFF] bg-[#007AFF]/10'
+                        : 'border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E] hover:bg-gray-50 dark:hover:bg-white/5'
+                }`}
+            >
                 <span className="scale-x-[-1] inline-block"><Icon name="RotateCw" size={16} /></span> 水平翻转
             </button>
         </div>
@@ -404,24 +627,48 @@ const AdjustSettings = memo(({
     hue,
     setHue,
     showCrop = true,
+    cropRatio,
+    setCropRatio,
+    rotate,
+    setRotate,
+    flipH,
+    setFlipH,
 }: AdjustSettingsProps) => {
+    const canShowCrop = showCrop
+        && typeof cropRatio === 'string'
+        && typeof setCropRatio === 'function'
+        && typeof rotate === 'number'
+        && typeof setRotate === 'function'
+        && typeof flipH === 'boolean'
+        && typeof setFlipH === 'function';
 
     return (
         <div className="space-y-4">
-            {showCrop && <AdjustCropControls />}
+            {canShowCrop && (
+                <AdjustCropControls
+                    cropRatio={cropRatio}
+                    setCropRatio={setCropRatio}
+                    rotate={rotate}
+                    setRotate={setRotate}
+                    flipH={flipH}
+                    setFlipH={setFlipH}
+                />
+            )}
 
             <div className="pt-3 border-t border-gray-100 dark:border-white/5">
                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4 flex items-center gap-2">
                     <Icon name="Palette" size={16} className="text-[#007AFF]" />
                     专业调色
                  </label>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div className="w-full">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <StyledSlider label="曝光度" value={exposure} min={-100} max={100} onChange={setExposure} className="space-y-2" />
                     <StyledSlider label="对比度" value={contrast} min={-100} max={100} onChange={setContrast} className="space-y-2" />
                     <StyledSlider label="自然饱和度" value={vibrance} min={-100} max={100} onChange={setVibrance} className="space-y-2" />
                     <StyledSlider label="饱和度" value={saturation} min={-100} max={100} onChange={setSaturation} className="space-y-2" />
                     <StyledSlider label="色相偏移" value={hue} min={-180} max={180} onChange={setHue} unit="°" className="space-y-2" />
                     <StyledSlider label="锐化/模糊" value={sharpness} min={-100} max={100} onChange={setSharpness} className="space-y-2" />
+                    </div>
                  </div>
             </div>
         </div>
@@ -429,6 +676,7 @@ const AdjustSettings = memo(({
 });
 
 const FILTER_LABELS = ['原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博', '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得'];
+const FILTER_PRESETS = ['none', 'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber', 'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid'];
 
 type FilterSettingsProps = {
     intensity: number;
@@ -439,7 +687,42 @@ type FilterSettingsProps = {
     setVignette: (v: number) => void;
     selected: number;
     setSelected: (v: number) => void;
+    previewSrc: string;
+    getPreviewFilter: (index: number) => string;
 };
+
+type FilterControlsProps = {
+    intensity: number;
+    setIntensity: (v: number) => void;
+    grain: number;
+    setGrain: (v: number) => void;
+    vignette: number;
+    setVignette: (v: number) => void;
+    footer?: React.ReactNode;
+};
+
+const FilterControls = memo(({
+    intensity,
+    setIntensity,
+    grain,
+    setGrain,
+    vignette,
+    setVignette,
+    footer,
+}: FilterControlsProps) => (
+    <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4">
+            <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" className="space-y-2" />
+            <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} className="space-y-2" />
+            <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} className="space-y-2" />
+        </div>
+        {footer && (
+            <div className="pt-3 border-t border-gray-100 dark:border-white/5">
+                {footer}
+            </div>
+        )}
+    </div>
+));
 
 const FilterSettings = memo(({
     intensity,
@@ -450,43 +733,63 @@ const FilterSettings = memo(({
     setVignette,
     selected,
     setSelected,
+    previewSrc,
+    getPreviewFilter,
 }: FilterSettingsProps) => {
+    const hasPreview = Boolean(previewSrc);
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 space-y-3 min-h-0 flex flex-col">
                 <div className="flex items-center justify-between shrink-0">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">滤镜库 (LUTs)</label>
-                    <button onClick={() => setSelected(0)} className="text-xs text-[#007AFF] hover:underline font-medium">重置效果</button>
+                    <button
+                        onClick={() => {
+                            setSelected(0);
+                            setIntensity(80);
+                            setGrain(0);
+                            setVignette(0);
+                        }}
+                        className="text-xs text-[#007AFF] hover:underline font-medium"
+                    >
+                        重置效果
+                    </button>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 overflow-y-auto no-scrollbar pr-1 pb-1 content-start">
-                    {FILTER_LABELS.map((f, i) => (
-                        <button 
-                            key={i} 
-                            onClick={() => setSelected(i)}
-                            className={`
-                            group relative flex flex-col items-center gap-2 p-2 rounded-xl border transition-all duration-200 active:scale-95
-                            ${selected === i 
-                                ? 'bg-[#007AFF]/5 border-[#007AFF] ring-1 ring-[#007AFF]/20 shadow-sm' 
-                                : 'bg-gray-50 dark:bg-white/5 border-transparent hover:border-gray-200 dark:hover:border-white/10 hover:shadow-sm'}
-                        `}>
-                            <div className={`w-full aspect-square rounded-lg ${i===0 ? 'bg-gray-200 dark:bg-white/10' : 'bg-gradient-to-br from-gray-200 to-gray-300 dark:from-white/5 dark:to-white/10'} overflow-hidden relative shadow-inner`}>
-                                <div className={`absolute inset-0 opacity-20 ${i===1 ? 'bg-blue-500 mix-blend-overlay' : ''} ${i%2===0 && i!==0 ? 'bg-yellow-600 mix-blend-multiply' : ''} ${i%3===0 && i!==0 ? 'bg-purple-600 mix-blend-screen' : ''}`}></div>
-                            </div>
-                            <span className={`text-[10px] font-medium truncate w-full text-center ${selected === i ? 'text-[#007AFF]' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200'}`}>
-                                {f}
-                            </span>
-                            {selected === i && <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[#007AFF] rounded-full shadow-sm animate-enter"></div>}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="shrink-0 pt-3 border-t border-gray-100 dark:border-white/5 mt-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" className="space-y-2" />
-                    <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} className="space-y-2" />
-                    <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} className="space-y-2 col-span-2" />
+                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pr-1 pb-3">
+                    <div
+                        className="grid gap-1.5 content-start w-full"
+                        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}
+                    >
+                        {FILTER_LABELS.map((f, i) => (
+                            <button 
+                                key={i} 
+                                onClick={() => setSelected(i)}
+                                className={`
+                                group relative flex flex-col items-center gap-1 p-1 rounded-md border transition-all duration-200 active:scale-95
+                                ${selected === i 
+                                    ? 'bg-[#007AFF]/5 border-[#007AFF] ring-1 ring-[#007AFF]/20 shadow-sm' 
+                                    : 'bg-gray-50 dark:bg-white/5 border-transparent hover:border-gray-200 dark:hover:border-white/10 hover:shadow-sm'}
+                            `}>
+                                <div className={`w-full aspect-square rounded-md ${i===0 ? 'bg-gray-200 dark:bg-white/10' : 'bg-gradient-to-br from-gray-200 to-gray-300 dark:from-white/5 dark:to-white/10'} overflow-hidden relative shadow-inner`}>
+                                    {hasPreview ? (
+                                        <img
+                                            src={previewSrc}
+                                            alt={f}
+                                            className="w-full h-full object-cover"
+                                            style={{ filter: getPreviewFilter(i) || 'none' }}
+                                            loading="lazy"
+                                        />
+                                    ) : (
+                                        <div className={`absolute inset-0 opacity-20 ${i===1 ? 'bg-blue-500 mix-blend-overlay' : ''} ${i%2===0 && i!==0 ? 'bg-yellow-600 mix-blend-multiply' : ''} ${i%3===0 && i!==0 ? 'bg-purple-600 mix-blend-screen' : ''}`}></div>
+                                    )}
+                                </div>
+                                <span className={`text-[12px] font-medium w-full text-center leading-tight break-words min-h-[2.2em] ${selected === i ? 'text-[#007AFF]' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200'}`}>
+                                    {f}
+                                </span>
+                                {selected === i && <div className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-[#007AFF] rounded-full shadow-sm animate-enter"></div>}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>
@@ -708,9 +1011,6 @@ const GifSettings = memo(({
                 </div>
             )}
 
-            <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-xs text-purple-700 dark:text-purple-400 mt-2 border border-purple-100 dark:border-purple-500/10">
-                仅保留导出、倒放与帧率调整三项核心操作。
-            </div>
         </div>
     );
 });
@@ -1129,11 +1429,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const isInfo = id === 'info';
     const isAdjustOrFilter = id === 'adjust' || id === 'filter';
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
-    const [preserveFolderStructure, setPreserveFolderStructure] = useState(true);
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
+    const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
 
     const [convFormat, setConvFormat] = useState('JPG');
     const [convQuality, setConvQuality] = useState(80);
@@ -1146,14 +1446,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [convLongEdge, setConvLongEdge] = useState(1920);
     const [convKeepMetadata, setConvKeepMetadata] = useState(false);
     const [convMaintainAR, setConvMaintainAR] = useState(true);
-    const [convFilePrefix, setConvFilePrefix] = useState('IF');
     const [convOverwriteSource, setConvOverwriteSource] = useState(false);
 
     const [compMode, setCompMode] = useState('标准');
     const [compTargetSize, setCompTargetSize] = useState(false);
     const [compTargetSizeKB, setCompTargetSizeKB] = useState(500);
     const [compEngine, setCompEngine] = useState('自动 (推荐)');
-    const [compFilePrefix, setCompFilePrefix] = useState('IF');
     const [compOverwriteSource, setCompOverwriteSource] = useState(false);
     const [pdfSize, setPdfSize] = useState('A4 (210 x 297 mm)');
     const [pdfLayout, setPdfLayout] = useState('纵向');
@@ -1169,6 +1467,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [adjustSharpness, setAdjustSharpness] = useState(0);
     const [adjustVibrance, setAdjustVibrance] = useState(0);
     const [adjustHue, setAdjustHue] = useState(0);
+    const [adjustRotate, setAdjustRotate] = useState(0);
+    const [adjustFlipH, setAdjustFlipH] = useState(false);
+    const [adjustFlipV, setAdjustFlipV] = useState(false);
+    const [adjustCropRatio, setAdjustCropRatio] = useState('自由');
     const [filterIntensity, setFilterIntensity] = useState(80);
     const [filterGrain, setFilterGrain] = useState(0);
     const [filterVignette, setFilterVignette] = useState(0);
@@ -1181,6 +1483,54 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
     const [previewDataUrl, setPreviewDataUrl] = useState('');
+    const [isComparing, setIsComparing] = useState(false);
+    const [watermarkType, setWatermarkType] = useState('文字');
+    const [watermarkText, setWatermarkText] = useState('© ImageFlow');
+    const [watermarkImagePath, setWatermarkImagePath] = useState('');
+    const [watermarkPosition, setWatermarkPosition] = useState('br');
+    const [watermarkOpacity, setWatermarkOpacity] = useState(85);
+    const [watermarkRotate, setWatermarkRotate] = useState(0);
+    const [watermarkSize, setWatermarkSize] = useState(40);
+    const [watermarkTiled, setWatermarkTiled] = useState(false);
+    const [watermarkBlendMode, setWatermarkBlendMode] = useState('正常');
+    const [watermarkShadow, setWatermarkShadow] = useState(false);
+    const [watermarkMargin, setWatermarkMargin] = useState({ x: 20, y: 20 });
+    const [watermarkFont, setWatermarkFont] = useState('Sans Serif');
+    const [watermarkColor, setWatermarkColor] = useState('#FFFFFF');
+
+    const normalizeOutputSettings = (raw?: Partial<OutputSettings> | null): OutputSettings => {
+        if (!raw) return defaultOutputSettings;
+        return {
+            output_prefix: typeof raw.output_prefix === 'string' && raw.output_prefix.trim()
+                ? raw.output_prefix
+                : defaultOutputSettings.output_prefix,
+            output_template: typeof raw.output_template === 'string' && raw.output_template.trim()
+                ? raw.output_template
+                : defaultOutputSettings.output_template,
+            preserve_folder_structure: typeof raw.preserve_folder_structure === 'boolean'
+                ? raw.preserve_folder_structure
+                : defaultOutputSettings.preserve_folder_structure,
+            conflict_strategy: typeof raw.conflict_strategy === 'string' && raw.conflict_strategy.trim() === 'rename'
+                ? 'rename'
+                : defaultOutputSettings.conflict_strategy,
+        };
+    };
+
+    const loadOutputSettings = async () => {
+        const appAny = window.go?.main?.App as any;
+        if (!appAny?.GetSettings) {
+            return defaultOutputSettings;
+        }
+        try {
+            const res = await appAny.GetSettings();
+            const normalized = normalizeOutputSettings(res);
+            setOutputSettings(normalized);
+            return normalized;
+        } catch (e) {
+            console.error(e);
+            return outputSettings;
+        }
+    };
 
     const isGifPath = (p: string) => {
         const normalized = p.replace(/\\/g, '/');
@@ -1236,12 +1586,47 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         id,
         isAdjustOrFilter,
     ]);
+    const previewTransform = useMemo(() => {
+        if (!isAdjustOrFilter || id !== 'adjust') return '';
+        const rotate = ((adjustRotate % 360) + 360) % 360;
+        const scaleX = adjustFlipH ? -1 : 1;
+        const scaleY = adjustFlipV ? -1 : 1;
+        return `rotate(${rotate}deg) scale(${scaleX}, ${scaleY})`;
+    }, [adjustFlipH, adjustFlipV, adjustRotate, id, isAdjustOrFilter]);
+    const previewCropRatio = useMemo(() => {
+        if (!isAdjustOrFilter || id !== 'adjust') return null;
+        return parseCropRatio(adjustCropRatio);
+    }, [adjustCropRatio, id, isAdjustOrFilter]);
+    const previewFrameStyle = useMemo(() => {
+        if (!previewCropRatio) {
+            return { width: '100%', height: '100%' } as React.CSSProperties;
+        }
+        return {
+            aspectRatio: `${previewCropRatio.w}/${previewCropRatio.h}`,
+            width: '100%',
+            height: 'auto',
+            maxWidth: '100%',
+            maxHeight: '100%',
+        } as React.CSSProperties;
+    }, [previewCropRatio]);
+    const previewImageClassName = previewCropRatio
+        ? 'w-full h-full object-cover'
+        : 'max-w-full max-h-full object-contain';
     const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
         ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
         : 0;
     const previewVignetteOpacity = isAdjustOrFilter && id === 'filter'
         ? clampNumber(filterVignette / 100 * 0.6, 0, 0.6)
         : 0;
+    const isCompareActive = isComparing && Boolean(previewSrc);
+    const effectivePreviewFilter = isCompareActive ? '' : previewFilter;
+    const effectivePreviewTransform = isCompareActive ? '' : previewTransform;
+    const effectiveGrainOpacity = isCompareActive ? 0 : previewGrainOpacity;
+    const effectiveVignetteOpacity = isCompareActive ? 0 : previewVignetteOpacity;
+
+    useEffect(() => {
+        loadOutputSettings();
+    }, [id]);
 
     useEffect(() => {
         if (gifInputType === 'images' && gifMode !== '导出') {
@@ -1276,8 +1661,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         setKeepMetadata={setConvKeepMetadata}
                         maintainAR={convMaintainAR}
                         setMaintainAR={setConvMaintainAR}
-                        filePrefix={convFilePrefix}
-                        setFilePrefix={setConvFilePrefix}
                         overwriteSource={convOverwriteSource}
                         setOverwriteSource={setConvOverwriteSource}
                     />
@@ -1293,13 +1676,41 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         setTargetSizeKB={setCompTargetSizeKB}
                         engine={compEngine}
                         setEngine={setCompEngine}
-                        filePrefix={compFilePrefix}
-                        setFilePrefix={setCompFilePrefix}
                         overwriteSource={compOverwriteSource}
                         setOverwriteSource={setCompOverwriteSource}
                     />
                 );
-            case 'watermark': return <WatermarkSettings />;
+            case 'watermark':
+                return (
+                    <WatermarkSettings
+                        type={watermarkType}
+                        setType={setWatermarkType}
+                        text={watermarkText}
+                        setText={setWatermarkText}
+                        imagePath={watermarkImagePath}
+                        setImagePath={setWatermarkImagePath}
+                        position={watermarkPosition}
+                        setPosition={setWatermarkPosition}
+                        opacity={watermarkOpacity}
+                        setOpacity={setWatermarkOpacity}
+                        rotate={watermarkRotate}
+                        setRotate={setWatermarkRotate}
+                        size={watermarkSize}
+                        setSize={setWatermarkSize}
+                        tiled={watermarkTiled}
+                        setTiled={setWatermarkTiled}
+                        blendMode={watermarkBlendMode}
+                        setBlendMode={setWatermarkBlendMode}
+                        shadow={watermarkShadow}
+                        setShadow={setWatermarkShadow}
+                        margin={watermarkMargin}
+                        setMargin={setWatermarkMargin}
+                        font={watermarkFont}
+                        setFont={setWatermarkFont}
+                        color={watermarkColor}
+                        setColor={setWatermarkColor}
+                    />
+                );
             case 'adjust':
                 return (
                     <AdjustSettings
@@ -1329,6 +1740,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         setVignette={setFilterVignette}
                         selected={filterSelected}
                         setSelected={setFilterSelected}
+                        previewSrc={previewSrc}
+                        getPreviewFilter={(index) => buildFilterPreviewFilter(index, filterIntensity)}
                     />
                 );
             case 'pdf':
@@ -1391,19 +1804,43 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         const idx = normalized.lastIndexOf('/');
                         const dir = idx >= 0 ? normalized.slice(0, idx) : '';
                         const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
-                        const outPath = (dir ? `${dir}/` : '') + `IF_${name}`;
-
+                        const baseName = stripExtension(name);
+                        const ext = extname(name);
+                        const outputName = buildOutputName(`${baseName}_clean`, {
+                            template: outputSettings.output_template,
+                            prefix: outputSettings.output_prefix,
+                            seq: 1,
+                            op: 'privacy',
+                            date: new Date(),
+                        });
+                        const rawPath = (dir ? `${dir}/` : '') + (ext ? `${outputName}.${ext}` : outputName);
                         const appAny = (window.go?.main?.App as any);
+
                         if (!appAny?.StripMetadata) {
                             setLastMessage('后端未接入隐私清理接口');
                             return;
                         }
+                        let resolvedPath = outPath;
+                        if (appAny?.ResolveOutputPath && outputSettings.conflict_strategy === 'rename') {
+                            try {
+                                const res = await appAny.ResolveOutputPath({
+                                    base_path: normalizePath(rawPath),
+                                    strategy: 'rename',
+                                    reserved: [],
+                                });
+                                if (res?.success && res.output_path) {
+                                    resolvedPath = normalizePath(res.output_path);
+                                }
+                            } catch (err) {
+                                console.error(err);
+                            }
+                        }
                         setLastMessage('');
-                        const res = await appAny.StripMetadata({ input_path: infoFilePath, output_path: outPath, overwrite: false });
+                        const res = await appAny.StripMetadata({ input_path: infoFilePath, output_path: resolvedPath, overwrite: false });
                         if (res?.success) {
-                            setLastMessage(`隐私清理完成：${res.output_path || outPath}`);
-                            const refreshed = await window.go.main.App.GetInfo({ input_path: res.output_path || outPath });
-                            setInfoFilePath(res.output_path || outPath);
+                            setLastMessage(`隐私清理完成：${res.output_path || resolvedPath}`);
+                            const refreshed = await window.go.main.App.GetInfo({ input_path: res.output_path || resolvedPath });
+                            setInfoFilePath(res.output_path || resolvedPath);
                             setInfoPreview(refreshed);
                         } else {
                             setLastMessage(res?.error || '隐私清理失败');
@@ -1456,10 +1893,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         }
     };
 
-    const handleFilesSelected = (files: File[]) => {
-        console.log("Files received by backend logic:", files);
-        // Implementation for passing files to Go/Rust backend would go here
-    };
+    const handleFilesSelected = (_files: File[]) => {};
 
     const inputCount = dropResult?.files?.length ?? 0;
     const effectiveOutputDir = useMemo(() => {
@@ -1479,7 +1913,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 return;
             }
             if (window.runtime?.OpenDirectoryDialog) {
-                const dir = await window.runtime.OpenDirectoryDialog({ title: '选择输出文件夹' });
+                const dir = await window.runtime.OpenDirectoryDialog({ title: '选择输出位置' });
                 if (typeof dir === 'string' && dir.trim()) {
                     setOutputDir(dir);
                 }
@@ -1512,18 +1946,145 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         if (f === 'tif' || f === 'tiff') return e === 'tif' || e === 'tiff';
         return f === e;
     };
-    const addSuffix = (p: string, suffix: string) => {
-        const normalized = p.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('.');
-        if (idx === -1) return `${normalized}${suffix}`;
-        return `${normalized.slice(0, idx)}${suffix}${normalized.slice(idx)}`;
-    };
-    const sanitizeFilePrefix = (prefix: string) => (prefix || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
     const sanitizeFileName = (name: string) => (name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
     const stripExtension = (name: string) => {
         const idx = name.lastIndexOf('.');
         if (idx <= 0) return name;
         return name.slice(0, idx);
+    };
+    const sanitizeOutputName = (name: string) => {
+        const cleaned = sanitizeFileName(name).replace(/[. ]+$/g, '').trim();
+        if (!cleaned) return '';
+        const upper = cleaned.toUpperCase();
+        const reserved = new Set([
+            'CON', 'PRN', 'AUX', 'NUL',
+            'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+            'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+        ]);
+        if (reserved.has(upper)) {
+            return `_${cleaned}`;
+        }
+        return cleaned;
+    };
+    const formatDatePart = (date: Date, pattern: string) => {
+        const yyyy = `${date.getFullYear()}`;
+        const MM = `${date.getMonth() + 1}`.padStart(2, '0');
+        const dd = `${date.getDate()}`.padStart(2, '0');
+        const HH = `${date.getHours()}`.padStart(2, '0');
+        const mm = `${date.getMinutes()}`.padStart(2, '0');
+        const ss = `${date.getSeconds()}`.padStart(2, '0');
+        return pattern
+            .replace(/YYYY/g, yyyy)
+            .replace(/MM/g, MM)
+            .replace(/DD/g, dd)
+            .replace(/HH/g, HH)
+            .replace(/mm/g, mm)
+            .replace(/ss/g, ss);
+    };
+    const applyOutputTemplate = (
+        template: string,
+        vars: {
+            basename: string;
+            prefix: string;
+            seq: number;
+            op: string;
+            date: Date;
+        },
+    ) => template.replace(/\{([a-z_]+)(?::([^}]+))?\}/gi, (_match, keyRaw, fmtRaw) => {
+        const key = String(keyRaw).toLowerCase();
+        const fmt = typeof fmtRaw === 'string' ? fmtRaw : '';
+        if (key === 'basename') return vars.basename;
+        if (key === 'prefix') return vars.prefix;
+        if (key === 'op') return vars.op;
+        if (key === 'date') {
+            const pattern = fmt || 'YYYYMMDD';
+            return formatDatePart(vars.date, pattern);
+        }
+        if (key === 'time') {
+            const pattern = fmt || 'HHmmss';
+            return formatDatePart(vars.date, pattern);
+        }
+        if (key === 'seq') {
+            const width = /^\d+$/.test(fmt) ? Number(fmt) : 0;
+            const text = String(vars.seq);
+            return width > 0 ? text.padStart(width, '0') : text;
+        }
+        return '';
+    });
+    const buildOutputName = (
+        baseName: string,
+        options: {
+            template: string;
+            prefix: string;
+            seq: number;
+            op: string;
+            date: Date;
+        },
+    ) => {
+        const template = (options.template || defaultOutputSettings.output_template).trim() || defaultOutputSettings.output_template;
+        const prefixClean = sanitizeFileName(options.prefix || '');
+        const prefixValue = prefixClean ? `${prefixClean}_` : '';
+        const templateHasPrefix = template.includes('{prefix}');
+        const rendered = applyOutputTemplate(template, {
+            basename: baseName,
+            prefix: prefixValue,
+            seq: options.seq,
+            op: options.op,
+            date: options.date,
+        }).trim();
+        let name = rendered || baseName;
+        if (!templateHasPrefix && prefixValue) {
+            name = `${prefixValue}${name}`;
+        }
+        name = sanitizeOutputName(name);
+        if (!name) {
+            name = sanitizeOutputName(baseName) || 'output';
+        }
+        if (name.length > 200) {
+            name = name.slice(0, 200);
+        }
+        return name;
+    };
+    const getRelPath = (file: DroppedFile, preserveStructure: boolean) => {
+        if (preserveStructure && file.is_from_dir_drop) {
+            return file.relative_path || basename(file.input_path);
+        }
+        return basename(file.input_path);
+    };
+    const getRelDir = (relPath: string) => {
+        const normalized = relPath.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('/');
+        if (idx === -1) return '';
+        return normalized.slice(0, idx);
+    };
+    const buildOutputRelPath = (
+        file: DroppedFile,
+        options: {
+            ext?: string;
+            suffix?: string;
+            seq: number;
+            op: string;
+            template: string;
+            prefix: string;
+            preserveStructure: boolean;
+            date: Date;
+        },
+    ) => {
+        const rel = getRelPath(file, options.preserveStructure).replace(/\\/g, '/');
+        const relDir = getRelDir(rel);
+        const fileName = basename(rel);
+        const baseName = stripExtension(fileName);
+        const suffix = options.suffix || '';
+        const ext = (options.ext || extname(fileName)).toLowerCase();
+        const name = buildOutputName(`${baseName}${suffix}`, {
+            template: options.template,
+            prefix: options.prefix,
+            seq: options.seq,
+            op: options.op,
+            date: options.date,
+        });
+        const fullName = ext ? `${name}.${ext}` : name;
+        return relDir ? `${relDir}/${fullName}` : fullName;
     };
     const sanitizePdfInputName = (name: string) => sanitizeFileName(stripExtension(name || ''));
     const normalizePdfFileName = (name: string) => {
@@ -1578,6 +2139,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     function clampNumber(value: number, min: number, max: number) {
         return Math.min(max, Math.max(min, value));
     }
+    function parseCropRatio(value: string) {
+        const text = (value || '').trim().toLowerCase();
+        if (!text || text === '自由' || text === 'free' || text === 'original') {
+            return null;
+        }
+        if (!text.includes(':')) return null;
+        const parts = text.split(':');
+        if (parts.length !== 2) return null;
+        const w = Number(parts[0]);
+        const h = Number(parts[1]);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+            return null;
+        }
+        return { w, h };
+    }
     function buildAdjustPreviewFilter(
         exposure: number,
         contrast: number,
@@ -1611,9 +2187,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
         switch (index) {
             case 1: // 鲜艳
-                return `saturate(${mix(1, 1.8)}) contrast(${mix(1, 1.2)})`;
+                return `saturate(${mix(1, 1.8)}) contrast(${mix(1, 1.25)})`;
             case 2: // 黑白
-                return `grayscale(${t}) contrast(${mix(1, 1.1)})`;
+                return `grayscale(${t})`;
             case 3: // 复古
                 return `sepia(${mix(0, 0.8)}) contrast(${mix(1, 1.15)})`;
             case 4: // 冷调
@@ -1621,38 +2197,29 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             case 5: // 暖阳
                 return `sepia(${mix(0, 0.35)}) hue-rotate(${mix(0, 12)}deg) saturate(${mix(1, 1.2)})`;
             case 6: // 胶片
-                return `sepia(${mix(0, 0.4)}) contrast(${mix(1, 1.2)}) brightness(${mix(1, 1.05)})`;
+                return `sepia(${mix(0, 1)}) contrast(${mix(1, 1.2)}) brightness(${mix(1, 1.05)})`;
             case 7: // 赛博
-                return `hue-rotate(${mix(0, 90)}deg) saturate(${mix(1, 1.5)}) contrast(${mix(1, 1.1)})`;
+                return `hue-rotate(${mix(0, 90)}deg) saturate(${mix(1, 1.5)}) contrast(${mix(1, 1.2)})`;
             case 8: // 清新
-                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 1.15)})`;
+                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 1.25)})`;
             case 9: // 日系
-                return `brightness(${mix(1, 1.12)}) contrast(${mix(1, 0.95)}) saturate(${mix(1, 1.05)})`;
+                return `brightness(${mix(1, 1.12)}) contrast(${mix(1, 0.88)}) saturate(${mix(1, 1.1)})`;
             case 10: // Lomo
-                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 1.35)})`;
+                return `contrast(${mix(1, 1.3)}) saturate(${mix(1, 1.35)})`;
             case 11: // HDR
-                return `contrast(${mix(1, 1.4)}) saturate(${mix(1, 1.2)})`;
+                return `contrast(${mix(1, 1.45)}) saturate(${mix(1, 1.2)})`;
             case 12: // 褪色
-                return `saturate(${mix(1, 0.7)}) brightness(${mix(1, 1.08)})`;
+                return `saturate(${mix(1, 0.65)}) brightness(${mix(1, 1.08)}) contrast(${mix(1, 0.9)})`;
             case 13: // 磨砂
-                return `blur(${mix(0, 2.2)}px)`;
+                return `blur(${mix(0, 2)}px)`;
             case 14: // 电影
-                return `contrast(${mix(1, 1.18)}) saturate(${mix(1, 1.1)}) brightness(${mix(1, 0.98)})`;
+                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 0.9)})`;
             case 15: // 拍立得
-                return `sepia(${mix(0, 0.55)}) contrast(${mix(1, 1.1)})`;
+                return `sepia(${mix(0, 1)}) contrast(${mix(1, 1.1)}) brightness(${mix(1, 1.08)})`;
             default:
                 return '';
         }
     }
-    const addPrefixToRelPath = (rel: string, prefix: string) => {
-        const p = sanitizeFilePrefix(prefix);
-        if (!p) return rel;
-        const normalized = rel.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('/');
-        const dir = idx >= 0 ? normalized.slice(0, idx + 1) : '';
-        const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
-        return `${dir}${p}_${name}`;
-    };
 
     useEffect(() => {
         if (!dropResult || dropResult.files.length === 0) {
@@ -1761,6 +2328,40 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             return;
         }
 
+        const outputSettingsSnapshot = await loadOutputSettings();
+        const preserveStructure = Boolean(outputSettingsSnapshot.preserve_folder_structure);
+        const outputTemplate = outputSettingsSnapshot.output_template || defaultOutputSettings.output_template;
+        const outputPrefix = outputSettingsSnapshot.output_prefix || defaultOutputSettings.output_prefix;
+        const conflictStrategy = outputSettingsSnapshot.conflict_strategy || defaultOutputSettings.conflict_strategy;
+        const reservedPaths = new Set<string>();
+        const batchTime = new Date();
+        const resolveUniquePath = async (candidate: string) => {
+            const normalized = normalizePath(candidate);
+            if (conflictStrategy !== 'rename') {
+                reservedPaths.add(normalized);
+                return normalized;
+            }
+            const appAny = window.go?.main?.App as any;
+            if (!appAny?.ResolveOutputPath) {
+                reservedPaths.add(normalized);
+                return normalized;
+            }
+            try {
+                const res = await appAny.ResolveOutputPath({
+                    base_path: normalized,
+                    strategy: 'rename',
+                    reserved: Array.from(reservedPaths),
+                });
+                const resolved = res?.success && res.output_path ? normalizePath(res.output_path) : normalized;
+                reservedPaths.add(resolved);
+                return resolved;
+            } catch (err) {
+                console.error(err);
+                reservedPaths.add(normalized);
+                return normalized;
+            }
+        };
+
         setIsProcessing(true);
         try {
             const files = dropResult.files;
@@ -1780,15 +2381,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     '最长边': 'long_edge',
                 };
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
-                const buildReq = (f: DroppedFile) => {
+                const requests = [];
+                let seq = 1;
+                for (const f of files) {
                     const input_path = normalizePath(f.input_path);
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const baseOutRel = replaceExt(rel, format);
-                    const outRel = baseOutRel;
-                    const namedRel = convOverwriteSource ? outRel : addPrefixToRelPath(outRel, convFilePrefix);
                     const canOverwrite = convOverwriteSource && matchesFormat(format, extname(f.input_path));
-                    const output_path = canOverwrite ? input_path : joinPath(outDir, namedRel);
-                    return {
+                    let output_path = input_path;
+                    if (!canOverwrite) {
+                        const rel = buildOutputRelPath(f, {
+                            ext: format,
+                            seq,
+                            op: 'converter',
+                            template: outputTemplate,
+                            prefix: outputPrefix,
+                            preserveStructure,
+                            date: batchTime,
+                        });
+                        output_path = await resolveUniquePath(joinPath(outDir, rel));
+                    }
+                    requests.push({
                         input_path,
                         output_path,
                         format,
@@ -1802,10 +2413,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
                         long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
                         keep_metadata: convKeepMetadata,
-                    };
-                };
-
-                const requests = files.map((f) => buildReq(f));
+                    });
+                    seq += 1;
+                }
 
                 const chunkSize = requests.length >= 80 ? 20 : 1;
                 for (let i = 0; i < requests.length; i += chunkSize) {
@@ -1846,35 +2456,38 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 const engine = engineMap[compEngine] ?? 'auto';
                 const targetSizeKB = compTargetSize ? Math.max(0, Number(compTargetSizeKB) || 0) : 0;
 
-                const buildReq = (f: DroppedFile) => {
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    if (compOverwriteSource) {
-                        return {
-                            input_path: normalizePath(f.input_path),
-                            output_path: normalizePath(f.input_path),
-                            level,
-                            engine,
-                            target_size_kb: targetSizeKB,
-                            strip_metadata: true,
-                        };
-                    }
-                    const namedRel = addPrefixToRelPath(rel, compFilePrefix);
-                    return {
-                        input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, namedRel),
-                        level,
-                        engine,
-                        target_size_kb: targetSizeKB,
-                        strip_metadata: true,
-                    };
-                };
-
                 let failed = 0;
                 let warned = 0;
 
                 const chunkSize = total >= 80 ? 20 : 1;
+                let seq = 1;
                 for (let i = 0; i < files.length; i += chunkSize) {
-                    const chunk = files.slice(i, i + chunkSize).map(buildReq);
+                    const group = files.slice(i, i + chunkSize);
+                    const chunk = [];
+                    for (const f of group) {
+                        const input_path = normalizePath(f.input_path);
+                        let output_path = input_path;
+                        if (!compOverwriteSource) {
+                            const rel = buildOutputRelPath(f, {
+                                seq,
+                                op: 'compressor',
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                preserveStructure,
+                                date: batchTime,
+                            });
+                            output_path = await resolveUniquePath(joinPath(outDir, rel));
+                        }
+                        chunk.push({
+                            input_path,
+                            output_path,
+                            level,
+                            engine,
+                            target_size_kb: targetSizeKB,
+                            strip_metadata: true,
+                        });
+                        seq += 1;
+                    }
                     try {
                         if (chunk.length === 1) {
                             const res = await window.go.main.App.Compress(chunk[0]);
@@ -1897,21 +2510,66 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             }
 
             if (id === 'watermark') {
+                const isText = watermarkType === '文字';
+                if (!isText && !watermarkImagePath) {
+                    setLastMessage('请先选择水印图片');
+                    return;
+                }
+                const fontMap: Record<string, string> = {
+                    'Sans Serif': 'arial',
+                    'Serif': 'times',
+                    'Mono': 'cour',
+                    'Handwriting': 'comic sans ms',
+                };
+                const blendMap: Record<string, string> = {
+                    '正常': 'normal',
+                    '正片叠底 (Multiply)': 'multiply',
+                    '滤色 (Screen)': 'screen',
+                    '叠加 (Overlay)': 'overlay',
+                    '柔光 (Soft Light)': 'soft_light',
+                };
+                const textValue = watermarkText.trim() || '© ImageFlow';
+                const opacity = clampNumber(watermarkOpacity / 100, 0, 1);
+                const scale = clampNumber(watermarkSize / 100, 0.02, 1);
+                const fontSize = Math.max(8, Math.round(36 * (watermarkSize / 40)));
+                const fontName = fontMap[watermarkFont] || watermarkFont;
+                const blendMode = blendMap[watermarkBlendMode] || 'normal';
+                const positionMap: Record<string, string> = {
+                    ml: 'cl',
+                    mc: 'c',
+                    mr: 'cr',
+                };
+                const resolvedPosition = positionMap[watermarkPosition] || watermarkPosition;
+
+                let seq = 1;
                 for (const f of files) {
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const outRel = addSuffix(rel, '_watermark');
+                    const outRel = buildOutputRelPath(f, {
+                        suffix: '_watermark',
+                        seq,
+                        op: 'watermark',
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        preserveStructure,
+                        date: batchTime,
+                    });
                     const req = {
                         input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, outRel),
-                        watermark_type: 'text',
-                        text: '© ImageFlow',
-                        image_path: '',
-                        position: 'br',
-                        opacity: 0.85,
-                        scale: 0.2,
-                        font_size: 36,
-                        font_color: '#FFFFFF',
-                        rotation: 0,
+                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                        watermark_type: isText ? 'text' : 'image',
+                        text: textValue,
+                        image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
+                        position: resolvedPosition,
+                        opacity,
+                        scale,
+                        font_size: fontSize,
+                        font_color: watermarkColor,
+                        rotation: watermarkRotate,
+                        font_name: fontName,
+                        blend_mode: blendMode,
+                        tiled: watermarkTiled,
+                        shadow: watermarkShadow,
+                        offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
+                        offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
                     };
                     try {
                         await window.go.main.App.AddWatermark(req);
@@ -1919,6 +2577,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         console.error(`Failed to watermark ${f.input_path}:`, err);
                     }
                     completed++;
+                    seq += 1;
                     setProgress((completed / total) * 100);
                 }
                 setLastMessage(`水印完成：${completed}/${total} 项`);
@@ -1926,19 +2585,33 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             }
 
             if (id === 'adjust') {
+                let seq = 1;
                 for (const f of files) {
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const outRel = addSuffix(rel, '_adjusted');
+                    const outRel = buildOutputRelPath(f, {
+                        suffix: '_adjusted',
+                        seq,
+                        op: 'adjust',
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        preserveStructure,
+                        date: batchTime,
+                    });
+                    const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
                     const req = {
                         input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, outRel),
-                        rotate: 0,
-                        flip_h: false,
-                        flip_v: false,
+                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                        rotate: adjustRotate,
+                        flip_h: adjustFlipH,
+                        flip_v: adjustFlipV,
                         brightness: 0,
-                        contrast: 0,
-                        saturation: 0,
-                        hue: 0,
+                        exposure: adjustExposure,
+                        contrast: adjustContrast,
+                        saturation: adjustSaturation,
+                        vibrance: adjustVibrance,
+                        hue: adjustHue,
+                        sharpness: adjustSharpness,
+                        crop_ratio: cropRatio,
+                        crop_mode: cropRatio ? 'center' : '',
                     };
                     try {
                         await window.go.main.App.Adjust(req);
@@ -1946,6 +2619,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         console.error(`Failed to adjust ${f.input_path}:`, err);
                     }
                     completed++;
+                    seq += 1;
                     setProgress((completed / total) * 100);
                 }
                 setLastMessage(`调整完成：${completed}/${total} 项`);
@@ -1953,14 +2627,28 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             }
 
             if (id === 'filter') {
+                const filterPreset = FILTER_PRESETS[filterSelected] || 'none';
+                const intensity = clampNumber(filterIntensity / 100, 0, 1);
+                const grain = clampNumber(filterGrain / 100, 0, 1);
+                const vignette = clampNumber(filterVignette / 100, 0, 1);
+                let seq = 1;
                 for (const f of files) {
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
-                    const outRel = addSuffix(rel, '_filtered');
+                    const outRel = buildOutputRelPath(f, {
+                        suffix: '_filtered',
+                        seq,
+                        op: 'filter',
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        preserveStructure,
+                        date: batchTime,
+                    });
                     const req = {
                         input_path: normalizePath(f.input_path),
-                        output_path: joinPath(outDir, outRel),
-                        filter_type: 'grayscale',
-                        intensity: 1.0,
+                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                        filter_type: filterPreset,
+                        intensity,
+                        grain,
+                        vignette,
                     };
                     try {
                         await window.go.main.App.ApplyFilter(req);
@@ -1968,6 +2656,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         console.error(`Failed to filter ${f.input_path}:`, err);
                     }
                     completed++;
+                    seq += 1;
                     setProgress((completed / total) * 100);
                 }
                 setLastMessage(`滤镜完成：${completed}/${total} 项`);
@@ -2003,10 +2692,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     '原始大小 (居中)': 'original',
                 };
                 const marginPoints = Math.max(0, Math.round((Number(pdfMarginMm) || 0) * 72 / 25.4));
-                const pdfBaseName = normalizePdfFileName(pdfFileName);
+                const pdfBaseName = normalizePdfFileName(pdfFileName) || 'output';
+                const pdfName = buildOutputName(pdfBaseName, {
+                    template: outputTemplate,
+                    prefix: outputPrefix,
+                    seq: 1,
+                    op: 'pdf',
+                    date: batchTime,
+                });
                 const req: any = {
                     image_paths: files.map(f => normalizePath(f.input_path)),
-                    output_path: joinPath(outDir, `${pdfBaseName}.pdf`),
+                    output_path: await resolveUniquePath(joinPath(outDir, `${pdfName}.pdf`)),
                     page_size: sizeMap[pdfSize] ?? 'A4',
                     layout: pdfLayout === '横向' ? 'landscape' : 'portrait',
                     margin: marginPoints,
@@ -2041,9 +2737,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     if (gifFiles.length > 0) {
                         const outputFormat = gifExportFormat.toLowerCase();
                         let failed = 0;
+                        let seq = 1;
                         for (const f of gifFiles) {
                             const name = basename(f.input_path).replace(/\.[^.]+$/, '');
-                            const outputDir = joinPath(outDir, `${name}_frames`);
+                            const rel = getRelPath(f, preserveStructure);
+                            const relDir = getRelDir(rel);
+                            const folderName = buildOutputName(`${name}_frames`, {
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                seq,
+                                op: 'gif_frames',
+                                date: batchTime,
+                            });
+                            const rawOutputDir = relDir ? joinPath(outDir, `${relDir}/${folderName}`) : joinPath(outDir, folderName);
+                            const outputDir = await resolveUniquePath(rawOutputDir);
                             const req = {
                                 action: 'export_frames',
                                 input_path: normalizePath(f.input_path),
@@ -2058,6 +2765,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                                 failed++;
                             }
                             completed++;
+                            seq += 1;
                             setProgress((completed / gifFiles.length) * 100);
                         }
                         const extra = failed > 0 ? `（失败 ${failed}）` : '';
@@ -2070,7 +2778,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         ? basename(first.source_root)
                         : basename(first.input_path).replace(/\.[^.]+$/, '');
                     const safeName = baseName || 'output';
-                    const outputPath = joinPath(outDir, `${safeName}_combined.gif`);
+                    const combinedName = buildOutputName(`${safeName}_combined`, {
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        seq: 1,
+                        op: 'gif_build',
+                        date: batchTime,
+                    });
+                    const outputPath = await resolveUniquePath(joinPath(outDir, `${combinedName}.gif`));
                     try {
                         const res = await appAny.SplitGIF({
                             action: 'build_gif',
@@ -2104,11 +2819,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 const action = gifMode === '倒放' ? 'reverse' : 'change_speed';
                 const speedFactor = gifSpeedPercent / 100;
                 let failed = 0;
+                let seq = 1;
                 for (const f of gifFiles) {
-                    const rel = preserveFolderStructure && f.is_from_dir_drop ? f.relative_path : basename(f.input_path);
                     const suffix = action === 'reverse' ? '_reverse' : `_speed_${gifSpeedPercent}`;
-                    const outRel = addSuffix(rel, suffix);
-                    const outputPath = joinPath(outDir, outRel);
+                    const outRel = buildOutputRelPath(f, {
+                        suffix,
+                        seq,
+                        op: 'gif',
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        preserveStructure,
+                        date: batchTime,
+                    });
+                    const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
                     const req: any = {
                         action,
                         input_path: normalizePath(f.input_path),
@@ -2125,6 +2848,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         failed++;
                     }
                     completed++;
+                    seq += 1;
                     setProgress((completed / gifFiles.length) * 100);
                 }
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
@@ -2149,7 +2873,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
     const selectedDropPath = id === 'info' ? infoFilePath : isAdjustOrFilter ? previewPath : undefined;
     const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
-
     const dropZone = (
         <FileDropZone 
             isActive={isActive}
@@ -2193,7 +2916,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     );
 
     const showInputInSettings = !isInfo && id !== 'adjust';
-    const showActionInSettings = !isInfo && id !== 'adjust';
+    const showActionInSettings = !isInfo && id !== 'adjust' && id !== 'filter';
 
     const renderInputSection = (compact = false) => (
         <div className={`${compact ? 'space-y-2 pb-3' : 'space-y-3 pb-4'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-3' : 'mb-4'}`}>
@@ -2202,13 +2925,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
             </div>
             {dropResult?.has_directory && (
-                <Switch label="保持原文件夹结构" checked={preserveFolderStructure} onChange={setPreserveFolderStructure} />
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                    保持原文件夹结构：{outputSettings.preserve_folder_structure ? '已开启' : '已关闭'}（全局设置）
+                </div>
             )}
             <button
                 onClick={handleSelectOutputDir}
                 className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
             >
-                选择输出文件夹
+                选择输出位置
             </button>
             {effectiveOutputDir && (
                 <div
@@ -2229,8 +2954,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         </div>
     );
 
-    const renderActionSection = (compact = false) => (
-        <div className={`${compact ? 'pt-3' : 'pt-4'} border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3`}>
+    const renderActionContent = (compact = false) => (
+        <>
             {(isProcessing || progress > 0) && (
                 <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
             )}
@@ -2241,14 +2966,30 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             >
                 <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
             </button>
+        </>
+    );
+
+    const renderActionSection = (compact = false) => (
+        <div className={`${compact ? 'pt-3' : 'pt-4'} border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3`}>
+            {renderActionContent(compact)}
         </div>
+    );
+
+    const filterControlsPanel = (
+        <FilterControls
+            intensity={filterIntensity}
+            setIntensity={setFilterIntensity}
+            grain={filterGrain}
+            setGrain={setFilterGrain}
+            vignette={filterVignette}
+            setVignette={setFilterVignette}
+            footer={renderActionContent(true)}
+        />
     );
 
     const settingsPanel = (
         <div
-            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden ${
-                isAdjustOrFilter ? 'flex-1 min-h-0' : 'h-full'
-            } ${isInfo ? 'lg:col-span-4' : ''}`}
+            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0 ${isInfo ? 'lg:col-span-4' : ''}`}
         >
             {showInputInSettings && renderInputSection()}
             {isInfo && lastMessage && (
@@ -2260,7 +3001,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 </div>
             )}
             
-            <div className="flex-1 overflow-y-auto no-scrollbar px-1 pb-2">
+            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-1 pb-2">
                 {renderSettings()}
             </div>
 
@@ -2270,38 +3011,64 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
     const previewPanel = (
         <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 gap-3">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
-                {previewLabel && (
-                    <span className="text-[11px] text-gray-400 font-mono truncate max-w-[180px]">
-                        {previewLabel}
-                    </span>
-                )}
+                <div className="flex items-center gap-2">
+                    {previewLabel && (
+                        <span className="text-[11px] text-gray-400 font-mono truncate max-w-[180px]">
+                            {previewLabel}
+                        </span>
+                    )}
+                    <button
+                        type="button"
+                        disabled={!previewSrc}
+                        aria-pressed={isCompareActive}
+                        onPointerDown={() => setIsComparing(true)}
+                        onPointerUp={() => setIsComparing(false)}
+                        onPointerLeave={() => setIsComparing(false)}
+                        onPointerCancel={() => setIsComparing(false)}
+                        onBlur={() => setIsComparing(false)}
+                        className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full border transition ${
+                            previewSrc
+                                ? 'text-gray-600 dark:text-gray-300 border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 hover:text-gray-900 dark:hover:text-white'
+                                : 'text-gray-300 dark:text-gray-600 border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-white/5 cursor-not-allowed'
+                        }`}
+                    >
+                        <Icon name="Layers" size={12} />
+                        {isCompareActive ? '原图' : '按住对比'}
+                    </button>
+                </div>
             </div>
             <div className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center">
                 {previewSrc ? (
-                    <>
-                        <img
-                            src={previewSrc}
-                            className="max-w-full max-h-full object-contain transition-all duration-150"
-                            style={{ filter: previewFilter || 'none' }}
-                            alt="preview"
-                        />
-                        <div
-                            className="pointer-events-none absolute inset-0 transition-opacity duration-150"
-                            style={{
-                                opacity: previewVignetteOpacity,
-                                background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
-                            }}
-                        />
-                        <div
-                            className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
-                            style={{
-                                opacity: previewGrainOpacity,
-                                backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
-                            }}
-                        />
-                    </>
+                    <div className="w-full h-full flex items-center justify-center">
+                        <div className="relative overflow-hidden" style={previewFrameStyle}>
+                                <img
+                                    src={previewSrc}
+                                    className={`${previewImageClassName} transition-all duration-150`}
+                                    style={{
+                                    filter: effectivePreviewFilter || 'none',
+                                    transform: effectivePreviewTransform || 'none',
+                                    transformOrigin: 'center',
+                                }}
+                                    alt="preview"
+                                />
+                                <div
+                                    className="pointer-events-none absolute inset-0 transition-opacity duration-150"
+                                    style={{
+                                    opacity: effectiveVignetteOpacity,
+                                    background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
+                                }}
+                                />
+                                <div
+                                    className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
+                                    style={{
+                                    opacity: effectiveGrainOpacity,
+                                    backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
+                                }}
+                                />
+                        </div>
+                    </div>
                 ) : (
                     <div className="text-xs text-gray-400">拖入图片后显示预览</div>
                 )}
@@ -2322,9 +3089,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                             <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4 min-h-0 overflow-hidden">
                                 <div className="flex-1 overflow-y-auto no-scrollbar">
                                     {renderInputSection(true)}
-                                    <AdjustCropControls />
+                                    <AdjustCropControls
+                                        cropRatio={adjustCropRatio}
+                                        setCropRatio={setAdjustCropRatio}
+                                        rotate={adjustRotate}
+                                        setRotate={setAdjustRotate}
+                                        flipH={adjustFlipH}
+                                        setFlipH={setAdjustFlipH}
+                                    />
                                 </div>
                                 {renderActionSection(true)}
+                            </div>
+                        </div>
+                    ) : id === 'filter' ? (
+                        <div className="h-full flex flex-col gap-4 min-h-0">
+                            <div className="flex-1 min-h-0">
+                                {dropZone}
+                            </div>
+                            <div className="shrink-0">
+                                {filterControlsPanel}
                             </div>
                         </div>
                     ) : (
@@ -2336,10 +3119,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-4' : ''}`}>
                     {isAdjustOrFilter ? (
                         <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
-                            <div className="flex-1 min-h-0">
+                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : 'flex-1'} min-h-0`}>
                                 {previewPanel}
                             </div>
-                            <div className="shrink-0">
+                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : 'flex-1'} min-h-0`}>
                                 {settingsPanel}
                             </div>
                         </div>

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/imageflow/backend/models"
 )
@@ -20,10 +21,29 @@ func clampInt(v, minV, maxV int) int {
 }
 
 func normalizeSettings(s models.AppSettings) models.AppSettings {
+	defaults := models.DefaultAppSettings()
+	emptyOutputFields := strings.TrimSpace(s.OutputPrefix) == "" &&
+		strings.TrimSpace(s.OutputTemplate) == "" &&
+		strings.TrimSpace(s.ConflictStrategy) == ""
 	if s.MaxConcurrency == 0 {
-		s.MaxConcurrency = models.DefaultAppSettings().MaxConcurrency
+		s.MaxConcurrency = defaults.MaxConcurrency
 	}
 	s.MaxConcurrency = clampInt(s.MaxConcurrency, 1, 32)
+	if strings.TrimSpace(s.OutputPrefix) == "" {
+		s.OutputPrefix = defaults.OutputPrefix
+	}
+	if strings.TrimSpace(s.OutputTemplate) == "" {
+		s.OutputTemplate = defaults.OutputTemplate
+	}
+	if strings.TrimSpace(s.ConflictStrategy) == "" {
+		s.ConflictStrategy = defaults.ConflictStrategy
+	}
+	if s.ConflictStrategy != "rename" {
+		s.ConflictStrategy = defaults.ConflictStrategy
+	}
+	if !s.PreserveFolderStructure && emptyOutputFields {
+		s.PreserveFolderStructure = defaults.PreserveFolderStructure
+	}
 	return s
 }
 
@@ -78,4 +98,3 @@ func SaveSettings(s models.AppSettings) (models.AppSettings, error) {
 	}
 	return s, nil
 }
-

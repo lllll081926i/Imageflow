@@ -14,6 +14,7 @@ const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
+    const isSecondaryView = activeView !== 'dashboard';
 
     useEffect(() => {
         // Prevent default drag behaviors to stop opening files in browser
@@ -113,7 +114,7 @@ const App: React.FC = () => {
             <div className="flex-1 flex overflow-hidden">
                 <Sidebar active={activeView} setActive={handleNavigate} />
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
-                    <div className="flex-1 p-4 md:p-6 overflow-hidden">
+                    <div className={`flex-1 overflow-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
                         <div className="max-w-full mx-auto h-full">
                             <div className="h-full animate-fade-scale flex flex-col">
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>

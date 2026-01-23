@@ -31,6 +31,8 @@ func (s *FilterService) ApplyFilter(req models.FilterRequest) (models.FilterResu
 		"output_path": req.OutputPath,
 		"filter":      req.FilterType,
 		"intensity":   req.Intensity,
+		"grain":       req.Grain,
+		"vignette":    req.Vignette,
 	}
 
 	var result models.FilterResult

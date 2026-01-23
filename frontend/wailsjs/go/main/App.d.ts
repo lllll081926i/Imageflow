@@ -36,6 +36,8 @@ export function GetSettings():Promise<models.AppSettings>;
 
 export function Ping():Promise<string>;
 
+export function ResolveOutputPath(arg1:models.ResolveOutputPathRequest):Promise<models.ResolveOutputPathResult>;
+
 export function SaveSettings(arg1:models.AppSettings):Promise<models.AppSettings>;
 
 export function SelectOutputDirectory():Promise<string>;

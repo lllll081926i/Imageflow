@@ -10,6 +10,11 @@ export namespace models {
 	    contrast: number;
 	    saturation: number;
 	    hue: number;
+	    exposure: number;
+	    vibrance: number;
+	    sharpness: number;
+	    crop_ratio: string;
+	    crop_mode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AdjustRequest(source);
@@ -26,6 +31,11 @@ export namespace models {
 	        this.contrast = source["contrast"];
 	        this.saturation = source["saturation"];
 	        this.hue = source["hue"];
+	        this.exposure = source["exposure"];
+	        this.vibrance = source["vibrance"];
+	        this.sharpness = source["sharpness"];
+	        this.crop_ratio = source["crop_ratio"];
+	        this.crop_mode = source["crop_mode"];
 	    }
 	}
 	export class AdjustResult {
@@ -48,6 +58,10 @@ export namespace models {
 	}
 	export class AppSettings {
 	    max_concurrency: number;
+	    output_prefix: string;
+	    output_template: string;
+	    preserve_folder_structure: boolean;
+	    conflict_strategy: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -56,6 +70,10 @@ export namespace models {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.max_concurrency = source["max_concurrency"];
+	        this.output_prefix = source["output_prefix"];
+	        this.output_template = source["output_template"];
+	        this.preserve_folder_structure = source["preserve_folder_structure"];
+	        this.conflict_strategy = source["conflict_strategy"];
 	    }
 	}
 	export class CompressRequest {
@@ -221,6 +239,8 @@ export namespace models {
 	    output_path: string;
 	    filter_type: string;
 	    intensity: number;
+	    grain: number;
+	    vignette: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new FilterRequest(source);
@@ -232,6 +252,8 @@ export namespace models {
 	        this.output_path = source["output_path"];
 	        this.filter_type = source["filter_type"];
 	        this.intensity = source["intensity"];
+	        this.grain = source["grain"];
+	        this.vignette = source["vignette"];
 	    }
 	}
 	export class FilterResult {
@@ -518,6 +540,38 @@ export namespace models {
 	        this.error = source["error"];
 	    }
 	}
+	export class ResolveOutputPathRequest {
+	    base_path: string;
+	    strategy: string;
+	    reserved?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ResolveOutputPathRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.base_path = source["base_path"];
+	        this.strategy = source["strategy"];
+	        this.reserved = source["reserved"];
+	    }
+	}
+	export class ResolveOutputPathResult {
+	    success: boolean;
+	    output_path?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResolveOutputPathResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.output_path = source["output_path"];
+	        this.error = source["error"];
+	    }
+	}
 	export class WatermarkRequest {
 	    input_path: string;
 	    output_path: string;
@@ -530,6 +584,12 @@ export namespace models {
 	    font_size: number;
 	    font_color: string;
 	    rotation: number;
+	    font_name: string;
+	    blend_mode: string;
+	    tiled: boolean;
+	    shadow: boolean;
+	    offset_x: number;
+	    offset_y: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new WatermarkRequest(source);
@@ -548,6 +608,12 @@ export namespace models {
 	        this.font_size = source["font_size"];
 	        this.font_color = source["font_color"];
 	        this.rotation = source["rotation"];
+	        this.font_name = source["font_name"];
+	        this.blend_mode = source["blend_mode"];
+	        this.tiled = source["tiled"];
+	        this.shadow = source["shadow"];
+	        this.offset_x = source["offset_x"];
+	        this.offset_y = source["offset_y"];
 	    }
 	}
 	export class WatermarkResult {

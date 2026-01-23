@@ -124,6 +124,3 @@ wails build
 
 本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](./LICENSE) 文件。
 
-## 作者
-
-- lllll081926i ([lllll081926@outlook.com](mailto:lllll081926@outlook.com))
