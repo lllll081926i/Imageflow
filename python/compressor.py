@@ -541,10 +541,11 @@ class ImageCompressor:
                 except Exception as e:
                     logger.warning(f"pngquant compression failed: {e}")
 
-            if img.mode in ("RGBA", "RGB", "L"):
+            if img.mode in ("RGBA", "LA", "RGB", "L"):
                 colors = int(colors_hint)
                 colors = max(2, min(256, colors))
-                quantized = img.quantize(colors=colors, method=0, dither=1)
+                quantize_method = 2 if img.mode in ("RGBA", "LA") else 0
+                quantized = img.quantize(colors=colors, method=quantize_method, dither=1)
                 save_kwargs = {"format": "PNG"}
                 quantized.save(output_path, **save_kwargs)
                 if use_oxipng and not force_pillow:
