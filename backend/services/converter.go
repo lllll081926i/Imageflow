@@ -30,17 +30,17 @@ func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertRes
 	if strings.EqualFold(filepath.Ext(req.InputPath), ".svg") {
 		tmp, cleanup, err := utils.RasterizeSVGToTempPNG(req)
 		if err != nil {
-			s.logger.Error("SVG rasterization failed: %v", err)
-			return models.ConvertResult{Success: false, Error: err.Error()}, err
-		}
-		defer cleanup()
+			s.logger.Warn("SVG rasterization failed, falling back to Python: %v", err)
+		} else {
+			defer cleanup()
 
-		req.InputPath = tmp
-		req.ResizeMode = ""
-		req.ScalePercent = 0
-		req.LongEdge = 0
-		req.Width = 0
-		req.Height = 0
+			req.InputPath = tmp
+			req.ResizeMode = ""
+			req.ScalePercent = 0
+			req.LongEdge = 0
+			req.Width = 0
+			req.Height = 0
+		}
 	}
 
 	var result models.ConvertResult
