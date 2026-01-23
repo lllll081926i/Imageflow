@@ -1,16 +1,14 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
+import DetailView from './components/DetailView';
+import SettingsView from './components/SettingsView';
 import { ViewState, Theme } from './types';
 import { FEATURES } from './constants';
 
 const FEATURE_IDS = FEATURES.map((feature) => feature.id);
-const loadDetailView = () => import('./components/DetailView');
-const loadSettingsView = () => import('./components/SettingsView');
-const DetailView = lazy(loadDetailView);
-const SettingsView = lazy(loadSettingsView);
 
 const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
@@ -63,18 +61,6 @@ const App: React.FC = () => {
             window.removeEventListener('drop', preventDefault);
             window.removeEventListener('wheel', preventCtrlZoom);
             window.removeEventListener('keydown', preventCtrlKeyZoom);
-        };
-    }, []);
-
-    useEffect(() => {
-        const prefetchViews = () => {
-            void loadDetailView();
-            void loadSettingsView();
-        };
-
-        const frame = window.requestAnimationFrame(prefetchViews);
-        return () => {
-            window.cancelAnimationFrame(frame);
         };
     }, []);
 
@@ -144,20 +130,18 @@ const App: React.FC = () => {
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
                                     <Dashboard onSelect={handleNavigate} />
                                 </div>
-                                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-400">加载中...</div>}>
-                                    <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
-                                        <SettingsView />
+                                <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
+                                    <SettingsView />
+                                </div>
+                                {visibleFeatureViews.map((viewId) => (
+                                    <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
+                                        <DetailView
+                                            id={viewId}
+                                            isActive={activeView === viewId}
+                                            onBack={() => handleNavigate('dashboard')}
+                                        />
                                     </div>
-                                    {visibleFeatureViews.map((viewId) => (
-                                        <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
-                                            <DetailView
-                                                id={viewId}
-                                                isActive={activeView === viewId}
-                                                onBack={() => handleNavigate('dashboard')}
-                                            />
-                                        </div>
-                                    ))}
-                                </Suspense>
+                                ))}
                             </div>
                         </div>
                     </div>
