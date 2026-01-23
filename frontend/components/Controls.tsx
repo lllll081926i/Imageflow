@@ -384,6 +384,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragOver(false);
+        if (window.runtime?.OnFileDrop) {
+            return;
+        }
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const files: File[] = Array.from(e.dataTransfer.files);
             onFilesSelected(files);
@@ -435,6 +438,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (window.runtime?.OnFileDrop) {
+            return;
+        }
         if (e.target.files && e.target.files.length > 0) {
             const files: File[] = Array.from(e.target.files);
             onFilesSelected(files);
