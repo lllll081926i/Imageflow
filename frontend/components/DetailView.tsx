@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, memo } from 'react';
+import React, { useCallback, useMemo, useState, useEffect, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { FEATURES } from '../constants';
@@ -1485,6 +1485,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [previewDataUrl, setPreviewDataUrl] = useState('');
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
+    const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
+    const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
+    const [isCropDragging, setIsCropDragging] = useState(false);
+    const cropDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
     const [isComparing, setIsComparing] = useState(false);
     const [watermarkType, setWatermarkType] = useState('文字');
     const [watermarkText, setWatermarkText] = useState('© ImageFlow');
@@ -1563,6 +1567,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         if (previewDataUrl) return previewDataUrl;
         return toFileUrl(previewPath);
     }, [previewDataUrl, previewPath]);
+
+    useEffect(() => {
+        setPreviewImageSize({ width: 0, height: 0 });
+    }, [previewSrc]);
     const previewFilter = useMemo(() => {
         if (!isAdjustOrFilter) return '';
         if (id === 'adjust') {
@@ -1599,37 +1607,75 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         if (!isAdjustOrFilter || id !== 'adjust') return null;
         return parseCropRatio(adjustCropRatio);
     }, [adjustCropRatio, id, isAdjustOrFilter]);
-    const previewFrameStyle = useMemo(() => {
-        const base = { width: '100%', height: '100%' } as React.CSSProperties;
-        if (!previewContainerSize.width || !previewContainerSize.height) {
-            return base;
+    const previewFrame = useMemo(() => {
+        const containerWidth = previewContainerSize.width;
+        const containerHeight = previewContainerSize.height;
+        if (!containerWidth || !containerHeight) {
+            return { width: 0, height: 0, left: 0, top: 0 };
         }
         if (!previewCropRatio) {
-            return base;
+            return { width: containerWidth, height: containerHeight, left: 0, top: 0 };
         }
-        const containerRatio = previewContainerSize.width / previewContainerSize.height;
+        const containerRatio = containerWidth / containerHeight;
         const targetRatio = previewCropRatio.w / previewCropRatio.h;
         if (!Number.isFinite(containerRatio) || !Number.isFinite(targetRatio)) {
-            return base;
+            return { width: containerWidth, height: containerHeight, left: 0, top: 0 };
         }
-        let frameWidth = previewContainerSize.width;
-        let frameHeight = previewContainerSize.height;
+        let frameWidth = containerWidth;
+        let frameHeight = containerHeight;
         if (containerRatio > targetRatio) {
-            frameHeight = previewContainerSize.height;
+            frameHeight = containerHeight;
             frameWidth = frameHeight * targetRatio;
         } else {
-            frameWidth = previewContainerSize.width;
+            frameWidth = containerWidth;
             frameHeight = frameWidth / targetRatio;
         }
+        const left = (containerWidth - frameWidth) / 2;
+        const top = (containerHeight - frameHeight) / 2;
         return {
             width: Math.max(0, frameWidth),
             height: Math.max(0, frameHeight),
-        } as React.CSSProperties;
+            left: Math.max(0, left),
+            top: Math.max(0, top),
+        };
     }, [previewContainerSize, previewCropRatio]);
-    const previewImageClassName = previewCropRatio
-        ? 'w-full h-full object-cover'
-        : 'w-full h-full object-contain';
     const showCropFrame = Boolean(previewCropRatio);
+    const isCropInteractive = showCropFrame && id === 'adjust' && Boolean(previewSrc);
+    const cropImageMetrics = useMemo(() => {
+        if (!showCropFrame) return null;
+        if (!previewImageSize.width || !previewImageSize.height) return null;
+        if (!previewFrame.width || !previewFrame.height) return null;
+        const rotation = ((adjustRotate % 360) + 360) % 360;
+        const rotated = rotation === 90 || rotation === 270;
+        const rotatedWidth = rotated ? previewImageSize.height : previewImageSize.width;
+        const rotatedHeight = rotated ? previewImageSize.width : previewImageSize.height;
+        const scale = Math.max(
+            previewFrame.width / rotatedWidth,
+            previewFrame.height / rotatedHeight,
+        );
+        const drawnWidth = previewImageSize.width * scale;
+        const drawnHeight = previewImageSize.height * scale;
+        const rotatedDrawnWidth = rotated ? drawnHeight : drawnWidth;
+        const rotatedDrawnHeight = rotated ? drawnWidth : drawnHeight;
+        const maxOffsetX = Math.max(0, (rotatedDrawnWidth - previewFrame.width) / 2);
+        const maxOffsetY = Math.max(0, (rotatedDrawnHeight - previewFrame.height) / 2);
+        return {
+            drawnWidth,
+            drawnHeight,
+            rotatedDrawnWidth,
+            rotatedDrawnHeight,
+            maxOffsetX,
+            maxOffsetY,
+        };
+    }, [showCropFrame, previewImageSize, previewFrame, adjustRotate]);
+    const cropFocus = useMemo(() => {
+        if (!cropImageMetrics) {
+            return { x: 0.5, y: 0.5 };
+        }
+        const x = clampNumber(0.5 - cropOffset.x / cropImageMetrics.rotatedDrawnWidth, 0, 1);
+        const y = clampNumber(0.5 - cropOffset.y / cropImageMetrics.rotatedDrawnHeight, 0, 1);
+        return { x, y };
+    }, [cropImageMetrics, cropOffset]);
     const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
         ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
         : 0;
@@ -1643,6 +1689,24 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const effectiveVignetteOpacity = isCompareActive ? 0 : previewVignetteOpacity;
 
     useEffect(() => {
+        if (!showCropFrame) {
+            setCropOffset({ x: 0, y: 0 });
+            return;
+        }
+        setCropOffset({ x: 0, y: 0 });
+    }, [adjustCropRatio, previewPath, showCropFrame]);
+
+    useEffect(() => {
+        if (!cropImageMetrics) return;
+        setCropOffset((prev) => {
+            const nextX = clampNumber(prev.x, -cropImageMetrics.maxOffsetX, cropImageMetrics.maxOffsetX);
+            const nextY = clampNumber(prev.y, -cropImageMetrics.maxOffsetY, cropImageMetrics.maxOffsetY);
+            if (nextX === prev.x && nextY === prev.y) return prev;
+            return { x: nextX, y: nextY };
+        });
+    }, [cropImageMetrics]);
+
+    useEffect(() => {
         const el = previewContainerRef.current;
         if (!el || typeof ResizeObserver === 'undefined') return;
         const observer = new ResizeObserver((entries) => {
@@ -1654,6 +1718,50 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         });
         observer.observe(el);
         return () => observer.disconnect();
+    }, []);
+
+    const handleCropPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!isCropInteractive || !cropImageMetrics) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setIsCropDragging(true);
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        cropDragRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            offsetX: cropOffset.x,
+            offsetY: cropOffset.y,
+        };
+    }, [cropOffset, cropImageMetrics, isCropInteractive]);
+
+    const handleCropPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!cropDragRef.current || !cropImageMetrics) return;
+        const dx = e.clientX - cropDragRef.current.startX;
+        const dy = e.clientY - cropDragRef.current.startY;
+        const nextX = clampNumber(
+            cropDragRef.current.offsetX + dx,
+            -cropImageMetrics.maxOffsetX,
+            cropImageMetrics.maxOffsetX,
+        );
+        const nextY = clampNumber(
+            cropDragRef.current.offsetY + dy,
+            -cropImageMetrics.maxOffsetY,
+            cropImageMetrics.maxOffsetY,
+        );
+        setCropOffset((prev) => (
+            prev.x === nextX && prev.y === nextY ? prev : { x: nextX, y: nextY }
+        ));
+    }, [cropImageMetrics]);
+
+    const handleCropPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        if (!cropDragRef.current) return;
+        try {
+            (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+        } catch {
+            // ignore
+        }
+        cropDragRef.current = null;
+        setIsCropDragging(false);
     }, []);
 
     useEffect(() => {
@@ -2628,6 +2736,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         date: batchTime,
                     });
                     const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
+                    const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
                     const req = {
                         input_path: normalizePath(f.input_path),
                         output_path: await resolveUniquePath(joinPath(outDir, outRel)),
@@ -2642,7 +2751,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         hue: adjustHue,
                         sharpness: adjustSharpness,
                         crop_ratio: cropRatio,
-                        crop_mode: cropRatio ? 'center' : '',
+                        crop_mode: cropMode,
                     };
                     try {
                         await window.go.main.App.Adjust(req);
@@ -3070,37 +3179,117 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center"
             >
                 {previewSrc ? (
-                    <div className="w-full h-full flex items-center justify-center pointer-events-none select-none">
-                        <div className="relative overflow-hidden rounded-lg" style={previewFrameStyle}>
-                            <img
-                                src={previewSrc}
-                                className={`${previewImageClassName} transition-all duration-150`}
+                    showCropFrame && cropImageMetrics ? (
+                        <div className="w-full h-full relative">
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+                                <div
+                                    className="relative"
+                                    style={{
+                                        width: cropImageMetrics.drawnWidth,
+                                        height: cropImageMetrics.drawnHeight,
+                                        transform: `translate(${cropOffset.x}px, ${cropOffset.y}px)`,
+                                    }}
+                                >
+                                    <div
+                                        className="relative w-full h-full"
+                                        style={{
+                                            transform: effectivePreviewTransform || 'none',
+                                            transformOrigin: 'center',
+                                        }}
+                                    >
+                                        <img
+                                            src={previewSrc}
+                                            className="w-full h-full object-cover transition-all duration-150 pointer-events-none"
+                                            style={{
+                                                filter: effectivePreviewFilter || 'none',
+                                            }}
+                                            onLoad={(e) => {
+                                                const img = e.currentTarget;
+                                                if (img.naturalWidth && img.naturalHeight) {
+                                                    setPreviewImageSize({
+                                                        width: img.naturalWidth,
+                                                        height: img.naturalHeight,
+                                                    });
+                                                }
+                                            }}
+                                            alt="preview"
+                                        />
+                                        <div
+                                            className="pointer-events-none absolute inset-0 transition-opacity duration-150"
+                                            style={{
+                                                opacity: effectiveVignetteOpacity,
+                                                background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
+                                            }}
+                                        />
+                                        <div
+                                            className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
+                                            style={{
+                                                opacity: effectiveGrainOpacity,
+                                                backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                className={`absolute border-2 border-dashed border-gray-300/80 dark:border-white/40 ${isCropInteractive ? (isCropDragging ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
                                 style={{
-                                    filter: effectivePreviewFilter || 'none',
+                                    width: previewFrame.width,
+                                    height: previewFrame.height,
+                                    left: previewFrame.left,
+                                    top: previewFrame.top,
+                                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
+                                    touchAction: 'none',
+                                }}
+                                onPointerDown={handleCropPointerDown}
+                                onPointerMove={handleCropPointerMove}
+                                onPointerUp={handleCropPointerUp}
+                                onPointerCancel={handleCropPointerUp}
+                            />
+                        </div>
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center pointer-events-none select-none">
+                            <div
+                                className="relative w-full h-full"
+                                style={{
                                     transform: effectivePreviewTransform || 'none',
                                     transformOrigin: 'center',
                                 }}
-                                alt="preview"
-                            />
-                            {showCropFrame && (
-                                <div className="pointer-events-none absolute inset-0 border-2 border-dashed border-gray-300/80 dark:border-white/40" />
-                            )}
-                            <div
-                                className="pointer-events-none absolute inset-0 transition-opacity duration-150"
-                                style={{
-                                    opacity: effectiveVignetteOpacity,
-                                    background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
-                                }}
-                            />
-                            <div
-                                className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
-                                style={{
-                                    opacity: effectiveGrainOpacity,
-                                    backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
-                                }}
-                            />
+                            >
+                                <img
+                                    src={previewSrc}
+                                    className="w-full h-full object-contain transition-all duration-150 pointer-events-none"
+                                    style={{
+                                        filter: effectivePreviewFilter || 'none',
+                                    }}
+                                    onLoad={(e) => {
+                                        const img = e.currentTarget;
+                                        if (img.naturalWidth && img.naturalHeight) {
+                                            setPreviewImageSize({
+                                                width: img.naturalWidth,
+                                                height: img.naturalHeight,
+                                            });
+                                        }
+                                    }}
+                                    alt="preview"
+                                />
+                                <div
+                                    className="pointer-events-none absolute inset-0 transition-opacity duration-150"
+                                    style={{
+                                        opacity: effectiveVignetteOpacity,
+                                        background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
+                                    }}
+                                />
+                                <div
+                                    className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
+                                    style={{
+                                        opacity: effectiveGrainOpacity,
+                                        backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
+                                    }}
+                                />
+                            </div>
                         </div>
-                    </div>
+                    )
                 ) : (
                     <div className="text-xs text-gray-400">拖入图片后显示预览</div>
                 )}

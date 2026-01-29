@@ -321,16 +321,47 @@ class ImageAdjuster:
 
         if current_ratio > target_ratio:
             new_width = int(height * target_ratio)
-            left = max(0, (width - new_width) // 2)
+            mode = str(crop_mode or "").strip().lower()
+            focus_x = 0.5
+            if mode in ("", "center", "centre"):
+                focus_x = 0.5
+            elif mode.startswith("focus:") or mode.startswith("pos:"):
+                data = mode.split(":", 1)[1]
+                parts = [p for p in data.replace(" ", "").split(",") if p]
+                if len(parts) != 2:
+                    return img
+                try:
+                    focus_x = float(parts[0])
+                except Exception:
+                    return img
+                focus_x = max(0.0, min(1.0, focus_x))
+            else:
+                return img
+            center_x = focus_x * width
+            left = int(max(0, min(width - new_width, center_x - new_width / 2)))
             box = (left, 0, left + new_width, height)
         else:
             new_height = int(width / target_ratio)
-            top = max(0, (height - new_height) // 2)
+            mode = str(crop_mode or "").strip().lower()
+            focus_y = 0.5
+            if mode in ("", "center", "centre"):
+                focus_y = 0.5
+            elif mode.startswith("focus:") or mode.startswith("pos:"):
+                data = mode.split(":", 1)[1]
+                parts = [p for p in data.replace(" ", "").split(",") if p]
+                if len(parts) != 2:
+                    return img
+                try:
+                    focus_y = float(parts[1])
+                except Exception:
+                    return img
+                focus_y = max(0.0, min(1.0, focus_y))
+            else:
+                return img
+            center_y = focus_y * height
+            top = int(max(0, min(height - new_height, center_y - new_height / 2)))
             box = (0, top, width, top + new_height)
 
-        mode = str(crop_mode or "").strip().lower()
-        if mode not in ("", "center", "centre"):
-            return img
         return img.crop(box)
     
     def _apply_hue(self, img, adjustment):
