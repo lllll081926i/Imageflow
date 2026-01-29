@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { WindowControls } from './components/WindowControls';
@@ -79,14 +79,21 @@ const App: React.FC = () => {
         }
     };
 
-    const handleNavigate = (view: ViewState) => {
+    const handleNavigate = useCallback((view: ViewState) => {
         if (view === 'dashboard') {
             setDirection('left');
         } else {
             setDirection('right');
         }
         setActiveView(view);
-    };
+    }, []);
+
+    const handlePreload = useCallback((view: ViewState) => {
+        if (!FEATURE_IDS.includes(view)) return;
+        setLoadedFeatureViews((prev) => (prev.includes(view) ? prev : [...prev, view]));
+    }, []);
+
+    const handleBack = useCallback(() => handleNavigate('dashboard'), [handleNavigate]);
 
     return (
         <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
@@ -122,13 +129,13 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 flex overflow-hidden">
-                <Sidebar active={activeView} setActive={handleNavigate} />
+                <Sidebar active={activeView} setActive={handleNavigate} onPreload={handlePreload} />
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
                     <div className={`flex-1 overflow-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
                         <div className="max-w-full mx-auto h-full">
                             <div className="h-full animate-fade-scale flex flex-col">
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
-                                    <Dashboard onSelect={handleNavigate} />
+                                    <Dashboard onSelect={handleNavigate} onPreload={handlePreload} />
                                 </div>
                                 <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
                                     <SettingsView />
@@ -138,7 +145,7 @@ const App: React.FC = () => {
                                         <DetailView
                                             id={viewId}
                                             isActive={activeView === viewId}
-                                            onBack={() => handleNavigate('dashboard')}
+                                            onBack={handleBack}
                                         />
                                     </div>
                                 ))}

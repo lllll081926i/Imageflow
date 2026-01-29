@@ -1483,6 +1483,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
     const [previewDataUrl, setPreviewDataUrl] = useState('');
+    const previewContainerRef = useRef<HTMLDivElement>(null);
+    const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
     const [isComparing, setIsComparing] = useState(false);
     const [watermarkType, setWatermarkType] = useState('文字');
     const [watermarkText, setWatermarkText] = useState('© ImageFlow');
@@ -1598,20 +1600,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         return parseCropRatio(adjustCropRatio);
     }, [adjustCropRatio, id, isAdjustOrFilter]);
     const previewFrameStyle = useMemo(() => {
+        const base = { width: '100%', height: '100%' } as React.CSSProperties;
+        if (!previewContainerSize.width || !previewContainerSize.height) {
+            return base;
+        }
         if (!previewCropRatio) {
-            return { width: '100%', height: '100%' } as React.CSSProperties;
+            return base;
+        }
+        const containerRatio = previewContainerSize.width / previewContainerSize.height;
+        const targetRatio = previewCropRatio.w / previewCropRatio.h;
+        if (!Number.isFinite(containerRatio) || !Number.isFinite(targetRatio)) {
+            return base;
+        }
+        let frameWidth = previewContainerSize.width;
+        let frameHeight = previewContainerSize.height;
+        if (containerRatio > targetRatio) {
+            frameHeight = previewContainerSize.height;
+            frameWidth = frameHeight * targetRatio;
+        } else {
+            frameWidth = previewContainerSize.width;
+            frameHeight = frameWidth / targetRatio;
         }
         return {
-            aspectRatio: `${previewCropRatio.w}/${previewCropRatio.h}`,
-            width: '100%',
-            height: 'auto',
-            maxWidth: '100%',
-            maxHeight: '100%',
+            width: Math.max(0, frameWidth),
+            height: Math.max(0, frameHeight),
         } as React.CSSProperties;
-    }, [previewCropRatio]);
+    }, [previewContainerSize, previewCropRatio]);
     const previewImageClassName = previewCropRatio
         ? 'w-full h-full object-cover'
-        : 'max-w-full max-h-full object-contain';
+        : 'w-full h-full object-contain';
+    const showCropFrame = Boolean(previewCropRatio);
     const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
         ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
         : 0;
@@ -1623,6 +1641,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const effectivePreviewTransform = isCompareActive ? '' : previewTransform;
     const effectiveGrainOpacity = isCompareActive ? 0 : previewGrainOpacity;
     const effectiveVignetteOpacity = isCompareActive ? 0 : previewVignetteOpacity;
+
+    useEffect(() => {
+        const el = previewContainerRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver((entries) => {
+            if (!entries.length) return;
+            const { width, height } = entries[0].contentRect;
+            setPreviewContainerSize((prev) => (
+                prev.width === width && prev.height === height ? prev : { width, height }
+            ));
+        });
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         loadOutputSettings();
@@ -2923,11 +2955,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
                 <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
             </div>
-            {dropResult?.has_directory && (
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                    保持原文件夹结构：{outputSettings.preserve_folder_structure ? '已开启' : '已关闭'}（全局设置）
-                </div>
-            )}
             <button
                 onClick={handleSelectOutputDir}
                 className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
@@ -3038,34 +3065,40 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     </button>
                 </div>
             </div>
-            <div className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center">
+            <div
+                ref={previewContainerRef}
+                className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center"
+            >
                 {previewSrc ? (
-                    <div className="w-full h-full flex items-center justify-center">
-                        <div className="relative overflow-hidden" style={previewFrameStyle}>
-                                <img
-                                    src={previewSrc}
-                                    className={`${previewImageClassName} transition-all duration-150`}
-                                    style={{
+                    <div className="w-full h-full flex items-center justify-center pointer-events-none select-none">
+                        <div className="relative overflow-hidden rounded-lg" style={previewFrameStyle}>
+                            <img
+                                src={previewSrc}
+                                className={`${previewImageClassName} transition-all duration-150`}
+                                style={{
                                     filter: effectivePreviewFilter || 'none',
                                     transform: effectivePreviewTransform || 'none',
                                     transformOrigin: 'center',
                                 }}
-                                    alt="preview"
-                                />
-                                <div
-                                    className="pointer-events-none absolute inset-0 transition-opacity duration-150"
-                                    style={{
+                                alt="preview"
+                            />
+                            {showCropFrame && (
+                                <div className="pointer-events-none absolute inset-0 border-2 border-dashed border-gray-300/80 dark:border-white/40" />
+                            )}
+                            <div
+                                className="pointer-events-none absolute inset-0 transition-opacity duration-150"
+                                style={{
                                     opacity: effectiveVignetteOpacity,
                                     background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
                                 }}
-                                />
-                                <div
-                                    className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
-                                    style={{
+                            />
+                            <div
+                                className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
+                                style={{
                                     opacity: effectiveGrainOpacity,
                                     backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
                                 }}
-                                />
+                            />
                         </div>
                     </div>
                 ) : (
@@ -3134,4 +3167,4 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     );
 };
 
-export default DetailView;
+export default memo(DetailView);
