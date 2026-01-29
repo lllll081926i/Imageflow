@@ -414,7 +414,7 @@ const WatermarkSettings = memo(({
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div className="space-y-5">
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
@@ -516,15 +516,15 @@ const WatermarkSettings = memo(({
                     <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
                     <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
                 </div>
-                <div className="flex flex-col gap-4 min-w-0">
-                    <div className="space-y-2 w-full">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                        <div className="flex justify-center">
-                            <PositionGrid value={position} onChange={setPosition} />
-                        </div>
+                <div className="space-y-2 w-full">
+                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
+                    <div className="flex justify-center">
+                        <PositionGrid value={position} onChange={setPosition} />
                     </div>
+                </div>
+                <div className="space-y-2 w-full">
                     {tiled ? (
-                        <div className="space-y-2 w-full">
+                        <>
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
                             <StyledSlider
                                 value={tileGapValue}
@@ -533,9 +533,9 @@ const WatermarkSettings = memo(({
                                 unit="px"
                                 onChange={(val) => setMargin({ x: val, y: val })}
                             />
-                        </div>
+                        </>
                     ) : (
-                        <div className="space-y-2 w-full">
+                        <>
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
                             <div className="grid grid-cols-1 gap-2 justify-items-center">
                                 <div className="relative w-24">
@@ -557,12 +557,12 @@ const WatermarkSettings = memo(({
                                     />
                                 </div>
                             </div>
-                        </div>
+                        </>
                     )}
                 </div>
             </div>
 
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
                 <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
                 <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
@@ -3731,11 +3731,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     if (isWatermark) {
         return (
             <div className="h-full flex flex-col p-1">
-                <div className="grid grid-cols-1 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-6 min-h-0">
-                    <div className="h-[280px] lg:h-[360px]">
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(360px,480px)_minmax(0,1fr)] gap-6 min-h-0">
+                    <div className="h-[320px] lg:h-[420px]">
                         {dropZone}
                     </div>
-                    <div className="h-[280px] lg:h-[360px]">
+                    <div className="h-[320px] lg:h-[420px]">
                         {previewPanel}
                     </div>
                 </div>
