@@ -414,157 +414,165 @@ const WatermarkSettings = memo(({
 
     return (
         <div className="space-y-6">
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
-                <SegmentedControl options={['文字', '图片']} value={type} onChange={setType} />
-            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-5">
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
+                        <SegmentedControl options={['文字', '图片']} value={type} onChange={setType} />
+                    </div>
 
-            {type === '文字' ? (
-                <div className="space-y-3 animate-enter">
-                    <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                    <div className="flex gap-2 items-center">
-                         <div ref={colorPickerRef} className="relative">
-                             <button
-                                 ref={colorButtonRef}
-                                 type="button"
-                                 onClick={() => setIsColorPickerOpen(prev => !prev)}
-                                 className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
-                                 style={{ backgroundColor: color }}
-                                 aria-label="文字颜色"
-                                 title="文字颜色"
-                             />
-                             {isColorPickerOpen && colorPickerStyle && createPortal(
-                                 <div
-                                     ref={colorPopoverRef}
-                                     className="fixed z-[9999] w-48 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] shadow-xl p-3 animate-enter"
-                                     style={colorPickerStyle}
-                                 >
-                                     <div className="grid grid-cols-6 gap-1.5">
-                                         {presetColors.map((hex) => (
-                                             <button
-                                                 key={hex}
-                                                 type="button"
-                                                 onClick={() => {
-                                                     setColor(hex);
-                                                     setColorInput(hex);
-                                                     setIsColorPickerOpen(false);
-                                                 }}
-                                                 className={`w-6 h-6 rounded-full border transition-all ${color.toUpperCase() === hex ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : 'border-gray-200 dark:border-white/10 hover:scale-105'}`}
-                                                 style={{ backgroundColor: hex }}
-                                                 aria-label={`选择颜色 ${hex}`}
-                                             />
-                                         ))}
-                                     </div>
-                                     <div className="mt-3 flex items-center gap-2">
+                    {type === '文字' ? (
+                        <div className="space-y-3 animate-enter">
+                            <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                            <div className="flex gap-2 items-center">
+                                 <div ref={colorPickerRef} className="relative">
+                                     <button
+                                         ref={colorButtonRef}
+                                         type="button"
+                                         onClick={() => setIsColorPickerOpen(prev => !prev)}
+                                         className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
+                                         style={{ backgroundColor: color }}
+                                         aria-label="文字颜色"
+                                         title="文字颜色"
+                                     />
+                                     {isColorPickerOpen && colorPickerStyle && createPortal(
                                          <div
-                                             className="w-7 h-7 rounded-md border border-gray-200 dark:border-white/10"
-                                             style={{ backgroundColor: color }}
-                                         />
-                                         <input
-                                             type="text"
-                                             value={colorInput}
-                                             onChange={(e) => {
-                                                 const next = e.target.value;
-                                                 setColorInput(next);
-                                                 applyHex(next);
-                                             }}
-                                             onBlur={() => {
-                                                 const applied = applyHex(colorInput);
-                                                 if (!applied) setColorInput(color);
-                                             }}
-                                             placeholder="#FFFFFF"
-                                            className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
-                                         />
-                                     </div>
-                                 </div>,
-                                 document.body
-                             )}
-                          </div>
-                          <div className="flex-1">
-                              <CustomSelect 
-                                 label="字体"
-                                 options={fontOptions} 
-                                 value={font} 
-                                 onChange={setFont} 
-                              />
-                          </div>
-                     </div>
-                     <div className="space-y-1.5">
-                         <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
-                         {useSystemFonts && (
-                             <div className="text-xs text-gray-500">
-                                 {isSystemFontsLoading
-                                     ? '正在读取系统字体...'
-                                     : systemFontsCount > 0
-                                         ? `已读取 ${systemFontsCount} 个字体文件`
-                                         : '未检测到系统字体或读取失败'}
+                                             ref={colorPopoverRef}
+                                             className="fixed z-[9999] w-48 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] shadow-xl p-3 animate-enter"
+                                             style={colorPickerStyle}
+                                         >
+                                             <div className="grid grid-cols-6 gap-1.5">
+                                                 {presetColors.map((hex) => (
+                                                     <button
+                                                         key={hex}
+                                                         type="button"
+                                                         onClick={() => {
+                                                             setColor(hex);
+                                                             setColorInput(hex);
+                                                             setIsColorPickerOpen(false);
+                                                         }}
+                                                         className={`w-6 h-6 rounded-full border transition-all ${color.toUpperCase() === hex ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : 'border-gray-200 dark:border-white/10 hover:scale-105'}`}
+                                                         style={{ backgroundColor: hex }}
+                                                         aria-label={`选择颜色 ${hex}`}
+                                                     />
+                                                 ))}
+                                             </div>
+                                             <div className="mt-3 flex items-center gap-2">
+                                                 <div
+                                                     className="w-7 h-7 rounded-md border border-gray-200 dark:border-white/10"
+                                                     style={{ backgroundColor: color }}
+                                                 />
+                                                 <input
+                                                     type="text"
+                                                     value={colorInput}
+                                                     onChange={(e) => {
+                                                         const next = e.target.value;
+                                                         setColorInput(next);
+                                                         applyHex(next);
+                                                     }}
+                                                     onBlur={() => {
+                                                         const applied = applyHex(colorInput);
+                                                         if (!applied) setColorInput(color);
+                                                     }}
+                                                     placeholder="#FFFFFF"
+                                                    className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
+                                                 />
+                                             </div>
+                                         </div>,
+                                         document.body
+                                     )}
+                                  </div>
+                                  <div className="flex-1">
+                                      <CustomSelect 
+                                         label="字体"
+                                         options={fontOptions} 
+                                         value={font} 
+                                         onChange={setFont} 
+                                      />
+                                  </div>
                              </div>
-                         )}
-                     </div>
-                 </div>
-             ) : (
-                 <div className="w-full h-24 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
-                     <Icon name="Upload" size={20} className="mb-2 opacity-50" />
-                     <span className="text-xs text-gray-500">{imageLabel}</span>
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 xl:grid-cols-[1fr_140px] gap-6 pt-2">
-                <div className="space-y-[18px]">
-                    <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
-                    <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
-                    <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
-                 </div>
-                 <div className="flex flex-col gap-4 min-w-0">
-                     <div className="space-y-2 w-full">
-                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                         <div className="flex justify-center">
-                             <PositionGrid value={position} onChange={setPosition} />
-                         </div>
-                     </div>
-                     {tiled ? (
-                         <div className="space-y-2 w-full">
-                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
-                             <StyledSlider
-                                 value={tileGapValue}
-                                 min={0}
-                                 max={240}
-                                 unit="px"
-                                 onChange={(val) => setMargin({ x: val, y: val })}
-                             />
+                             <div className="space-y-1.5">
+                                 <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
+                                 {useSystemFonts && (
+                                     <div className="text-xs text-gray-500">
+                                         {isSystemFontsLoading
+                                             ? '正在读取系统字体...'
+                                             : systemFontsCount > 0
+                                                 ? `已读取 ${systemFontsCount} 个字体文件`
+                                                 : '未检测到系统字体或读取失败'}
+                                     </div>
+                                 )}
+                             </div>
                          </div>
                      ) : (
-                         <div className="space-y-2 w-full">
-                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
-                             <div className="grid grid-cols-1 gap-2 justify-items-center">
-                                 <div className="relative w-24">
-                                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
-                                     <input 
-                                         type="number" 
-                                         value={margin.x} 
-                                         onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                         className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                     />
-                                 </div>
-                                 <div className="relative w-24">
-                                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
-                                     <input 
-                                         type="number" 
-                                         value={margin.y} 
-                                         onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                         className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                     />
-                                 </div>
-                             </div>
-                         </div>
-                     )}
-                 </div>
-             </div>
+                         <div className="w-full h-28 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
+                             <Icon name="Upload" size={20} className="mb-2 opacity-50" />
+                             <span className="text-xs text-gray-500">{imageLabel}</span>
+                        </div>
+                    )}
+                </div>
 
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
+                <div className="space-y-5">
+                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-4">
+                        <div className="space-y-[18px]">
+                            <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
+                            <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
+                            <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
+                        </div>
+                        <div className="flex flex-col gap-4 min-w-0">
+                            <div className="space-y-2 w-full">
+                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
+                                <div className="flex justify-center">
+                                    <PositionGrid value={position} onChange={setPosition} />
+                                </div>
+                            </div>
+                            {tiled ? (
+                                <div className="space-y-2 w-full">
+                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
+                                    <StyledSlider
+                                        value={tileGapValue}
+                                        min={0}
+                                        max={240}
+                                        unit="px"
+                                        onChange={(val) => setMargin({ x: val, y: val })}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="space-y-2 w-full">
+                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
+                                    <div className="grid grid-cols-1 gap-2 justify-items-center">
+                                        <div className="relative w-24">
+                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
+                                            <input 
+                                                type="number" 
+                                                value={margin.x} 
+                                                onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
+                                                className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                            />
+                                        </div>
+                                        <div className="relative w-24">
+                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
+                                            <input 
+                                                type="number" 
+                                                value={margin.y} 
+                                                onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
+                                                className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
-                <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
-                <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
+                <div className="flex flex-col gap-3 justify-center">
+                    <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
+                    <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
+                </div>
             </div>
         </div>
     );
