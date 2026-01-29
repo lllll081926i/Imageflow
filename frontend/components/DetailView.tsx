@@ -1531,9 +1531,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [previewPath, setPreviewPath] = useState('');
     const [previewDataUrl, setPreviewDataUrl] = useState('');
     const previewContainerRef = useRef<HTMLDivElement>(null);
-    const previewPanelRef = useRef<HTMLDivElement>(null);
     const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
-    const [previewPanelHeight, setPreviewPanelHeight] = useState(0);
     const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
     const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
     const [isCropDragging, setIsCropDragging] = useState(false);
@@ -2049,18 +2047,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             setPreviewContainerSize((prev) => (
                 prev.width === width && prev.height === height ? prev : { width, height }
             ));
-        });
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, []);
-
-    useEffect(() => {
-        const el = previewPanelRef.current;
-        if (!el || typeof ResizeObserver === 'undefined') return;
-        const observer = new ResizeObserver((entries) => {
-            if (!entries.length) return;
-            const { height } = entries[0].contentRect;
-            setPreviewPanelHeight((prev) => (prev === height ? prev : height));
         });
         observer.observe(el);
         return () => observer.disconnect();
@@ -3596,7 +3582,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     ) : null;
 
     const previewPanel = (
-        <div ref={previewPanelRef} className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
+        <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
             <div className="flex items-center justify-between mb-4 gap-3">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
                 <div className="flex items-center gap-2">
@@ -3749,19 +3735,29 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         </div>
     );
 
+    if (isWatermark) {
+        return (
+            <div className="h-full flex flex-col p-1">
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-6 min-h-0">
+                    <div className="min-h-0">
+                        {dropZone}
+                    </div>
+                    <div className="min-h-0">
+                        {previewPanel}
+                    </div>
+                </div>
+                <div className="mt-6 flex-1 min-h-0">
+                    {settingsPanel}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="h-full flex flex-col p-1">
-            {isWatermark && (
-                <div
-                    className="w-full mb-6"
-                    style={{ height: previewPanelHeight > 0 ? previewPanelHeight : 260 }}
-                >
-                    {dropZone}
-                </div>
-            )}
-            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : isWatermark ? 'lg:grid-cols-1' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
+            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className={`h-full min-h-0 ${isWatermark ? 'hidden' : isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
+                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
                     {id === 'adjust' ? (
                         <div className="h-full flex flex-col gap-4 min-h-0">
                             <div className="flex-1 min-h-0">
@@ -3792,18 +3788,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                             </div>
                         </div>
                     ) : (
-                        isWatermark ? null : dropZone
+                        dropZone
                     )}
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
                 <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-4' : ''}`}>
-                    {isAdjustOrFilter || isWatermark ? (
+                    {isAdjustOrFilter ? (
                         <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
-                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : isWatermark ? 'flex-[1.35]' : 'flex-1'} min-h-0`}>
+                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : 'flex-1'} min-h-0`}>
                                 {previewPanel}
                             </div>
-                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : isWatermark ? 'flex-[0.85]' : 'flex-1'} min-h-0`}>
+                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : 'flex-1'} min-h-0`}>
                                 {settingsPanel}
                             </div>
                         </div>
