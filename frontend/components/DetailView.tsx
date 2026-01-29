@@ -414,7 +414,7 @@ const WatermarkSettings = memo(({
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="space-y-5">
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
@@ -511,68 +511,61 @@ const WatermarkSettings = memo(({
                         </div>
                     )}
                 </div>
-
-                <div className="space-y-5">
-                    <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-4">
-                        <div className="space-y-[18px]">
-                            <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
-                            <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
-                            <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
-                        </div>
-                        <div className="flex flex-col gap-4 min-w-0">
-                            <div className="space-y-2 w-full">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                                <div className="flex justify-center">
-                                    <PositionGrid value={position} onChange={setPosition} />
-                                </div>
-                            </div>
-                            {tiled ? (
-                                <div className="space-y-2 w-full">
-                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
-                                    <StyledSlider
-                                        value={tileGapValue}
-                                        min={0}
-                                        max={240}
-                                        unit="px"
-                                        onChange={(val) => setMargin({ x: val, y: val })}
-                                    />
-                                </div>
-                            ) : (
-                                <div className="space-y-2 w-full">
-                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
-                                    <div className="grid grid-cols-1 gap-2 justify-items-center">
-                                        <div className="relative w-24">
-                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
-                                            <input 
-                                                type="number" 
-                                                value={margin.x} 
-                                                onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                                className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                            />
-                                        </div>
-                                        <div className="relative w-24">
-                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
-                                            <input 
-                                                type="number" 
-                                                value={margin.y} 
-                                                onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                                className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+                <div className="space-y-[18px]">
+                    <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
+                    <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
+                    <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
+                </div>
+                <div className="flex flex-col gap-4 min-w-0">
+                    <div className="space-y-2 w-full">
+                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
+                        <div className="flex justify-center">
+                            <PositionGrid value={position} onChange={setPosition} />
                         </div>
                     </div>
+                    {tiled ? (
+                        <div className="space-y-2 w-full">
+                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
+                            <StyledSlider
+                                value={tileGapValue}
+                                min={0}
+                                max={240}
+                                unit="px"
+                                onChange={(val) => setMargin({ x: val, y: val })}
+                            />
+                        </div>
+                    ) : (
+                        <div className="space-y-2 w-full">
+                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
+                            <div className="grid grid-cols-1 gap-2 justify-items-center">
+                                <div className="relative w-24">
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
+                                    <input 
+                                        type="number" 
+                                        value={margin.x} 
+                                        onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
+                                        className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                    />
+                                </div>
+                                <div className="relative w-24">
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
+                                    <input 
+                                        type="number" 
+                                        value={margin.y} 
+                                        onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
+                                        className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="pt-2 border-t border-gray-100 dark:border-white/5 grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
-                <div className="flex flex-col gap-3 justify-center">
-                    <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
-                    <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
-                </div>
+                <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
+                <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
             </div>
         </div>
     );
@@ -3738,11 +3731,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     if (isWatermark) {
         return (
             <div className="h-full flex flex-col p-1">
-                <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)] gap-6 min-h-0">
-                    <div className="min-h-0">
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)] gap-6 min-h-0">
+                    <div className="h-[280px] lg:h-[360px]">
                         {dropZone}
                     </div>
-                    <div className="min-h-0">
+                    <div className="h-[280px] lg:h-[360px]">
                         {previewPanel}
                     </div>
                 </div>
