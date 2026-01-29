@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
@@ -252,6 +252,223 @@ type ExpandDroppedPathsResult = {
     has_directory: boolean;
 };
 
+type FileTreeNode = {
+    name: string;
+    path: string;
+    isFolder: true;
+    children: Record<string, FileTreeNode>;
+    files: DroppedFile[];
+    sortedChildren?: FileTreeNode[];
+    sortedFiles?: DroppedFile[];
+};
+
+type FileTreeRoot = Record<string, FileTreeNode>;
+
+const normalizePath = (p: string) => p.replace(/\\/g, '/');
+const basename = (p: string) => normalizePath(p).split('/').pop() || p;
+const getExt = (name: string) => {
+    const idx = name.lastIndexOf('.');
+    return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
+};
+const compareNames = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+const getRelativeName = (file: DroppedFile) => {
+    const cleaned = normalizePath(file.relative_path);
+    return cleaned.split('/').pop() || basename(file.input_path);
+};
+const sortFiles = (files: DroppedFile[], sortKey: SortKey, sortOrder: SortOrder) => {
+    const sorted = files.slice().sort((a, b) => {
+        let res = 0;
+        if (sortKey === 'name') {
+            res = compareNames(getRelativeName(a), getRelativeName(b));
+        } else if (sortKey === 'size') {
+            res = (a.size || 0) - (b.size || 0);
+        } else if (sortKey === 'time') {
+            res = (a.mod_time || 0) - (b.mod_time || 0);
+        }
+        return sortOrder === 'asc' ? res : -res;
+    });
+    return sorted;
+};
+const buildFileTree = (files: DroppedFile[]) => {
+    const root: FileTreeRoot = {};
+
+    files.forEach((file) => {
+        if (!file.is_from_dir_drop) return;
+
+        const relPath = file.relative_path.replace(/\\/g, '/');
+        const parts = relPath.split('/');
+
+        const topKey = file.source_root;
+        if (!root[topKey]) {
+            root[topKey] = {
+                name: basename(topKey),
+                path: topKey,
+                isFolder: true,
+                children: {},
+                files: []
+            };
+        }
+
+        let currentLevel = root[topKey];
+
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+            if (!currentLevel.children[part]) {
+                currentLevel.children[part] = {
+                    name: part,
+                    path: `${currentLevel.path}/${part}`,
+                    isFolder: true,
+                    children: {},
+                    files: []
+                };
+            }
+            currentLevel = currentLevel.children[part];
+        }
+
+        currentLevel.files.push(file);
+    });
+
+    return root;
+};
+const sortTreeNode = (node: FileTreeNode, sortKey: SortKey, sortOrder: SortOrder) => {
+    const sortedChildren = Object.values(node.children || {});
+    sortedChildren.forEach((child) => sortTreeNode(child, sortKey, sortOrder));
+    sortedChildren.sort((a, b) => {
+        const res = compareNames(a.name, b.name);
+        return sortOrder === 'asc' ? res : -res;
+    });
+    node.sortedChildren = sortedChildren;
+    node.sortedFiles = sortFiles(node.files || [], sortKey, sortOrder);
+};
+const buildSortedFileTree = (files: DroppedFile[], sortKey: SortKey, sortOrder: SortOrder) => {
+    const root = buildFileTree(files);
+    Object.values(root).forEach((node) => sortTreeNode(node, sortKey, sortOrder));
+    return root;
+};
+
+type TreeNodeProps = {
+    node: FileTreeNode;
+    depth: number;
+    selectedKey: string;
+    onItemSelect?: (file: DroppedFile) => void;
+    onRemoveFolder: (path: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+    onRemoveFile: (path: string, e: React.MouseEvent<HTMLButtonElement>) => void;
+};
+
+const TreeNode: React.FC<TreeNodeProps> = memo(({
+    node,
+    depth,
+    selectedKey,
+    onItemSelect,
+    onRemoveFolder,
+    onRemoveFile,
+}) => {
+    const [open, setOpen] = useState(true);
+    const [shouldRenderChildren, setShouldRenderChildren] = useState(true);
+
+    useEffect(() => {
+        if (open) {
+            setShouldRenderChildren(true);
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            setShouldRenderChildren(false);
+        }, 200);
+
+        return () => window.clearTimeout(timer);
+    }, [open]);
+
+    const paddingLeft = 16 + (depth * 12);
+    const sortedChildren = node.sortedChildren || [];
+    const sortedFiles = node.sortedFiles || [];
+
+    return (
+        <div className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen((prev) => !prev);
+                }}
+                className="w-full py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors pr-4"
+                style={{ paddingLeft }}
+            >
+                <div className={`transition-transform duration-200 ${open ? 'rotate-0' : '-rotate-90'}`}>
+                    <Icon name="ChevronDown" size={16} className="text-gray-400" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                    <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{node.name}</div>
+                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                        {sortedFiles.length} 文件, {sortedChildren.length} 文件夹
+                    </div>
+                </div>
+                {depth === 0 && (
+                    <button
+                        onClick={(e) => onRemoveFolder(node.path, e)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                        title="移除文件夹"
+                    >
+                        <Icon name="Trash2" size={14} />
+                    </button>
+                )}
+            </button>
+
+            <div
+                className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
+                    open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                }`}
+            >
+                <div className="min-h-0">
+                    {shouldRenderChildren && (
+                        <div>
+                            {sortedChildren.map((child) => (
+                                <TreeNode
+                                    key={child.path}
+                                    node={child}
+                                    depth={depth + 1}
+                                    selectedKey={selectedKey}
+                                    onItemSelect={onItemSelect}
+                                    onRemoveFolder={onRemoveFolder}
+                                    onRemoveFile={onRemoveFile}
+                                />
+                            ))}
+
+                            {sortedFiles.map((f) => {
+                                const name = getRelativeName(f);
+                                const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
+                                return (
+                                    <div
+                                        key={f.input_path}
+                                        onClick={() => onItemSelect?.(f)}
+                                        className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
+                                            isSelected
+                                                ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
+                                                : 'hover:bg-black/5 dark:hover:bg-white/5'
+                                        } ${onItemSelect ? 'cursor-pointer' : ''}`}
+                                        style={{ paddingLeft: paddingLeft + 24 }}
+                                    >
+                                        <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
+                                        <div className="flex-1 min-w-0 truncate">{name}</div>
+                                        <button
+                                            onClick={(e) => onRemoveFile(f.input_path, e)}
+                                            className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
+                                            title="移除文件"
+                                        >
+                                            <Icon name="X" size={14} />
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+});
+
 export const FileDropZone: React.FC<FileDropZoneProps> = ({ 
     onFilesSelected, 
     onPathsExpanded,
@@ -265,19 +482,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
     const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
-    const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
     const [sortKey, setSortKey] = useState<SortKey>('name');
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
-
-    const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
-    const normalizePath = (p: string) => p.replace(/\\/g, '/');
-    const getExt = (name: string) => {
-        const idx = name.lastIndexOf('.');
-        return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
-    };
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
@@ -293,59 +502,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             has_directory: base.has_directory || incoming.has_directory,
             files: merged,
         };
-    };
-
-    // Helper to build a recursive file tree structure
-    const buildFileTree = (files: DroppedFile[]) => {
-        const root: any = {};
-        
-        files.forEach(file => {
-            if (!file.is_from_dir_drop) return;
-            
-            // Normalize path separators
-            const relPath = file.relative_path.replace(/\\/g, '/');
-            const parts = relPath.split('/');
-            
-            let current = root;
-            
-            // Iterate through parts to build the tree
-            // If it's a file (last part), add it to files array
-            // If it's a folder, traverse or create object
-            
-            // We use the source_root as the top-level key for grouping
-            const topKey = file.source_root;
-            if (!root[topKey]) {
-                root[topKey] = {
-                    name: basename(topKey),
-                    path: topKey,
-                    isFolder: true,
-                    children: {},
-                    files: []
-                };
-            }
-            
-            let currentLevel = root[topKey];
-            
-            // Navigate down the tree for nested folders
-            for (let i = 0; i < parts.length - 1; i++) {
-                const part = parts[i];
-                if (!currentLevel.children[part]) {
-                    currentLevel.children[part] = {
-                        name: part,
-                        path: `${currentLevel.path}/${part}`,
-                        isFolder: true,
-                        children: {},
-                        files: []
-                    };
-                }
-                currentLevel = currentLevel.children[part];
-            }
-            
-            // Add file to the current folder level
-            currentLevel.files.push(file);
-        });
-        
-        return root;
     };
 
     useEffect(() => {
@@ -461,147 +617,38 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         }
     };
 
-    const handleRemoveFile = (path: string, e: React.MouseEvent) => {
+    const handleRemoveFile = useCallback((path: string, e: React.MouseEvent<HTMLButtonElement>) => {
         e.stopPropagation();
-        if (!previewResult) return;
-        const newFiles = previewResult.files.filter(f => f.input_path !== path);
-        const newResult = { ...previewResult, files: newFiles };
-        setPreviewResult(newResult);
-        onPathsExpanded?.(newResult);
-    };
+        setPreviewResult((prev) => {
+            if (!prev) return prev;
+            const newFiles = prev.files.filter((f) => f.input_path !== path);
+            const newResult = { ...prev, files: newFiles };
+            onPathsExpanded?.(newResult);
+            return newResult;
+        });
+    }, [onPathsExpanded]);
 
-    const handleRemoveFolder = (root: string, e: React.MouseEvent) => {
+    const handleRemoveFolder = useCallback((root: string, e: React.MouseEvent<HTMLButtonElement>) => {
         e.stopPropagation();
-        if (!previewResult) return;
-        const newFiles = previewResult.files.filter(f => f.source_root !== root);
-        const newResult = { ...previewResult, files: newFiles };
-        setPreviewResult(newResult);
-        onPathsExpanded?.(newResult);
-    };
-
-    // Recursive function to render the file tree
-    const renderTree = (node: any, depth = 0) => {
-        if (!node) return null;
-        
-        const open = expandedFolders[node.path] ?? true;
-        const paddingLeft = 16 + (depth * 12);
-        
-        // Sort children folders by name (always name for folders)
-        const sortedChildren = Object.values(node.children || {}).sort((a: any, b: any) => {
-            const res = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-            return sortOrder === 'asc' ? res : -res;
+        setPreviewResult((prev) => {
+            if (!prev) return prev;
+            const newFiles = prev.files.filter((f) => f.source_root !== root);
+            const newResult = { ...prev, files: newFiles };
+            onPathsExpanded?.(newResult);
+            return newResult;
         });
-        
-        // Sort files by current sort key
-        const sortedFiles = (node.files || []).slice().sort((a: DroppedFile, b: DroppedFile) => {
-            let res = 0;
-            if (sortKey === 'name') {
-                const nameA = a.relative_path.split('/').pop() || '';
-                const nameB = b.relative_path.split('/').pop() || '';
-                res = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-            } else if (sortKey === 'size') {
-                res = (a.size || 0) - (b.size || 0);
-            } else if (sortKey === 'time') {
-                res = (a.mod_time || 0) - (b.mod_time || 0);
-            }
-            return sortOrder === 'asc' ? res : -res;
-        });
+    }, [onPathsExpanded]);
 
-        return (
-            <div key={node.path} className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        setExpandedFolders(prev => ({ ...prev, [node.path]: !(prev[node.path] ?? true) }));
-                    }}
-                    className="w-full py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors pr-4"
-                    style={{ paddingLeft }}
-                >
-                    <div className={`transition-transform duration-300 ${open ? 'rotate-0' : '-rotate-90'}`}>
-                        <Icon name="ChevronDown" size={16} className="text-gray-400" />
-                    </div>
-                    <div className="flex-1 min-w-0 text-left">
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{node.name}</div>
-                        <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                            {/* Count total files recursively? Or just direct children? Let's show direct count for now */}
-                            {sortedFiles.length} 文件, {sortedChildren.length} 文件夹
-                        </div>
-                    </div>
-                    {/* Only show remove button for top-level roots to avoid complexity for now, or implement recursive removal */}
-                    {depth === 0 && (
-                        <button 
-                            onClick={(e) => handleRemoveFolder(node.path, e)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                            title="移除文件夹"
-                        >
-                            <Icon name="Trash2" size={14} />
-                        </button>
-                    )}
-                </button>
-
-                <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${open ? 'max-h-[20000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                    <div>
-                        {/* Render Subfolders */}
-                        {sortedChildren.map((child: any) => renderTree(child, depth + 1))}
-                        
-                        {/* Render Files */}
-                        {sortedFiles.map((f: DroppedFile) => {
-                            const name = f.relative_path.split('/').pop() || basename(f.input_path);
-                            const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
-                            return (
-                                <div
-                                    key={f.input_path}
-                                    onClick={() => onItemSelect?.(f)}
-                                    className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
-                                        isSelected
-                                            ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
-                                            : 'hover:bg-black/5 dark:hover:bg-white/5'
-                                    } ${onItemSelect ? 'cursor-pointer' : ''}`}
-                                    style={{ paddingLeft: paddingLeft + 24 }}
-                                >
-                                    <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
-                                    <div className="flex-1 min-w-0 truncate">{name}</div>
-                                    <button 
-                                        onClick={(e) => handleRemoveFile(f.input_path, e)}
-                                        className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
-                                        title="移除文件"
-                                    >
-                                        <Icon name="X" size={14} />
-                                    </button>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    const treeRoot = useMemo(() => {
+    const treeRoot = useMemo<FileTreeRoot>(() => {
         if (!previewResult?.files) return {};
-        return buildFileTree(previewResult.files);
-    }, [previewResult]);
+        return buildSortedFileTree(previewResult.files, sortKey, sortOrder);
+    }, [previewResult, sortKey, sortOrder]);
 
-    const looseFiles = (() => {
+    const looseFiles = useMemo(() => {
         const files = previewResult?.files || [];
-        return files
-            .filter(f => !f.is_from_dir_drop)
-            .slice()
-            .sort((a, b) => {
-                let res = 0;
-                if (sortKey === 'name') {
-                    const nameA = basename(a.input_path);
-                    const nameB = basename(b.input_path);
-                    res = nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
-                } else if (sortKey === 'size') {
-                    res = (a.size || 0) - (b.size || 0);
-                } else if (sortKey === 'time') {
-                    res = (a.mod_time || 0) - (b.mod_time || 0);
-                }
-                return sortOrder === 'asc' ? res : -res;
-            });
-    })();
+        const filtered = files.filter((f) => !f.is_from_dir_drop);
+        return sortFiles(filtered, sortKey, sortOrder);
+    }, [previewResult, sortKey, sortOrder]);
 
     const hasPreview = (previewResult?.files?.length || 0) > 0;
 
@@ -711,7 +758,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
                             {/* Scrollable Content */}
                             <div className="absolute inset-0 w-full">
-                                {Object.values(treeRoot).map((node: any) => renderTree(node))}
+                                {Object.values(treeRoot).map((node) => (
+                                    <TreeNode
+                                        key={node.path}
+                                        node={node}
+                                        depth={0}
+                                        selectedKey={selectedKey}
+                                        onItemSelect={onItemSelect}
+                                        onRemoveFolder={handleRemoveFolder}
+                                        onRemoveFile={handleRemoveFile}
+                                    />
+                                ))}
 
                                 {looseFiles.map((f) => {
                                     const name = basename(f.input_path);

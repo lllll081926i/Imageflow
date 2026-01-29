@@ -47,6 +47,16 @@ func (p *PythonExecutorPool) SetTimeout(timeout time.Duration) {
 	}
 }
 
+func (p *PythonExecutorPool) StartWorker() error {
+	var firstErr error
+	for _, e := range p.executors {
+		if err := e.StartWorker(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (p *PythonExecutorPool) StopWorker() {
 	for _, e := range p.executors {
 		e.StopWorker()
@@ -72,4 +82,3 @@ func (p *PythonExecutorPool) Size() int {
 func (p *PythonExecutorPool) String() string {
 	return fmt.Sprintf("PythonExecutorPool(size=%d)", len(p.executors))
 }
-

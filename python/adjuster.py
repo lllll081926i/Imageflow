@@ -348,73 +348,37 @@ class ImageAdjuster:
             return img
         
         logger.debug(f"Applying hue adjustment: {adjustment}")
-        
-        # Convert to RGB mode for hue adjustment
+
+        try:
+            shift_degrees = float(adjustment)
+        except Exception:
+            return img
+
+        if shift_degrees % 360 == 0:
+            return img
+
         if img.mode not in ('RGB', 'RGBA'):
             img = img.convert('RGB')
-        
-        # Split into channels
-        r, g, b = img.split()
-        
-        # Convert to HSL
-        # This is a simplified hue shift implementation
-        # For production use, consider using colorsys module or specialized libraries
-        
-        # Apply hue rotation by shifting RGB values
-        # This is a simplified approach - a full HSL conversion would be more accurate
-        shift = adjustment
-        
-        # Convert image to a mutable format for pixel manipulation
-        pixels = img.load()
-        width, height = img.size
-        
-        for y in range(height):
-            for x in range(width):
-                r_val, g_val, b_val = pixels[x, y][:3]
-                
-                # Simple RGB hue rotation
-                # Rotate the color wheel
-                if shift > 0:
-                    # Shift towards next colors
-                    r_val, g_val, b_val = self._rotate_hue(r_val, g_val, b_val, shift)
-                elif shift < 0:
-                    # Shift towards previous colors
-                    r_val, g_val, b_val = self._rotate_hue(g_val, b_val, r_val, -shift)
-                
-                pixels[x, y] = (r_val, g_val, b_val) + pixels[x, y][3:]
-        
-        return img
-    
-    def _rotate_hue(self, r, g, b, angle):
-        """
-        Simple hue rotation for RGB values.
-        
-        Args:
-            r, g, b: RGB values
-            angle (int): Rotation angle in degrees
-        
-        Returns:
-            tuple: Adjusted RGB values
-        """
-        # Normalize angle to 0-360
-        angle = angle % 360
-        
-        # Simplified hue rotation
-        # In a full implementation, this would use HSL/HSV color space
-        if angle < 120:
-            # Rotate R -> G
-            factor = angle / 120.0
-            r = int(r * (1 - factor) + g * factor)
-        elif angle < 240:
-            # Rotate G -> B
-            factor = (angle - 120) / 120.0
-            g = int(g * (1 - factor) + b * factor)
+
+        alpha = None
+        if img.mode == 'RGBA':
+            alpha = img.split()[3]
+            rgb = img.convert('RGB')
         else:
-            # Rotate B -> R
-            factor = (angle - 240) / 120.0
-            b = int(b * (1 - factor) + r * factor)
-        
-        return (r, g, b)
+            rgb = img
+
+        hsv = rgb.convert('HSV')
+        h, s, v = hsv.split()
+        shift = int(round((shift_degrees % 360) * 255 / 360))
+        lut = [(i + shift) % 256 for i in range(256)]
+        h = h.point(lut)
+        out = Image.merge('HSV', (h, s, v)).convert('RGB')
+
+        if alpha is not None:
+            out = out.convert('RGBA')
+            out.putalpha(alpha)
+
+        return out
 
 
 def process(input_data):

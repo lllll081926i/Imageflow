@@ -116,6 +116,15 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.executor = runner
 
+	go func(r utils.PythonRunner) {
+		if r == nil {
+			return
+		}
+		if err := r.StartWorker(); err != nil {
+			a.logger.Warn("Python worker warmup failed: %v", err)
+		}
+	}(runner)
+
 	// Initialize all services
 	a.converterService = services.NewConverterService(runner, logger)
 	a.compressorService = services.NewCompressorService(runner, logger)
@@ -183,6 +192,15 @@ func (a *App) SaveSettings(settings models.AppSettings) (models.AppSettings, err
 		a.watermarkService = services.NewWatermarkService(runner, a.logger)
 		a.adjusterService = services.NewAdjusterService(runner, a.logger)
 		a.filterService = services.NewFilterService(runner, a.logger)
+
+		go func(r utils.PythonRunner) {
+			if r == nil {
+				return
+			}
+			if err := r.StartWorker(); err != nil {
+				a.logger.Warn("Python worker warmup failed: %v", err)
+			}
+		}(runner)
 
 		if old != nil {
 			old.StopWorker()

@@ -6,53 +6,71 @@ It reads commands from stdin and writes results to stdout using JSON.
 """
 
 import sys
+import os
 import json
 import importlib
 import traceback
-import os
-import subprocess
 import gc
+import time
 from typing import Dict, Any
 
 
-SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-CONVERTER_TIMEOUT_S = int(os.getenv("IMAGEFLOW_CONVERTER_TIMEOUT_S", "180"))
+_CONVERTER_MODULE = None
+_PRELOAD_DONE = False
 
 
-def _run_converter_subprocess(input_data: Dict[str, Any]) -> Dict[str, Any]:
-    script_path = os.path.join(SCRIPTS_DIR, "converter.py")
+def _get_converter_module():
+    global _CONVERTER_MODULE
+    if _CONVERTER_MODULE is None:
+        module = importlib.import_module("converter")
+        if not hasattr(module, "process"):
+            raise RuntimeError("converter module missing process()")
+        _CONVERTER_MODULE = module
+    return _CONVERTER_MODULE
+
+
+def _run_converter_in_process(input_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        popen_kwargs = {}
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        cp = subprocess.run(
-            [sys.executable, script_path],
-            input=json.dumps(input_data, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=CONVERTER_TIMEOUT_S,
-            **popen_kwargs,
-        )
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"converter timeout after {CONVERTER_TIMEOUT_S}s"}
-    except Exception as e:
-        return {"success": False, "error": f"failed to run converter subprocess: {e}"}
-
-    stdout = (cp.stdout or "").strip()
-    stderr = (cp.stderr or "").strip()
-    if cp.returncode != 0:
-        return {"success": False, "error": f"converter exit code {cp.returncode}", "stderr": stderr[-4000:]}
-    if not stdout:
-        return {"success": False, "error": "converter produced no output", "stderr": stderr[-4000:]}
-    try:
-        result = json.loads(stdout)
+        module = _get_converter_module()
+        result = module.process(input_data)
         if isinstance(result, dict):
             return result
-        return {"success": False, "error": "converter returned non-object JSON"}
+        return {"success": False, "error": "converter returned non-object result"}
     except Exception as e:
-        return {"success": False, "error": f"converter returned invalid JSON: {e}", "stdout": stdout[-4000:], "stderr": stderr[-4000:]}
+        return {
+            "success": False,
+            "error": f"converter failed: {e}",
+            "traceback": traceback.format_exc()[-4000:],
+        }
+
+
+def _preload_modules() -> None:
+    global _PRELOAD_DONE
+    if _PRELOAD_DONE:
+        return
+    start = time.perf_counter()
+    try:
+        _get_converter_module()
+        try:
+            from PIL import Image  # type: ignore
+            Image.init()
+        except Exception:
+            pass
+        if os.getenv("IMAGEFLOW_PROFILE") == "1":
+            try:
+                from PIL import features  # type: ignore
+                checks = ["jpg", "jpg_2000", "png", "webp", "avif", "tiff", "libjpeg_turbo"]
+                for key in checks:
+                    ok = features.check(key)
+                    print(f"INFO PIL feature {key}={ok}", file=sys.stderr)
+            except Exception as e:
+                print(f"WARNING PIL feature check failed: {e}", file=sys.stderr)
+        elapsed = time.perf_counter() - start
+        print(f"INFO Worker preload complete in {elapsed:.2f}s", file=sys.stderr)
+    except Exception as e:
+        elapsed = time.perf_counter() - start
+        print(f"WARNING Worker preload failed in {elapsed:.2f}s: {e}", file=sys.stderr)
+    _PRELOAD_DONE = True
 
 
 def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,7 +94,7 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
             return {'success': False, 'error': 'Missing input data'}
 
         if script_name == "converter.py":
-            return _run_converter_subprocess(input_data)
+            return _run_converter_in_process(input_data)
 
         # Import the module dynamically
         # Strip .py extension if present to get module name
@@ -108,6 +126,8 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="strict", line_buffering=True)
     except Exception:
         pass
+
+    _preload_modules()
 
     # Send ready signal
     print(json.dumps({'status': 'ready'}), flush=True)

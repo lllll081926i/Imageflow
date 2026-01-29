@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +35,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+_PROFILE_ENABLED = os.getenv("IMAGEFLOW_PROFILE") == "1"
+
+
+def _profile_log(message: str) -> None:
+    if _PROFILE_ENABLED:
+        logger.info(message)
 
 
 def _resolve_path(path_value, base_dirs):
@@ -310,8 +317,14 @@ class ImageConverter:
                     'success': False,
                     'error': f'[UNSUPPORTED_FORMAT] Unsupported output format: {format_type}'
                 }
+
+            total_start = time.perf_counter() if _PROFILE_ENABLED else 0.0
+            open_elapsed = 0.0
+            resize_elapsed = 0.0
+            save_elapsed = 0.0
             
             # Open input image (special handling for SVG)
+            open_start = time.perf_counter() if _PROFILE_ENABLED else 0.0
             if input_path.lower().endswith('.svg'):
                 logger.info(f"Detected SVG file: {input_path}")
                 try:
@@ -343,14 +356,20 @@ class ImageConverter:
                 logger.info(f"Opening image: {input_path}")
                 img = Image.open(input_path)
 
+            if _PROFILE_ENABLED:
+                open_elapsed = time.perf_counter() - open_start
+
             exif_bytes = img.info.get('exif')
 
             mode = str(resize_mode or '').strip().lower()
+            resized = False
+            resize_start = time.perf_counter() if _PROFILE_ENABLED else 0.0
             if mode == 'percent' and int(scale_percent or 0) > 0:
                 pct = max(1, int(scale_percent))
                 new_w = max(1, int(img.size[0] * pct / 100))
                 new_h = max(1, int(img.size[1] * pct / 100))
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                resized = True
             elif mode == 'long_edge' and int(long_edge or 0) > 0:
                 le = max(1, int(long_edge))
                 w0, h0 = img.size
@@ -359,12 +378,18 @@ class ImageConverter:
                     new_w = max(1, int(w0 * scale))
                     new_h = max(1, int(h0 * scale))
                     img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    resized = True
             elif mode == 'fixed':
                 if width > 0 or height > 0:
                     img = self._resize_image(img, width, height, maintain_ar)
+                    resized = True
             else:
                 if width > 0 or height > 0:
                     img = self._resize_image(img, width, height, maintain_ar)
+                    resized = True
+
+            if _PROFILE_ENABLED and resized:
+                resize_elapsed = time.perf_counter() - resize_start
             
             if format_type == 'ico':
                 img, ico_sizes = self._prepare_ico_image(img, ico_sizes)
@@ -401,7 +426,10 @@ class ImageConverter:
                     logger.info(f"Overwrite mode detected; writing to temp: {save_path}")
 
                 logger.info(f"Saving to: {save_path} (format: {pillow_format})")
+                save_start = time.perf_counter() if _PROFILE_ENABLED else 0.0
                 img.save(save_path, format=pillow_format, **save_params)
+                if _PROFILE_ENABLED:
+                    save_elapsed = time.perf_counter() - save_start
 
                 if tmp_output_path:
                     os.replace(tmp_output_path, output_path)
@@ -419,6 +447,18 @@ class ImageConverter:
 
             # Force garbage collection for large batch processing
             gc.collect()
+
+            if _PROFILE_ENABLED:
+                total_elapsed = time.perf_counter() - total_start
+                _profile_log(
+                    "[Profile] convert total={:.3f}s open={:.3f}s resize={:.3f}s save={:.3f}s format={}".format(
+                        total_elapsed,
+                        open_elapsed,
+                        resize_elapsed,
+                        save_elapsed,
+                        format_type,
+                    )
+                )
 
             # Return success result
             return {

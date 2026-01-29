@@ -126,13 +126,6 @@ if (-not $src) {
     throw "python scripts dir not found near $root"
 }
 
-$embedDst = Join-Path $root "embedded_python"
-New-Item -ItemType Directory -Force $embedDst | Out-Null
-Get-ChildItem -Force $embedDst |
-    Where-Object { $_.Name -ne ".keep" } |
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item -Force (Join-Path $src "*.py") $embedDst
-
 $buildBin = Join-Path $root "build\bin"
 if (-not (Test-Path $buildBin)) {
     throw "build/bin not found; run wails build first"
@@ -170,12 +163,14 @@ if (Test-Path $runtimeDst) {
 Copy-Item -Recurse -Force $runtimeSrc $runtimeDst
 Trim-PythonRuntime -RuntimeRoot $runtimeDst
 
-$scriptsSrc = $embedDst
 $scriptsDst = Join-Path $buildBin "python"
 if (Test-Path $scriptsDst) {
     Remove-Item -Recurse -Force $scriptsDst
 }
-Copy-Item -Recurse -Force $scriptsSrc $scriptsDst
+Copy-Item -Recurse -Force $src $scriptsDst
+Get-ChildItem -Path $scriptsDst -Recurse -Force -Directory |
+    Where-Object { $_.Name -eq "__pycache__" } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 $zipPath = Join-Path $buildBin "$outputName-portable.zip"
 if (Test-Path $zipPath) {

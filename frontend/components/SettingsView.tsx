@@ -124,7 +124,7 @@ const SettingsView: React.FC = () => {
                                 max={32}
                                 value={maxConcurrency}
                                 onChange={(e) => setSettings(s => ({ ...s, max_concurrency: clamp(Number(e.target.value || 1), 1, 32) }))}
-                                className="w-16 text-center text-gray-700 dark:text-gray-200 font-mono text-sm bg-gray-100 dark:bg-white/10 px-2 py-1 rounded-lg outline-none focus:ring-2 focus:ring-[#007AFF]/30 border border-transparent focus:border-[#007AFF]"
+                                className="w-20 text-center text-gray-700 dark:text-gray-200 font-mono text-sm bg-gray-100 dark:bg-white/10 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#007AFF]/30 border border-transparent focus:border-[#007AFF]"
                             />
                             <button
                                 disabled={saving}

@@ -177,11 +177,11 @@ const ConverterSettings = memo(({
                     <div className="flex gap-3">
                         <div className="flex-1 space-y-1">
                             <label className="text-xs text-gray-500">宽度 (px)</label>
-                            <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
+                            <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
                         </div>
                         <div className="flex-1 space-y-1">
                             <label className="text-xs text-gray-500">高度 (px)</label>
-                            <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
+                            <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
                         </div>
                     </div>
                     <div className="flex items-center justify-between">
@@ -200,7 +200,7 @@ const ConverterSettings = memo(({
                 <div className="flex gap-3 animate-enter">
                     <div className="flex-1 space-y-1">
                         <label className="text-xs text-gray-500">最长边 (px)</label>
-                        <input type="number" value={longEdge || ''} onChange={e => setLongEdge(Number(e.target.value || 0))} className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="2048" />
+                        <input type="number" value={longEdge || ''} onChange={e => setLongEdge(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="2048" />
                     </div>
                     <div className="flex-1" />
                 </div>
@@ -260,7 +260,7 @@ const CompressorSettings = memo(({
                 <Switch label="指定目标大小限制 (KB)" checked={targetSize} onChange={setTargetSize} />
                 {targetSize && (
                      <div className="animate-enter">
-                        <input type="number" value={targetSizeKB} onChange={e => setTargetSizeKB(Number(e.target.value))} placeholder="例如: 500" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                        <input type="number" value={targetSizeKB} onChange={e => setTargetSizeKB(Number(e.target.value))} placeholder="例如: 500" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
                      </div>
                 )}
             </div>
@@ -410,7 +410,7 @@ const WatermarkSettings = memo(({
 
             {type === '文字' ? (
                 <div className="space-y-3 animate-enter">
-                    <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                    <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
                     <div className="flex gap-2 items-center">
                          <div ref={colorPickerRef} className="relative">
                              <button
@@ -462,7 +462,7 @@ const WatermarkSettings = memo(({
                                                  if (!applied) setColorInput(color);
                                              }}
                                              placeholder="#FFFFFF"
-                                             className="flex-1 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
+                                            className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
                                          />
                                      </div>
                                  </div>,
@@ -507,7 +507,7 @@ const WatermarkSettings = memo(({
                                     type="number" 
                                     value={margin.x} 
                                     onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                    className="w-full pl-6 pr-2 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                    className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
                                 />
                             </div>
                             <div className="relative w-24">
@@ -516,7 +516,7 @@ const WatermarkSettings = memo(({
                                     type="number" 
                                     value={margin.y} 
                                     onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                    className="w-full pl-6 pr-2 py-1 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                    className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
                                 />
                             </div>
                         </div>
@@ -879,7 +879,7 @@ const PdfSettings = memo(({
                     step={1}
                     value={marginMm}
                     onChange={(e) => setMarginMm(Number(e.target.value || 0))}
-                    className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
+                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
                 />
             </div>
 
@@ -891,7 +891,7 @@ const PdfSettings = memo(({
                         value={fileName}
                         onChange={(e) => setFileName(e.target.value)}
                         placeholder="自动生成"
-                        className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
+                        className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
                     />
                     <span className="text-xs text-gray-400 shrink-0">.pdf</span>
                 </div>
@@ -900,8 +900,8 @@ const PdfSettings = memo(({
             <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
                  <div className="space-y-3">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">元数据</label>
-                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="文档标题" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                    <input type="text" value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="作者" className="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
+                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="文档标题" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
+                    <input type="text" value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="作者" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
                  </div>
                 <div className="h-px bg-gray-100 dark:bg-white/5" />
                 <div className="space-y-2">
@@ -910,7 +910,7 @@ const PdfSettings = memo(({
                 </div>
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">文档加密 (可选)</label>
-                    <input type="password" placeholder="留空则不加密" className="w-full px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                    <input type="password" placeholder="留空则不加密" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
                 </div>
             </div>
         </div>
@@ -1415,8 +1415,8 @@ const InfoSettings = memo(({
                 )}
             </div>
             <div className="mt-4 flex gap-3 shrink-0">
-                 <button onClick={onExportJSON} disabled={!info?.success} className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">导出 JSON</button>
-                 <button onClick={onClearPrivacy} disabled={!filePath} className="flex-1 py-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">清除隐私信息</button>
+                 <button onClick={onExportJSON} disabled={!info?.success} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">导出 JSON</button>
+                 <button onClick={onClearPrivacy} disabled={!filePath} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">清除隐私信息</button>
             </div>
         </div>
     );
@@ -2381,45 +2381,44 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     '最长边': 'long_edge',
                 };
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
-                const requests = [];
+                const chunkSize = total >= 80 ? 20 : 1;
                 let seq = 1;
-                for (const f of files) {
-                    const input_path = normalizePath(f.input_path);
-                    const canOverwrite = convOverwriteSource && matchesFormat(format, extname(f.input_path));
-                    let output_path = input_path;
-                    if (!canOverwrite) {
-                        const rel = buildOutputRelPath(f, {
-                            ext: format,
-                            seq,
-                            op: 'converter',
-                            template: outputTemplate,
-                            prefix: outputPrefix,
-                            preserveStructure,
-                            date: batchTime,
+                for (let i = 0; i < files.length; i += chunkSize) {
+                    const group = files.slice(i, i + chunkSize);
+                    const chunk = [];
+                    for (const f of group) {
+                        const input_path = normalizePath(f.input_path);
+                        const canOverwrite = convOverwriteSource && matchesFormat(format, extname(f.input_path));
+                        let output_path = input_path;
+                        if (!canOverwrite) {
+                            const rel = buildOutputRelPath(f, {
+                                ext: format,
+                                seq,
+                                op: 'converter',
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                preserveStructure,
+                                date: batchTime,
+                            });
+                            output_path = await resolveUniquePath(joinPath(outDir, rel));
+                        }
+                        chunk.push({
+                            input_path,
+                            output_path,
+                            format,
+                            quality,
+                            compress_level,
+                            ico_sizes: format === 'ico' ? (effectiveIcoSizes.length ? effectiveIcoSizes : [16]) : [],
+                            width: resize_mode === 'fixed' ? convFixedWidth : 0,
+                            height: resize_mode === 'fixed' ? convFixedHeight : 0,
+                            maintain_ar: convMaintainAR,
+                            resize_mode,
+                            scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
+                            long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
+                            keep_metadata: convKeepMetadata,
                         });
-                        output_path = await resolveUniquePath(joinPath(outDir, rel));
+                        seq += 1;
                     }
-                    requests.push({
-                        input_path,
-                        output_path,
-                        format,
-                        quality,
-                        compress_level,
-                        ico_sizes: format === 'ico' ? (effectiveIcoSizes.length ? effectiveIcoSizes : [16]) : [],
-                        width: resize_mode === 'fixed' ? convFixedWidth : 0,
-                        height: resize_mode === 'fixed' ? convFixedHeight : 0,
-                        maintain_ar: convMaintainAR,
-                        resize_mode,
-                        scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
-                        long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
-                        keep_metadata: convKeepMetadata,
-                    });
-                    seq += 1;
-                }
-
-                const chunkSize = requests.length >= 80 ? 20 : 1;
-                for (let i = 0; i < requests.length; i += chunkSize) {
-                    const chunk = requests.slice(i, i + chunkSize);
                     try {
                         if (chunk.length === 1) {
                             await window.go.main.App.Convert(chunk[0]);
@@ -2431,9 +2430,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     }
 
                     completed += chunk.length;
-                    setProgress((completed / requests.length) * 100);
+                    setProgress((completed / total) * 100);
                 }
-                setLastMessage(`转换完成：${completed}/${requests.length} 项`);
+                setLastMessage(`转换完成：${completed}/${total} 项`);
                 return;
             }
 

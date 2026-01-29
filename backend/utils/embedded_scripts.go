@@ -41,7 +41,10 @@ func ExtractEmbeddedPythonScripts(embedded fs.FS, embeddedRoot string) (string, 
 
 		if st, err := d.Info(); err == nil {
 			if existing, err := os.Stat(destPath); err == nil && existing.Size() == st.Size() {
-				return nil
+				same, err := sameEmbeddedFileContent(embedded, p, destPath)
+				if err == nil && same {
+					return nil
+				}
 			}
 		}
 

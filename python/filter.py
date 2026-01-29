@@ -173,25 +173,9 @@ class ImageFilterApplier:
                 img = gray_img.convert('RGB')
         
         elif filter_name == 'sepia':
-            # Sepia tone effect
-            sepia_img = img.copy()
-            pixels = sepia_img.load()
-            width, height = sepia_img.size
-            
-            for y in range(height):
-                for x in range(width):
-                    r, g, b = pixels[x, y]
-                    # Sepia transformation
-                    tr = int(0.393 * r + 0.769 * g + 0.189 * b)
-                    tg = int(0.349 * r + 0.686 * g + 0.168 * b)
-                    tb = int(0.272 * r + 0.534 * g + 0.131 * b)
-                    pixels[x, y] = (
-                        min(255, tr),
-                        min(255, tg),
-                        min(255, tb)
-                    )
-            
-            # Blend with original based on intensity
+            # Sepia tone effect (use fast PIL operations)
+            gray_img = ImageOps.grayscale(img)
+            sepia_img = ImageOps.colorize(gray_img, '#704214', '#F5E7C8')
             if intensity < 1.0:
                 img = Image.blend(img, sepia_img, intensity)
             else:
