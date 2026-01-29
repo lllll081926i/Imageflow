@@ -134,10 +134,19 @@ export const ProgressBar: React.FC<{ progress: number; label?: string }> = memo(
     </div>
 ));
 
-export const CustomSelect: React.FC<{ label?: string; options: string[]; value: string; onChange: (val: string) => void }> = memo(({ label, options, value, onChange }) => {
+type SelectOption = string | { label: string; value: string };
+
+export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; value: string; onChange: (val: string) => void }> = memo(({ label, options, value, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const [menuStyle, setMenuStyle] = useState<{top: number, left: number, width: number} | null>(null);
+    const normalizedOptions = useMemo(() => options.map((opt) => (
+        typeof opt === 'string' ? { label: opt, value: opt } : opt
+    )), [options]);
+    const selectedLabel = useMemo(() => {
+        const matched = normalizedOptions.find((opt) => opt.value === value);
+        return matched?.label ?? value;
+    }, [normalizedOptions, value]);
 
     const handleToggle = () => {
         if (!isOpen && buttonRef.current) {
@@ -184,18 +193,18 @@ export const CustomSelect: React.FC<{ label?: string; options: string[]; value: 
                 }}
                 onClick={(e) => e.stopPropagation()}
             >
-                {options.map((opt, i) => (
+                {normalizedOptions.map((opt, i) => (
                     <button
                         key={i}
                         onClick={(e) => { 
-                            onChange(opt); 
+                            onChange(opt.value); 
                             setIsOpen(false); 
                         }}
                         className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors mb-0.5 last:mb-0 ${
-                            opt === value ? 'bg-[#007AFF]/10 text-[#007AFF] font-medium' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                            opt.value === value ? 'bg-[#007AFF]/10 text-[#007AFF] font-medium' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
                         }`}
                     >
-                        {opt}
+                        {opt.label}
                     </button>
                 ))}
             </div>
@@ -213,7 +222,7 @@ export const CustomSelect: React.FC<{ label?: string; options: string[]; value: 
                     isOpen ? 'border-[#007AFF] ring-2 ring-[#007AFF]/20 bg-white dark:bg-white/10' : 'border-gray-200 dark:border-white/10'
                 }`}
             >
-                <span className="text-gray-900 dark:text-white truncate">{value}</span>
+                <span className="text-gray-900 dark:text-white truncate">{selectedLabel}</span>
                 <Icon name="ChevronDown" size={16} className={`text-gray-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
             {renderMenu()}
@@ -577,9 +586,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     }]
                 } as any);
 
+                if (res === undefined || res === null) {
+                    inputRef.current?.click();
+                    return;
+                }
                 const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
                 if (paths.length === 0) return;
-                if (!window.go?.main?.App?.ExpandDroppedPaths) return;
+                if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                    inputRef.current?.click();
+                    return;
+                }
 
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
                 const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);

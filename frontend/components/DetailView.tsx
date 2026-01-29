@@ -299,6 +299,11 @@ type WatermarkSettingsProps = {
     setFont: (v: string) => void;
     color: string;
     setColor: (v: string) => void;
+    useSystemFonts: boolean;
+    setUseSystemFonts: (v: boolean) => void;
+    isSystemFontsLoading: boolean;
+    fontOptions: Array<string | { label: string; value: string }>;
+    systemFontsCount: number;
 };
 
 const WatermarkSettings = memo(({
@@ -328,6 +333,11 @@ const WatermarkSettings = memo(({
     setFont,
     color,
     setColor,
+    useSystemFonts,
+    setUseSystemFonts,
+    isSystemFontsLoading,
+    fontOptions,
+    systemFontsCount,
 }: WatermarkSettingsProps) => {
     const [colorInput, setColorInput] = useState(color.toUpperCase());
     const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -400,6 +410,7 @@ const WatermarkSettings = memo(({
         }
     };
     const imageLabel = imagePath ? imagePath.replace(/\\/g, '/').split('/').pop() || imagePath : '点击上传水印图';
+    const tileGapValue = Math.max(0, Math.round((margin.x + margin.y) / 2));
 
     return (
         <div className="space-y-6">
@@ -468,20 +479,33 @@ const WatermarkSettings = memo(({
                                  </div>,
                                  document.body
                              )}
-                         </div>
-                         <div className="flex-1">
-                             <CustomSelect 
-                                options={['Sans Serif', 'Serif', 'Mono', 'Handwriting']} 
-                                value={font} 
-                                onChange={setFont} 
-                             />
-                         </div>
-                    </div>
-                </div>
-            ) : (
-                <div className="w-full h-24 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
-                    <Icon name="Upload" size={20} className="mb-2 opacity-50" />
-                    <span className="text-xs text-gray-500">{imageLabel}</span>
+                          </div>
+                          <div className="flex-1">
+                              <CustomSelect 
+                                 label="字体"
+                                 options={fontOptions} 
+                                 value={font} 
+                                 onChange={setFont} 
+                              />
+                          </div>
+                     </div>
+                     <div className="space-y-1.5">
+                         <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
+                         {useSystemFonts && (
+                             <div className="text-xs text-gray-500">
+                                 {isSystemFontsLoading
+                                     ? '正在读取系统字体...'
+                                     : systemFontsCount > 0
+                                         ? `已读取 ${systemFontsCount} 个字体文件`
+                                         : '未检测到系统字体或读取失败'}
+                             </div>
+                         )}
+                     </div>
+                 </div>
+             ) : (
+                 <div className="w-full h-24 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
+                     <Icon name="Upload" size={20} className="mb-2 opacity-50" />
+                     <span className="text-xs text-gray-500">{imageLabel}</span>
                 </div>
             )}
 
@@ -490,44 +514,57 @@ const WatermarkSettings = memo(({
                     <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
                     <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
                     <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
-                </div>
-                <div className="flex flex-col gap-4 min-w-0">
-                    <div className="space-y-2 w-full">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                        <div className="flex justify-center">
-                            <PositionGrid value={position} onChange={setPosition} />
-                        </div>
-                    </div>
-                    <div className="space-y-2 w-full">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
-                        <div className="grid grid-cols-1 gap-2 justify-items-center">
-                            <div className="relative w-24">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
-                                <input 
-                                    type="number" 
-                                    value={margin.x} 
-                                    onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                    className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                />
-                            </div>
-                            <div className="relative w-24">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
-                                <input 
-                                    type="number" 
-                                    value={margin.y} 
-                                    onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                    className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                 </div>
+                 <div className="flex flex-col gap-4 min-w-0">
+                     <div className="space-y-2 w-full">
+                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
+                         <div className="flex justify-center">
+                             <PositionGrid value={position} onChange={setPosition} />
+                         </div>
+                     </div>
+                     {tiled ? (
+                         <div className="space-y-2 w-full">
+                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
+                             <StyledSlider
+                                 value={tileGapValue}
+                                 min={0}
+                                 max={240}
+                                 unit="px"
+                                 onChange={(val) => setMargin({ x: val, y: val })}
+                             />
+                         </div>
+                     ) : (
+                         <div className="space-y-2 w-full">
+                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
+                             <div className="grid grid-cols-1 gap-2 justify-items-center">
+                                 <div className="relative w-24">
+                                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
+                                     <input 
+                                         type="number" 
+                                         value={margin.x} 
+                                         onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
+                                         className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                     />
+                                 </div>
+                                 <div className="relative w-24">
+                                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
+                                     <input 
+                                         type="number" 
+                                         value={margin.y} 
+                                         onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
+                                         className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
+                                     />
+                                 </div>
+                             </div>
+                         </div>
+                     )}
+                 </div>
+             </div>
 
             <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-4">
                 <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
                 <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
-                <Switch label="全屏平铺模式" checked={tiled} onChange={setTiled} />
+                <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
             </div>
         </div>
     );
@@ -1428,6 +1465,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
     const isInfo = id === 'info';
     const isAdjustOrFilter = id === 'adjust' || id === 'filter';
+    const isWatermark = id === 'watermark';
+    const isPreviewFeature = isAdjustOrFilter || isWatermark;
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
@@ -1503,6 +1542,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const [watermarkMargin, setWatermarkMargin] = useState({ x: 20, y: 20 });
     const [watermarkFont, setWatermarkFont] = useState('Sans Serif');
     const [watermarkColor, setWatermarkColor] = useState('#FFFFFF');
+    const [useSystemFonts, setUseSystemFonts] = useState(false);
+    const [systemFonts, setSystemFonts] = useState<string[]>([]);
+    const [isSystemFontsLoading, setIsSystemFontsLoading] = useState(false);
+    const [watermarkImageSize, setWatermarkImageSize] = useState({ width: 0, height: 0 });
 
     const normalizeOutputSettings = (raw?: Partial<OutputSettings> | null): OutputSettings => {
         if (!raw) return defaultOutputSettings;
@@ -1567,10 +1610,90 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         if (previewDataUrl) return previewDataUrl;
         return toFileUrl(previewPath);
     }, [previewDataUrl, previewPath]);
+    const watermarkImageSrc = useMemo(() => {
+        if (!watermarkImagePath) return '';
+        return toFileUrl(watermarkImagePath);
+    }, [watermarkImagePath]);
+    const baseFontOptions = useMemo(() => ([
+        'Sans Serif',
+        'Serif',
+        'Mono',
+        'Handwriting',
+    ]), []);
+    const systemFontOptions = useMemo(() => systemFonts.map((fontPath) => ({
+        label: fontPath.replace(/\\/g, '/').split('/').pop() || fontPath,
+        value: fontPath,
+    })), [systemFonts]);
+    const fontOptions = useMemo(() => (
+        useSystemFonts ? [...baseFontOptions, ...systemFontOptions] : baseFontOptions
+    ), [useSystemFonts, baseFontOptions, systemFontOptions]);
 
     useEffect(() => {
         setPreviewImageSize({ width: 0, height: 0 });
     }, [previewSrc]);
+
+    useEffect(() => {
+        if (useSystemFonts) return;
+        if (baseFontOptions.includes(watermarkFont)) return;
+        setWatermarkFont('Sans Serif');
+    }, [useSystemFonts, watermarkFont, baseFontOptions]);
+
+    useEffect(() => {
+        if (!useSystemFonts) return;
+        if (systemFonts.length > 0) return;
+        const appAny = window.go?.main?.App as any;
+        if (!appAny?.ListSystemFonts) return;
+        let active = true;
+        setIsSystemFontsLoading(true);
+        (async () => {
+            try {
+                const res = await appAny.ListSystemFonts();
+                if (!active) return;
+                if (Array.isArray(res)) {
+                    setSystemFonts(res);
+                } else {
+                    setSystemFonts([]);
+                }
+            } catch (err) {
+                if (active) {
+                    console.error(err);
+                    setSystemFonts([]);
+                }
+            } finally {
+                if (active) {
+                    setIsSystemFontsLoading(false);
+                }
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [useSystemFonts, systemFonts.length]);
+
+    useEffect(() => {
+        if (!watermarkImageSrc) {
+            setWatermarkImageSize({ width: 0, height: 0 });
+            return;
+        }
+        let active = true;
+        const img = new Image();
+        img.onload = () => {
+            if (!active) return;
+            setWatermarkImageSize({
+                width: img.naturalWidth,
+                height: img.naturalHeight,
+            });
+        };
+        img.onerror = () => {
+            if (active) {
+                setWatermarkImageSize({ width: 0, height: 0 });
+            }
+        };
+        img.src = watermarkImageSrc;
+        return () => {
+            active = false;
+        };
+    }, [watermarkImageSrc]);
     const previewFilter = useMemo(() => {
         if (!isAdjustOrFilter) return '';
         if (id === 'adjust') {
@@ -1676,6 +1799,207 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         const y = clampNumber(0.5 - cropOffset.y / cropImageMetrics.rotatedDrawnHeight, 0, 1);
         return { x, y };
     }, [cropImageMetrics, cropOffset]);
+    const watermarkFontFace = useMemo(() => {
+        if (!useSystemFonts) return null;
+        const text = watermarkFont || '';
+        const isPath = /[\\/]/.test(text) || /\.(ttf|otf|ttc)$/i.test(text);
+        if (!isPath) return null;
+        const safe = text.replace(/[^a-zA-Z0-9]/g, '_');
+        const name = `wm_font_${safe.slice(-24)}`;
+        return {
+            name,
+            css: `@font-face { font-family: '${name}'; src: url('${toFileUrl(text)}'); }`,
+        };
+    }, [useSystemFonts, watermarkFont]);
+    const watermarkFontFamily = useMemo(() => {
+        if (watermarkFontFace?.name) return watermarkFontFace.name;
+        const fallbackMap: Record<string, string> = {
+            'Sans Serif': 'Arial, "Helvetica Neue", sans-serif',
+            'Serif': '"Times New Roman", serif',
+            'Mono': '"Courier New", monospace',
+            'Handwriting': '"Comic Sans MS", cursive',
+        };
+        return fallbackMap[watermarkFont] || watermarkFont || 'Arial, sans-serif';
+    }, [watermarkFont, watermarkFontFace]);
+    const previewBaseMetrics = useMemo(() => {
+        if (!previewContainerSize.width || !previewContainerSize.height) return null;
+        if (!previewImageSize.width || !previewImageSize.height) return null;
+        const scale = Math.min(
+            previewContainerSize.width / previewImageSize.width,
+            previewContainerSize.height / previewImageSize.height,
+        );
+        const width = previewImageSize.width * scale;
+        const height = previewImageSize.height * scale;
+        const left = (previewContainerSize.width - width) / 2;
+        const top = (previewContainerSize.height - height) / 2;
+        return {
+            width,
+            height,
+            left,
+            top,
+            scale,
+        };
+    }, [previewContainerSize, previewImageSize]);
+    const watermarkPreviewConfig = useMemo(() => {
+        if (!isWatermark || !previewBaseMetrics) return null;
+        const textValue = watermarkText.trim() || '© ImageFlow';
+        const opacity = clampNumber(watermarkOpacity / 100, 0, 1);
+        const scale = clampNumber(watermarkSize / 100, 0.02, 1);
+        const fontSize = Math.max(8, Math.round(36 * (watermarkSize / 40)));
+        const previewFontSize = Math.max(8, Math.round(fontSize * previewBaseMetrics.scale));
+        const offsetX = Math.max(0, Number(watermarkMargin.x) || 0) * previewBaseMetrics.scale;
+        const offsetY = Math.max(0, Number(watermarkMargin.y) || 0) * previewBaseMetrics.scale;
+        const blendMap: Record<string, string> = {
+            '正常': 'normal',
+            '正片叠底 (Multiply)': 'multiply',
+            '滤色 (Screen)': 'screen',
+            '叠加 (Overlay)': 'overlay',
+            '柔光 (Soft Light)': 'soft-light',
+        };
+        return {
+            textValue,
+            opacity,
+            scale,
+            fontSize,
+            previewFontSize,
+            offsetX,
+            offsetY,
+            blendMode: blendMap[watermarkBlendMode] || 'normal',
+        };
+    }, [
+        isWatermark,
+        previewBaseMetrics,
+        watermarkText,
+        watermarkOpacity,
+        watermarkSize,
+        watermarkMargin,
+        watermarkBlendMode,
+    ]);
+    const watermarkTextMetrics = useMemo(() => {
+        if (!watermarkPreviewConfig) return null;
+        if (typeof document === 'undefined') return null;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.font = `${watermarkPreviewConfig.fontSize}px ${watermarkFontFamily}`;
+        const metrics = ctx.measureText(watermarkPreviewConfig.textValue);
+        const width = Math.max(1, Math.ceil(metrics.width));
+        const height = Math.max(1, Math.ceil(watermarkPreviewConfig.fontSize * 1.2));
+        return { width, height };
+    }, [watermarkPreviewConfig, watermarkFontFamily]);
+    const watermarkImagePreviewSize = useMemo(() => {
+        if (!previewBaseMetrics || !watermarkPreviewConfig) return null;
+        if (!watermarkImageSize.width || !watermarkImageSize.height) return null;
+        const width = previewBaseMetrics.width * watermarkPreviewConfig.scale;
+        const height = width * (watermarkImageSize.height / watermarkImageSize.width);
+        return { width, height };
+    }, [previewBaseMetrics, watermarkPreviewConfig, watermarkImageSize]);
+    const watermarkTileMetrics = useMemo(() => {
+        if (!previewBaseMetrics || !watermarkPreviewConfig) return null;
+        if (watermarkType === '图片') {
+            return watermarkImagePreviewSize;
+        }
+        if (!watermarkTextMetrics) return null;
+        return {
+            width: watermarkTextMetrics.width * previewBaseMetrics.scale,
+            height: watermarkTextMetrics.height * previewBaseMetrics.scale,
+        };
+    }, [previewBaseMetrics, watermarkPreviewConfig, watermarkType, watermarkImagePreviewSize, watermarkTextMetrics]);
+    const watermarkPositionStyle = useMemo(() => {
+        if (!watermarkPreviewConfig) return {};
+        const offsetX = watermarkPreviewConfig.offsetX;
+        const offsetY = watermarkPreviewConfig.offsetY;
+        const style: React.CSSProperties = {};
+        switch (watermarkPosition) {
+            case 'tl':
+                style.left = offsetX;
+                style.top = offsetY;
+                break;
+            case 'tc':
+                style.left = '50%';
+                style.top = offsetY;
+                style.transform = 'translateX(-50%)';
+                break;
+            case 'tr':
+                style.right = offsetX;
+                style.top = offsetY;
+                break;
+            case 'ml':
+                style.left = offsetX;
+                style.top = '50%';
+                style.transform = 'translateY(-50%)';
+                break;
+            case 'mc':
+                style.left = '50%';
+                style.top = '50%';
+                style.transform = 'translate(-50%, -50%)';
+                break;
+            case 'mr':
+                style.right = offsetX;
+                style.top = '50%';
+                style.transform = 'translateY(-50%)';
+                break;
+            case 'bl':
+                style.left = offsetX;
+                style.bottom = offsetY;
+                break;
+            case 'bc':
+                style.left = '50%';
+                style.bottom = offsetY;
+                style.transform = 'translateX(-50%)';
+                break;
+            case 'br':
+            default:
+                style.right = offsetX;
+                style.bottom = offsetY;
+                break;
+        }
+        const baseTransform = style.transform ? `${style.transform} ` : '';
+        style.transform = `${baseTransform}rotate(${watermarkRotate}deg)`;
+        style.transformOrigin = 'center';
+        return style;
+    }, [watermarkPreviewConfig, watermarkPosition, watermarkRotate]);
+    const watermarkTileGrid = useMemo(() => {
+        if (!watermarkTiled || !previewBaseMetrics || !watermarkPreviewConfig || !watermarkTileMetrics) return null;
+        const gapX = watermarkPreviewConfig.offsetX;
+        const gapY = watermarkPreviewConfig.offsetY;
+        const stepX = Math.max(1, watermarkTileMetrics.width + gapX);
+        const stepY = Math.max(1, watermarkTileMetrics.height + gapY);
+        const coverWidth = previewBaseMetrics.width * 2;
+        const coverHeight = previewBaseMetrics.height * 2;
+        let cols = Math.ceil(coverWidth / stepX);
+        let rows = Math.ceil(coverHeight / stepY);
+        const total = cols * rows;
+        if (total > 400) {
+            const ratio = Math.sqrt(400 / total);
+            cols = Math.max(1, Math.floor(cols * ratio));
+            rows = Math.max(1, Math.floor(rows * ratio));
+        }
+        return {
+            cols,
+            rows,
+            coverWidth,
+            coverHeight,
+        };
+    }, [watermarkTiled, previewBaseMetrics, watermarkPreviewConfig, watermarkTileMetrics]);
+    const watermarkTilePositions = useMemo(() => {
+        if (!watermarkTileGrid || !watermarkTileMetrics || !watermarkPreviewConfig) return null;
+        const gapX = watermarkPreviewConfig.offsetX;
+        const gapY = watermarkPreviewConfig.offsetY;
+        const stepX = Math.max(1, watermarkTileMetrics.width + gapX);
+        const stepY = Math.max(1, watermarkTileMetrics.height + gapY);
+        const startX = -watermarkTileMetrics.width;
+        const startY = -watermarkTileMetrics.height;
+        const positions: Array<{ x: number; y: number }> = [];
+        for (let row = 0; row < watermarkTileGrid.rows; row += 1) {
+            const y = startY + row * stepY;
+            for (let col = 0; col < watermarkTileGrid.cols; col += 1) {
+                const x = startX + col * stepX;
+                positions.push({ x, y });
+            }
+        }
+        return positions;
+    }, [watermarkTileGrid, watermarkTileMetrics, watermarkPreviewConfig]);
     const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
         ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
         : 0;
@@ -1849,6 +2173,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                         setFont={setWatermarkFont}
                         color={watermarkColor}
                         setColor={setWatermarkColor}
+                        useSystemFonts={useSystemFonts}
+                        setUseSystemFonts={setUseSystemFonts}
+                        isSystemFontsLoading={isSystemFontsLoading}
+                        fontOptions={fontOptions}
+                        systemFontsCount={systemFonts.length}
                     />
                 );
             case 'adjust':
@@ -2371,7 +2700,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     }, [dropResult]);
 
     useEffect(() => {
-        if (!isAdjustOrFilter) {
+        if (!isPreviewFeature) {
             setPreviewPath('');
             return;
         }
@@ -2381,10 +2710,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         } else {
             setPreviewPath('');
         }
-    }, [dropResult, isAdjustOrFilter]);
+    }, [dropResult, isPreviewFeature]);
 
     useEffect(() => {
-        if (!isAdjustOrFilter) {
+        if (!isPreviewFeature) {
             setPreviewDataUrl('');
             return;
         }
@@ -2417,7 +2746,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         return () => {
             cancelled = true;
         };
-    }, [previewPath, isAdjustOrFilter]);
+    }, [previewPath, isPreviewFeature]);
 
     const loadInfoForPath = async (p: string) => {
         if (!window.go?.main?.App?.GetInfo) {
@@ -3011,7 +3340,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         }
     };
 
-    const selectedDropPath = id === 'info' ? infoFilePath : isAdjustOrFilter ? previewPath : undefined;
+    const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
     const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
     const dropZone = (
         <FileDropZone 
@@ -3043,7 +3372,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                     loadInfoForPath(file.input_path);
                     return;
                 }
-                if (isAdjustOrFilter) {
+                if (isPreviewFeature) {
                     setPreviewPath(normalizePath(file.input_path));
                 }
             }}
@@ -3144,6 +3473,106 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
         </div>
     );
 
+    const watermarkPreviewOverlay = isWatermark && !isCompareActive && previewSrc && previewBaseMetrics && watermarkPreviewConfig ? (
+        <div className="absolute inset-0 pointer-events-none">
+            {watermarkFontFace?.css && (
+                <style>{watermarkFontFace.css}</style>
+            )}
+            <div
+                className="absolute"
+                style={{
+                    left: previewBaseMetrics.left,
+                    top: previewBaseMetrics.top,
+                    width: previewBaseMetrics.width,
+                    height: previewBaseMetrics.height,
+                    overflow: 'hidden',
+                }}
+            >
+                {watermarkTiled && watermarkTilePositions && watermarkTileMetrics ? (
+                    watermarkTilePositions.map((pos, idx) => (
+                        watermarkType === '图片' ? (
+                            watermarkImageSrc ? (
+                                <img
+                                    key={`wm-img-${idx}`}
+                                    src={watermarkImageSrc}
+                                    className="absolute"
+                                    style={{
+                                        left: pos.x,
+                                        top: pos.y,
+                                        width: watermarkTileMetrics.width,
+                                        height: watermarkTileMetrics.height,
+                                        opacity: watermarkPreviewConfig.opacity,
+                                        mixBlendMode: watermarkPreviewConfig.blendMode as any,
+                                        transform: `rotate(${watermarkRotate}deg)`,
+                                        transformOrigin: 'center',
+                                        filter: watermarkShadow ? 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))' : undefined,
+                                    }}
+                                    alt="watermark-tile"
+                                />
+                            ) : null
+                        ) : (
+                            <div
+                                key={`wm-text-${idx}`}
+                                className="absolute"
+                                style={{
+                                    left: pos.x,
+                                    top: pos.y,
+                                    fontFamily: watermarkFontFamily,
+                                    fontSize: watermarkPreviewConfig.previewFontSize,
+                                    lineHeight: 1.2,
+                                    color: watermarkColor,
+                                    opacity: watermarkPreviewConfig.opacity,
+                                    mixBlendMode: watermarkPreviewConfig.blendMode as any,
+                                    transform: `rotate(${watermarkRotate}deg)`,
+                                    transformOrigin: 'center',
+                                    whiteSpace: 'pre-line',
+                                    textShadow: watermarkShadow ? '0 2px 6px rgba(0,0,0,0.35)' : undefined,
+                                }}
+                            >
+                                {watermarkPreviewConfig.textValue}
+                            </div>
+                        )
+                    ))
+                ) : (
+                    watermarkType === '图片' ? (
+                        watermarkImageSrc && watermarkImagePreviewSize ? (
+                            <img
+                                src={watermarkImageSrc}
+                                className="absolute"
+                                style={{
+                                    ...watermarkPositionStyle,
+                                    width: watermarkImagePreviewSize.width,
+                                    height: watermarkImagePreviewSize.height,
+                                    opacity: watermarkPreviewConfig.opacity,
+                                    mixBlendMode: watermarkPreviewConfig.blendMode as any,
+                                    filter: watermarkShadow ? 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))' : undefined,
+                                }}
+                                alt="watermark"
+                            />
+                        ) : null
+                    ) : (
+                        <div
+                            className="absolute"
+                            style={{
+                                ...watermarkPositionStyle,
+                                fontFamily: watermarkFontFamily,
+                                fontSize: watermarkPreviewConfig.previewFontSize,
+                                lineHeight: 1.2,
+                                color: watermarkColor,
+                                opacity: watermarkPreviewConfig.opacity,
+                                mixBlendMode: watermarkPreviewConfig.blendMode as any,
+                                whiteSpace: 'pre-line',
+                                textShadow: watermarkShadow ? '0 2px 6px rgba(0,0,0,0.35)' : undefined,
+                            }}
+                        >
+                            {watermarkPreviewConfig.textValue}
+                        </div>
+                    )
+                )}
+            </div>
+        </div>
+    ) : null;
+
     const previewPanel = (
         <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
             <div className="flex items-center justify-between mb-4 gap-3">
@@ -3176,7 +3605,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
             </div>
             <div
                 ref={previewContainerRef}
-                className="relative w-full flex-1 min-h-[180px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center"
+                className="relative w-full flex-1 min-h-[220px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center"
             >
                 {previewSrc ? (
                     showCropFrame && cropImageMetrics ? (
@@ -3293,15 +3722,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 ) : (
                     <div className="text-xs text-gray-400">拖入图片后显示预览</div>
                 )}
+                {watermarkPreviewOverlay}
             </div>
         </div>
     );
 
     return (
         <div className="h-full flex flex-col p-1">
-            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
+            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : isWatermark ? 'lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
+                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : isWatermark ? '' : 'lg:col-span-2'}`}>
                     {id === 'adjust' ? (
                         <div className="h-full flex flex-col gap-4 min-h-0">
                             <div className="flex-1 min-h-0">
@@ -3338,12 +3768,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
                 <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-4' : ''}`}>
-                    {isAdjustOrFilter ? (
+                    {isAdjustOrFilter || isWatermark ? (
                         <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
-                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : 'flex-1'} min-h-0`}>
+                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : isWatermark ? 'flex-[1.35]' : 'flex-1'} min-h-0`}>
                                 {previewPanel}
                             </div>
-                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : 'flex-1'} min-h-0`}>
+                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : isWatermark ? 'flex-[0.85]' : 'flex-1'} min-h-0`}>
                                 {settingsPanel}
                             </div>
                         </div>

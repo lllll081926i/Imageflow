@@ -66,6 +66,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function ListSystemFonts() {
+  return window['go']['main']['App']['ListSystemFonts']();
+}
+
 export function Ping() {
   return window['go']['main']['App']['Ping']();
 }

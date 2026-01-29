@@ -34,6 +34,8 @@ export function GetInfo(arg1:models.InfoRequest):Promise<models.InfoResult>;
 
 export function GetSettings():Promise<models.AppSettings>;
 
+export function ListSystemFonts():Promise<Array<string>>;
+
 export function Ping():Promise<string>;
 
 export function ResolveOutputPath(arg1:models.ResolveOutputPathRequest):Promise<models.ResolveOutputPathResult>;

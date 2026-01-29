@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -105,4 +106,45 @@ func ExpandInputPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 
 	result.Files = files
 	return result, nil
+}
+
+func ListSystemFonts() ([]string, error) {
+	if runtime.GOOS != "windows" {
+		return []string{}, nil
+	}
+
+	winDir := os.Getenv("WINDIR")
+	if winDir == "" {
+		winDir = `C:\Windows`
+	}
+	fontDir := filepath.Join(winDir, "Fonts")
+	entries, err := os.ReadDir(fontDir)
+	if err != nil {
+		return []string{}, err
+	}
+
+	allowed := map[string]bool{
+		".ttf": true,
+		".otf": true,
+		".ttc": true,
+	}
+
+	fonts := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if !allowed[ext] {
+			continue
+		}
+		fonts = append(fonts, filepath.Join(fontDir, name))
+	}
+
+	sort.Slice(fonts, func(i, j int) bool {
+		return strings.ToLower(fonts[i]) < strings.ToLower(fonts[j])
+	})
+
+	return fonts, nil
 }

@@ -538,6 +538,16 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 	return results, nil
 }
 
+// ListSystemFonts returns available system font files.
+func (a *App) ListSystemFonts() ([]string, error) {
+	fonts, err := utils.ListSystemFonts()
+	if err != nil {
+		a.logger.Warn("ListSystemFonts failed: %v", err)
+		return []string{}, err
+	}
+	return fonts, nil
+}
+
 // Adjust applies adjustments to an image
 func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
 	return a.adjusterService.Adjust(req)
