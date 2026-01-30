@@ -16,7 +16,16 @@ func ExtractEmbeddedPythonRuntime(embedded fs.FS, embeddedRoot string) (string, 
 		return "", err
 	}
 	if err := os.MkdirAll(destRoot, 0755); err != nil {
-		return "", fmt.Errorf("create embedded python runtime dir: %w", err)
+		fallback, fallbackErr := embeddedExtractCacheRoot("python_runtime")
+		if fallbackErr == nil && fallback != "" && fallback != destRoot {
+			if mkErr := os.MkdirAll(fallback, 0755); mkErr == nil {
+				destRoot = fallback
+			} else {
+				return "", fmt.Errorf("create embedded python runtime dir: %w", mkErr)
+			}
+		} else {
+			return "", fmt.Errorf("create embedded python runtime dir: %w", err)
+		}
 	}
 
 	err = fs.WalkDir(embedded, embeddedRoot, func(p string, d fs.DirEntry, walkErr error) error {

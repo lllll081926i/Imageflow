@@ -824,8 +824,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
             {hasPreview ? (
                 <div className="w-full h-full relative z-10 flex flex-col">
-                    <div className="flex-1 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col h-full min-h-0 relative">
-                        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0 bg-gray-50/50 dark:bg-white/5 backdrop-blur-sm z-10">
+                    <div className="flex-1 bg-gray-50 dark:bg-[#232326] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-inner flex flex-col h-full min-h-0 relative">
+                        <div className="px-4 py-3 flex items-center justify-between border-b border-gray-200/60 dark:border-white/10 shrink-0 bg-gray-50/50 dark:bg-[#1F1F22]/80 backdrop-blur-sm z-10">
                             <div className="flex items-center gap-2">
                                 <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
                                     已添加 {previewResult?.files.length} 项
@@ -843,7 +843,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                             <SortMenu />
                         </div>
 
-                        <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
+                        <div className="flex-1 overflow-y-auto overflow-x-hidden relative scrollbar-dark">
                             {/* Scrollable Content */}
                             <div className="absolute inset-0 w-full">
                                 {Object.values(treeRoot).map((node) => (

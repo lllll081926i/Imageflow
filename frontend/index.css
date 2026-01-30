@@ -27,6 +27,30 @@
     scrollbar-width: none;
   }
 
+  .dark .scrollbar-dark {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+
+  .dark .scrollbar-dark::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .dark .scrollbar-dark::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .dark .scrollbar-dark::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .dark .scrollbar-dark:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.32);
+  }
+
   .animate-enter {
     animation: fadeIn 0.4s ease-out forwards;
     will-change: transform, opacity;

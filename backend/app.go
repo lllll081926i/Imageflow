@@ -65,16 +65,22 @@ func (a *App) startup(ctx context.Context) {
 	a.logger.Info("ImageFlow backend starting...")
 
 	if os.Getenv("IMAGEFLOW_PYTHON_EXE") == "" {
-		if runtimeDir, err := utils.ExtractEmbeddedPythonRuntime(embeddedPythonFS, "embedded_python_runtime"); err == nil {
-			if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
+		preferredRuntime := ""
+		if exe, err := os.Executable(); err == nil {
+			candidate := filepath.Join(filepath.Dir(exe), "python_runtime")
+			if pythonExe := utils.PythonExecutableFromRuntime(candidate); pythonExe != "" {
+				preferredRuntime = candidate
 				_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
-				_ = os.Setenv("PYTHONHOME", runtimeDir)
+				_ = os.Setenv("PYTHONHOME", candidate)
 			}
-		} else if exe, err := os.Executable(); err == nil {
-			runtimeDir := filepath.Join(filepath.Dir(exe), "python_runtime")
-			if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
-				_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
-				_ = os.Setenv("PYTHONHOME", runtimeDir)
+		}
+
+		if preferredRuntime == "" {
+			if runtimeDir, err := utils.ExtractEmbeddedPythonRuntime(embeddedPythonFS, "embedded_python_runtime"); err == nil {
+				if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
+					_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
+					_ = os.Setenv("PYTHONHOME", runtimeDir)
+				}
 			}
 		}
 	}

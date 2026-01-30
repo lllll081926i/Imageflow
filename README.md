@@ -1,126 +1,180 @@
-# ImageFlow 图像处理应用
+# ImageFlow
 
-## 项目简介
+ImageFlow 是一款桌面端图像处理应用，聚合常用的格式转换、压缩、滤镜、批量处理、GIF 处理、PDF 生成与元数据管理能力。项目采用 **Wails + Go + React + Python** 的混合架构：由 Go 负责调度与并发，Python 负责高质量图像处理，前端提供现代化可视化操作界面。
 
-ImageFlow 是一个功能强大的图像处理应用，采用现代化技术栈构建。该项目集成了多种图像处理功能，包括格式转换、压缩、调整大小、滤镜应用、PDF生成、GIF分割、水印添加等。
+---
 
-## 技术架构
+## 亮点功能
 
-本项目采用前后端分离架构：
-- **前端**: 使用 React + TypeScript 构建，配合 Vite 构建工具
-- **后端**: 使用 Go 语言开发，基于 Wails 框架实现桌面应用
-- **图像处理引擎**: Python 脚本处理复杂的图像操作
-- **UI框架**: TailwindCSS 样式框架
+- **格式转换**：JPG / PNG / WEBP / AVIF / TIFF / BMP / ICO 等格式互转
+- **图像压缩**：无损/有损/智能压缩；支持 MozJPEG、PNGQuant、OxiPNG、Pillow 等引擎
+- **批量处理**：多文件并发执行，进度可视化
+- **GIF 工具**：拆帧、反转、变速、重组
+- **PDF 生成**：多图合并 PDF，支持页面大小、方向与边距
+- **水印**：文字/图片水印、平铺、透明度、混合模式、阴影
+- **调色与修图**：亮度、对比度、饱和度、色相、锐化、翻转、旋转、裁剪
+- **元数据**：查看/编辑/剥离 EXIF 与图片信息
 
-## 功能特性
+---
 
-- 🖼️ **图像格式转换**: 支持多种常见图像格式之间的相互转换
-- 📉 **图像压缩**: 高效的图像压缩算法，保持图像质量的同时减小文件体积
-- 🛠️ **图像调整**: 尺寸调整、旋转、亮度对比度调节等功能
-- 🎨 **滤镜效果**: 多种滤镜效果供用户选择
-- 📄 **PDF生成**: 将图像转换为PDF文档
-- ✂️ **GIF分割**: GIF动画分割成单帧图像
-- 💧 **水印添加**: 支持文字和图片水印功能
-- 👁️ **信息查看**: 显示图像详细信息（尺寸、格式、大小等）
+## 技术栈
 
-## 项目结构
+- **前端**：React 19 + Vite 6 + TypeScript + Tailwind CSS 4
+- **后端**：Go 1.24 + Wails v2
+- **图像处理**：Python 3.10+（Pillow / ReportLab / svglib / piexif 等）
+
+---
+
+## 架构概览
+
+```
+React UI
+   │ (Wails JS Bridge)
+Go Backend (services + task pool)
+   │ (JSON over stdin/stdout)
+Python Worker (scripts)
+   │ (Pillow / ReportLab / svglib ...)
+Image I/O
+```
+
+Go 负责并发、任务编排与错误处理，Python 负责真实图像处理逻辑。两者以 JSON 进行通信，便于调试与扩展。
+
+---
+
+## 目录结构
 
 ```
 .
-├── backend/            # Go后端服务
-│   ├── cmd/            # 主程序入口
-│   ├── models/         # 数据模型
-│   ├── services/       # 业务逻辑服务
-│   ├── utils/          # 工具函数
-│   └── app.go          # 应用主文件
-├── frontend/           # 前端界面
-│   ├── components/     # React组件
-│   ├── public/         # 静态资源
-│   ├── wailsjs/        # Wails JS绑定
-│   └── ...             # 其他前端文件
-├── python/             # Python图像处理脚本
-│   ├── converter.py    # 格式转换
-│   ├── compressor.py   # 图像压缩
-│   ├── adjuster.py     # 图像调整
-│   ├── filter.py       # 滤镜效果
-│   ├── pdf_generator.py # PDF生成
-│   ├── gif_splitter.py # GIF分割
-│   ├── watermark.py    # 水印功能
-│   └── ...             # 其他处理脚本
-└── docs/               # 项目文档
+├── frontend/                 # React + Vite 前端
+│   ├── components/           # UI 组件
+│   ├── wailsjs/               # Wails JS 绑定
+│   └── ...
+├── backend/                  # Go + Wails 后端
+│   ├── services/             # 核心业务服务
+│   ├── models/               # 请求/响应模型
+│   ├── utils/                # 工具与运行时支持
+│   └── main.go               # Wails 入口
+├── python/                   # Python 图像处理脚本
+│   ├── converter.py
+│   ├── compressor.py
+│   ├── pdf_generator.py
+│   ├── gif_splitter.py
+│   ├── watermark.py
+│   ├── info_viewer.py
+│   └── worker.py             # Python Worker
+└── docs/                     # 需求与架构文档
 ```
 
-## 安装和运行
+---
 
-### 系统要求
+## 快速开始
 
-- Node.js >= 16.x
-- Go >= 1.19
-- Python >= 3.8
-- Wails CLI
+### 1) 安装依赖
 
-### Python 依赖（开发环境推荐 uv）
-
-本项目的 Python 依赖通过 `uv` 管理，虚拟环境默认在项目根目录的 `.venv/` 中（依赖随项目一起管理，避免 conda run 并发临时文件冲突）。
-
-1. 安装 uv（任选其一）：
-   - Windows: `winget install Astral.uv`
-   - macOS/Linux: 参考 uv 官方安装方式
-
-2. 在项目根目录创建并同步依赖：
-   ```bash
-   uv sync
-   ```
-
-3. 运行开发模式：
-   ```bash
-   wails dev
-   ```
-
-后端会自动优先探测并使用 `.venv` 中的 Python（也可以用 `IMAGEFLOW_PYTHON_EXE` 手动指定）。
-
-### 快速开始
-
-1. 克隆项目：
-   ```bash
-   git clone https://github.com/lllll081926i/image-flow.git
-   cd image-flow
-   ```
-
-2. 安装Wails CLI：
-   ```bash
-   go install github.com/wailsapp/wails/v2/cmd/wails@latest
-   ```
-
-3. 安装前端依赖：
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-4. 返回项目根目录并运行：
-   ```bash
-   cd ..
-   wails dev
-   ```
-
-## 开发说明
-
-- 前端使用 React + TypeScript + TailwindCSS
-- 后端使用 Go 语言和 Wails 框架
-- 图像处理核心功能由 Python 脚本实现
-- 前后端通过 Wails 绑定进行通信
-
-## 部署
-
-要构建生产版本，请运行：
 ```bash
+# 前端依赖
+cd frontend
+npm install
+
+# Python 依赖（推荐 uv）
+cd ..
+uv sync
+
+# Go 依赖
+cd backend
+go mod download
+```
+
+### 2) 开发模式
+
+```bash
+# 在项目根目录启动
+wails dev
+```
+
+### 3) 构建发布
+
+```bash
+# 构建前端产物（输出到 backend/frontend/dist）
+cd frontend
+npm run build
+
+# 构建桌面应用
+cd ..
 wails build
 ```
 
-这将在 `./build` 目录下生成可执行文件。
+> 若直接运行 `wails build`，请确保前端产物已生成（输出目录由 `frontend/vite.config.ts` 指定）。
 
-## 许可证
+---
 
-本项目采用 MIT 许可证 - 详情请参阅 [LICENSE](./LICENSE) 文件。
+## 配置与环境变量
 
+### 环境变量
+
+- `IMAGEFLOW_PYTHON_EXE`：指定 Python 解释器路径（必须为 Python 3）
+- `IMAGEFLOW_SCRIPTS_DIR`：指定 Python 脚本目录（默认自动探测）
+- `IMAGEFLOW_FILE_LOG=1`：启用文件日志（输出到 `logs/`）
+- `IMAGEFLOW_PREVIEW_MAX_BYTES`：大图预览阈值（字节）
+
+### 全局设置（UI）
+
+- `max_concurrency`：并发上限（1-32）
+- `output_template`：输出命名模板
+- `output_prefix`：输出默认前缀
+- `preserve_folder_structure`：保持原目录结构
+- `conflict_strategy`：冲突处理策略（当前为 `rename`）
+
+配置文件保存在用户目录的 `imageflow/settings.json`。
+
+---
+
+## 输出命名模板
+
+`output_template` 支持以下占位符：
+
+- `{prefix}`：前缀
+- `{basename}`：原文件名（不含扩展名）
+- `{op}`：操作类型（convert / compress / watermark 等）
+- `{date:YYYYMMDD}`：日期（格式可自定义）
+- `{time:HHmmss}`：时间（格式可自定义）
+- `{seq:3}`：序号（可指定补零位数）
+
+示例：
+
+```
+{prefix}{basename}_{op}_{date:YYYYMMDD}_{seq:3}
+```
+
+---
+
+## 测试
+
+```bash
+# Python 测试
+python -m unittest discover -s python/tests
+
+# Go 测试
+cd backend
+go test ./...
+```
+
+---
+
+## 常见问题
+
+### 1) 提示找不到 Python
+- 设置 `IMAGEFLOW_PYTHON_EXE` 指向 Python 3
+- 或先执行 `uv sync` 创建 `.venv`
+
+### 2) 提示找不到脚本目录
+- 设置 `IMAGEFLOW_SCRIPTS_DIR` 指向 `python/`
+
+### 3) 打包后资源缺失
+- 先执行 `npm run build` 生成 `backend/frontend/dist`
+
+---
+
+## License
+
+本项目使用 **MIT License（完全开放、宽松许可）**。详见 `LICENSE`。
