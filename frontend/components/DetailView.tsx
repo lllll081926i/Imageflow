@@ -714,8 +714,20 @@ const AdjustSettings = memo(({
     );
 });
 
-const FILTER_LABELS = ['原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博', '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得'];
-const FILTER_PRESETS = ['none', 'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber', 'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid'];
+const FILTER_LABELS = [
+    '原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博',
+    '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得',
+    '夕阳', '海蓝', '森系', '紫雾', '琥珀', '北欧', '旧照片', '黑金',
+    '高调', '低调', '雾霭', '霓虹', '哑光', '冰感', '咖啡', '焦糖',
+    '青橙', '银盐', '清锐', '低对比'
+];
+const FILTER_PRESETS = [
+    'none', 'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber',
+    'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid',
+    'sunset', 'ocean', 'forest', 'purple', 'amber', 'nordic', 'oldphoto', 'noir',
+    'highkey', 'lowkey', 'haze', 'neon', 'matte', 'ice', 'coffee', 'caramel',
+    'teal_orange', 'silver', 'crisp', 'low_contrast'
+];
 
 type FilterSettingsProps = {
     intensity: number;
@@ -2687,6 +2699,46 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
                 return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 0.9)})`;
             case 15: // 拍立得
                 return `sepia(${mix(0, 1)}) contrast(${mix(1, 1.1)}) brightness(${mix(1, 1.08)})`;
+            case 16: // 夕阳
+                return `sepia(${mix(0, 0.35)}) saturate(${mix(1, 1.3)}) hue-rotate(${mix(0, -10)}deg) brightness(${mix(1, 1.05)})`;
+            case 17: // 海蓝
+                return `hue-rotate(${mix(0, -25)}deg) saturate(${mix(1, 1.2)}) brightness(${mix(1, 1.02)})`;
+            case 18: // 森系
+                return `hue-rotate(${mix(0, 18)}deg) saturate(${mix(1, 1.15)}) contrast(${mix(1, 1.05)})`;
+            case 19: // 紫雾
+                return `hue-rotate(${mix(0, 35)}deg) saturate(${mix(1, 1.2)})`;
+            case 20: // 琥珀
+                return `sepia(${mix(0, 0.5)}) saturate(${mix(1, 1.1)}) contrast(${mix(1, 1.08)})`;
+            case 21: // 北欧
+                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 0.9)}) contrast(${mix(1, 0.92)})`;
+            case 22: // 旧照片
+                return `sepia(${mix(0, 0.7)}) contrast(${mix(1, 0.9)}) brightness(${mix(1, 1.05)}) saturate(${mix(1, 0.8)})`;
+            case 23: // 黑金
+                return `grayscale(${mix(0, 1)}) contrast(${mix(1, 1.35)})`;
+            case 24: // 高调
+                return `brightness(${mix(1, 1.2)}) contrast(${mix(1, 0.9)})`;
+            case 25: // 低调
+                return `brightness(${mix(1, 0.75)}) contrast(${mix(1, 1.2)})`;
+            case 26: // 雾霭
+                return `contrast(${mix(1, 0.85)}) brightness(${mix(1, 1.05)})`;
+            case 27: // 霓虹
+                return `saturate(${mix(1, 1.6)}) contrast(${mix(1, 1.15)}) hue-rotate(${mix(0, 15)}deg)`;
+            case 28: // 哑光
+                return `contrast(${mix(1, 0.85)}) saturate(${mix(1, 0.9)}) brightness(${mix(1, 1.03)})`;
+            case 29: // 冰感
+                return `hue-rotate(${mix(0, -10)}deg) saturate(${mix(1, 0.85)}) brightness(${mix(1, 1.1)})`;
+            case 30: // 咖啡
+                return `sepia(${mix(0, 0.5)}) brightness(${mix(1, 0.98)}) contrast(${mix(1, 1.05)})`;
+            case 31: // 焦糖
+                return `sepia(${mix(0, 0.4)}) saturate(${mix(1, 1.2)}) contrast(${mix(1, 1.1)})`;
+            case 32: // 青橙
+                return `hue-rotate(${mix(0, 12)}deg) saturate(${mix(1, 1.25)}) contrast(${mix(1, 1.1)})`;
+            case 33: // 银盐
+                return `grayscale(${mix(0, 0.4)}) contrast(${mix(1, 1.15)}) brightness(${mix(1, 1.02)})`;
+            case 34: // 清锐
+                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 1.1)})`;
+            case 35: // 低对比
+                return `contrast(${mix(1, 0.8)}) saturate(${mix(1, 0.95)})`;
             default:
                 return '';
         }
@@ -3390,17 +3442,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true }) 
     const showActionInSettings = !isInfo && id !== 'adjust' && id !== 'filter';
 
     const renderInputSection = (compact = false) => (
-        <div className={`${compact ? 'space-y-2 pb-3' : 'space-y-3 pb-4'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-3' : 'mb-4'}`}>
-            <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
-                <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+        <div className={`${compact ? 'space-y-1 pb-2' : 'space-y-2 pb-3'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-2' : 'mb-3'}`}>
+            <div className="flex items-center justify-between gap-2 flex-wrap text-sm">
+                <div className="flex items-center gap-2">
+                    <span className="text-gray-700 dark:text-gray-300 font-medium">输入项</span>
+                    <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
+                </div>
+                <button
+                    onClick={handleSelectOutputDir}
+                    className="shrink-0 px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-[13px] font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
+                >
+                    选择输出位置
+                </button>
             </div>
-            <button
-                onClick={handleSelectOutputDir}
-                className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
-            >
-                选择输出位置
-            </button>
             {effectiveOutputDir && (
                 <div
                     className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2"

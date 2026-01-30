@@ -42,6 +42,10 @@ export function ResolveOutputPath(arg1:models.ResolveOutputPathRequest):Promise<
 
 export function SaveSettings(arg1:models.AppSettings):Promise<models.AppSettings>;
 
+export function SelectInputDirectory():Promise<string>;
+
+export function SelectInputFiles():Promise<Array<string>>;
+
 export function SelectOutputDirectory():Promise<string>;
 
 export function SplitGIF(arg1:models.GIFSplitRequest):Promise<models.GIFSplitResult>;

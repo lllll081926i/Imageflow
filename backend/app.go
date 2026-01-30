@@ -217,6 +217,24 @@ func (a *App) SelectOutputDirectory() (string, error) {
 	})
 }
 
+func (a *App) SelectInputFiles() ([]string, error) {
+	return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "选择文件",
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "Images",
+				Pattern:     "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.heic;*.heif;*.svg",
+			},
+		},
+	})
+}
+
+func (a *App) SelectInputDirectory() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "选择文件夹",
+	})
+}
+
 func (a *App) ExpandDroppedPaths(paths []string) (models.ExpandDroppedPathsResult, error) {
 	return utils.ExpandInputPaths(paths)
 }

@@ -495,6 +495,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const directoryInputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
@@ -511,6 +512,56 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             has_directory: base.has_directory || incoming.has_directory,
             files: merged,
         };
+    };
+    const resolveFilePaths = (files: File[]) => {
+        const direct = files.map((file) => {
+            const anyFile = file as any;
+            return typeof anyFile.path === 'string' && anyFile.path ? anyFile.path : '';
+        }).filter(Boolean);
+        return direct;
+    };
+    const expandPathsFromFiles = async (files: File[]) => {
+        if (!window.go?.main?.App?.ExpandDroppedPaths) return null;
+        const paths = resolveFilePaths(files);
+        if (!paths.length) return null;
+        try {
+            const result = await window.go.main.App.ExpandDroppedPaths(paths);
+            return result as ExpandDroppedPathsResult;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
+    };
+    const applyFileSelection = async (files: File[]) => {
+        onFilesSelected(files);
+        const expanded = await expandPathsFromFiles(files);
+        if (expanded) {
+            const merged = mergeResults(previewResult, expanded);
+            setPreviewResult(merged);
+            onPathsExpanded?.(merged);
+            return;
+        }
+
+        const result: ExpandDroppedPathsResult = {
+            has_directory: files.some((f) => Boolean(f.webkitRelativePath)),
+            files: files.map((f: File) => {
+                const anyFile = f as any;
+                const inputPath = typeof anyFile.path === 'string' && anyFile.path ? anyFile.path : f.name;
+                const relative = f.webkitRelativePath || f.name;
+                const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
+                return {
+                    input_path: inputPath,
+                    source_root: sourceRoot,
+                    relative_path: relative,
+                    is_from_dir_drop: Boolean(f.webkitRelativePath),
+                    size: f.size,
+                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
+                };
+            })
+        };
+        const merged = mergeResults(previewResult, result);
+        setPreviewResult(merged);
+        onPathsExpanded?.(merged);
     };
 
     useEffect(() => {
@@ -554,26 +605,27 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         }
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const files: File[] = Array.from(e.dataTransfer.files);
-            onFilesSelected(files);
-            const result: ExpandDroppedPathsResult = {
-                has_directory: false,
-                files: files.map((f: File) => ({
-                    input_path: f.name,
-                    source_root: '',
-                    relative_path: f.name,
-                    is_from_dir_drop: false,
-                    size: f.size,
-                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
-                }))
-            };
-            const merged = mergeResults(previewResult, result);
-            setPreviewResult(merged);
-            onPathsExpanded?.(merged);
+            void applyFileSelection(files);
         }
     };
 
     const handleClick = async () => {
         try {
+            if (window.go?.main?.App?.SelectInputFiles) {
+                const res = await window.go.main.App.SelectInputFiles();
+                const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
+                if (paths.length === 0) return;
+                if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                    inputRef.current?.click();
+                    return;
+                }
+
+                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
+                setPreviewResult(merged);
+                onPathsExpanded?.(merged);
+                return;
+            }
             if (window.runtime?.OpenFileDialog) {
                 const res = await window.runtime.OpenFileDialog({
                     title: '选择文件',
@@ -610,26 +662,38 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (window.runtime?.OnFileDrop) {
-            return;
-        }
         if (e.target.files && e.target.files.length > 0) {
             const files: File[] = Array.from(e.target.files);
-            onFilesSelected(files);
-            const result: ExpandDroppedPathsResult = {
-                has_directory: false,
-                files: files.map((f: File) => ({
-                    input_path: f.name,
-                    source_root: '',
-                    relative_path: f.name,
-                    is_from_dir_drop: false,
-                    size: f.size,
-                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
-                }))
-            };
-            const merged = mergeResults(previewResult, result);
-            setPreviewResult(merged);
-            onPathsExpanded?.(merged);
+            void applyFileSelection(files);
+        }
+    };
+    const handleDirectoryClick = (e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        void (async () => {
+            try {
+                if (window.go?.main?.App?.SelectInputDirectory) {
+                    const dir = await window.go.main.App.SelectInputDirectory();
+                    if (!dir || !dir.trim()) return;
+                    if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                        directoryInputRef.current?.click();
+                        return;
+                    }
+                    const result = await window.go.main.App.ExpandDroppedPaths([dir]);
+                    const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
+                    setPreviewResult(merged);
+                    onPathsExpanded?.(merged);
+                    return;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            directoryInputRef.current?.click();
+        })();
+    };
+    const handleDirectoryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            const files: File[] = Array.from(e.target.files);
+            void applyFileSelection(files);
         }
     };
 
@@ -749,6 +813,14 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 accept={acceptedFormats} 
                 onChange={handleInputChange} 
             />
+            <input
+                ref={directoryInputRef}
+                type="file"
+                className="hidden"
+                multiple={true}
+                onChange={handleDirectoryChange}
+                {...({ webkitdirectory: true, directory: true } as any)}
+            />
 
             {hasPreview ? (
                 <div className="w-full h-full relative z-10 flex flex-col">
@@ -819,15 +891,24 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         </div>
                     </div>
                     
-                    <button 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            handleClick();
-                        }}
-                        className="mt-4 text-xs text-gray-400 hover:text-[#007AFF] transition-colors text-center"
-                    >
-                        点击添加更多文件...
-                    </button>
+                    <div className="mt-4 flex items-center justify-center gap-4 text-xs text-gray-400">
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleClick();
+                            }}
+                            className="hover:text-[#007AFF] transition-colors"
+                        >
+                            点击添加更多文件...
+                        </button>
+                        <button
+                            type="button"
+                            onClick={(e) => handleDirectoryClick(e)}
+                            className="hover:text-[#007AFF] transition-colors"
+                        >
+                            添加文件夹
+                        </button>
+                    </div>
                 </div>
             ) : (
                 <>
@@ -840,9 +921,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     </p>
                     <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
                         {subTitle}
-                        <span className="block mt-1 text-xs opacity-70">支持 JPG, PNG, WEBP, GIF, SVG 等常见格式</span>
-                        <span className="block mt-0.5 text-xs opacity-70">也可直接拖入整个文件夹</span>
                     </p>
+                    <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        <button
+                            type="button"
+                            onClick={(e) => handleDirectoryClick(e)}
+                            className="underline underline-offset-2 hover:text-[#007AFF]"
+                        >
+                            点击选择文件夹
+                        </button>
+                    </div>
                 </>
             )}
 

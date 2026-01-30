@@ -42,7 +42,10 @@ class ImageFilterApplier:
 
     PRESET_FILTERS = [
         'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber',
-        'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid'
+        'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid',
+        'sunset', 'ocean', 'forest', 'purple', 'amber', 'nordic', 'oldphoto', 'noir',
+        'highkey', 'lowkey', 'haze', 'neon', 'matte', 'ice', 'coffee', 'caramel',
+        'teal_orange', 'silver', 'crisp', 'low_contrast'
     ]
     
     def __init__(self):
@@ -236,6 +239,17 @@ class ImageFilterApplier:
             enhancer = ImageEnhance.Sharpness(image)
             return enhancer.enhance(factor)
 
+        def colorize_blend(image, shadow, highlight, amount):
+            try:
+                mix = max(0.0, min(1.0, float(amount)))
+            except (TypeError, ValueError):
+                mix = 0.0
+            if mix <= 0:
+                return image
+            gray = ImageOps.grayscale(image)
+            tone = ImageOps.colorize(gray, shadow, highlight)
+            return Image.blend(image, tone, mix)
+
         base = img
         if preset == 'vivid':
             out = enhance_color(base, 1 + 0.8 * t)
@@ -299,6 +313,103 @@ class ImageFilterApplier:
             out = enhance_brightness(out, 1 + 0.08 * t)
             out = enhance_contrast(out, 1 + 0.1 * t)
             return Image.blend(base, out, t)
+        if preset == 'sunset':
+            out = colorize_blend(base, '#3B1D2A', '#F6A35B', 0.6 * t)
+            out = enhance_color(out, 1 + 0.25 * t)
+            out = enhance_contrast(out, 1 + 0.1 * t)
+            out = enhance_brightness(out, 1 + 0.03 * t)
+            return out
+        if preset == 'ocean':
+            out = colorize_blend(base, '#0B1D3A', '#5BC0FF', 0.55 * t)
+            out = enhance_color(out, 1 + 0.15 * t)
+            out = enhance_contrast(out, 1 + 0.1 * t)
+            return out
+        if preset == 'forest':
+            out = colorize_blend(base, '#0C2A1D', '#5FBF7A', 0.5 * t)
+            out = enhance_color(out, 1 + 0.1 * t)
+            out = enhance_contrast(out, 1 + 0.05 * t)
+            return out
+        if preset == 'purple':
+            out = colorize_blend(base, '#1C0F2A', '#C79BFF', 0.55 * t)
+            out = enhance_color(out, 1 + 0.15 * t)
+            return out
+        if preset == 'amber':
+            out = colorize_blend(base, '#3A240F', '#F4C27A', 0.6 * t)
+            out = enhance_contrast(out, 1 + 0.08 * t)
+            return out
+        if preset == 'nordic':
+            out = enhance_brightness(base, 1 + 0.08 * t)
+            out = enhance_contrast(out, 1 - 0.08 * t)
+            out = enhance_color(out, 1 - 0.08 * t)
+            return out
+        if preset == 'oldphoto':
+            out = self._apply_basic_filter(base, 'sepia', 1.0)
+            out = enhance_contrast(out, 1 - 0.1 * t)
+            out = enhance_brightness(out, 1 + 0.04 * t)
+            out = enhance_color(out, 1 - 0.2 * t)
+            return Image.blend(base, out, t)
+        if preset == 'noir':
+            gray = ImageOps.grayscale(base).convert('RGB')
+            out = enhance_contrast(gray, 1 + 0.35 * t)
+            return Image.blend(base, out, t)
+        if preset == 'highkey':
+            out = enhance_brightness(base, 1 + 0.2 * t)
+            out = enhance_contrast(out, 1 - 0.1 * t)
+            out = enhance_color(out, 1 - 0.05 * t)
+            return out
+        if preset == 'lowkey':
+            out = enhance_brightness(base, 1 - 0.2 * t)
+            out = enhance_contrast(out, 1 + 0.2 * t)
+            return out
+        if preset == 'haze':
+            out = enhance_contrast(base, 1 - 0.15 * t)
+            out = enhance_brightness(out, 1 + 0.04 * t)
+            blur = base.filter(ImageFilter.GaussianBlur(radius=1.2 * t))
+            return Image.blend(out, blur, 0.25 * t)
+        if preset == 'neon':
+            out = enhance_color(base, 1 + 0.6 * t)
+            out = enhance_contrast(out, 1 + 0.15 * t)
+            out = self._add_color_offset(out, int(4 * t), int(2 * t))
+            return out
+        if preset == 'matte':
+            out = enhance_contrast(base, 1 - 0.15 * t)
+            out = enhance_color(out, 1 - 0.1 * t)
+            out = enhance_brightness(out, 1 + 0.03 * t)
+            return out
+        if preset == 'ice':
+            cool = self._apply_basic_filter(base, 'cool', 1.0)
+            out = Image.blend(base, cool, 0.6 * t)
+            out = enhance_brightness(out, 1 + 0.1 * t)
+            out = enhance_color(out, 1 - 0.15 * t)
+            return out
+        if preset == 'coffee':
+            out = colorize_blend(base, '#2B190F', '#B77B44', 0.55 * t)
+            out = enhance_contrast(out, 1 + 0.05 * t)
+            out = enhance_color(out, 1 - 0.05 * t)
+            return out
+        if preset == 'caramel':
+            out = colorize_blend(base, '#3B210F', '#F1B469', 0.55 * t)
+            out = enhance_color(out, 1 + 0.2 * t)
+            out = enhance_contrast(out, 1 + 0.1 * t)
+            return out
+        if preset == 'teal_orange':
+            out = colorize_blend(base, '#0F3B49', '#F4A261', 0.5 * t)
+            out = enhance_contrast(out, 1 + 0.1 * t)
+            out = enhance_color(out, 1 + 0.15 * t)
+            return out
+        if preset == 'silver':
+            gray = ImageOps.grayscale(base).convert('RGB')
+            out = Image.blend(base, gray, 0.4 * t)
+            out = enhance_contrast(out, 1 + 0.15 * t)
+            return out
+        if preset == 'crisp':
+            out = enhance_contrast(base, 1 + 0.25 * t)
+            out = enhance_sharpness(out, 1 + 0.3 * t)
+            return out
+        if preset == 'low_contrast':
+            out = enhance_contrast(base, 1 - 0.2 * t)
+            out = enhance_color(out, 1 - 0.05 * t)
+            return out
         return base
     
     def _apply_advanced_filter(self, img, filter_name, intensity,

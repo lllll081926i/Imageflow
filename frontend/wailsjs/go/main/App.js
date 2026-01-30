@@ -82,6 +82,14 @@ export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }
 
+export function SelectInputDirectory() {
+  return window['go']['main']['App']['SelectInputDirectory']();
+}
+
+export function SelectInputFiles() {
+  return window['go']['main']['App']['SelectInputFiles']();
+}
+
 export function SelectOutputDirectory() {
   return window['go']['main']['App']['SelectOutputDirectory']();
 }
