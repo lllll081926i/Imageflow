@@ -53,7 +53,8 @@ python/*.pyc
 # Wails / build outputs
 build/bin/
 backend/build/bin/
-backend/build/windows/installer/
+backend/build/windows/installer/*
+!backend/build/windows/installer/project.nsi
 backend/frontend/dist/
 backend/embedded_python/
 backend/embedded_python_runtime/

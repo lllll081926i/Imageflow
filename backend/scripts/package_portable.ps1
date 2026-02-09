@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 function Find-WailsRoot {
     param([string]$Start)
+
     $root = $Start
     for ($i = 0; $i -lt 8; $i++) {
         if (Test-Path (Join-Path $root "wails.json")) {
@@ -49,58 +50,97 @@ function Resolve-Executable {
     }
 }
 
+function Assert-NoTestsInRuntime {
+    param([string]$Target)
+
+    if (-not (Test-Path $Target)) {
+        return
+    }
+
+    $testDirs = Get-ChildItem -Path $Target -Recurse -Directory -Force |
+        Where-Object { $_.Name -in @("test", "tests") } |
+        ForEach-Object { $_.FullName }
+
+    $testFiles = Get-ChildItem -Path $Target -Recurse -File -Force |
+        Where-Object {
+            $_.Name -like "test_*.py" -or
+            $_.Name -like "*_test.py"
+        } |
+        ForEach-Object { $_.FullName }
+
+    $offenders = @()
+    if ($testDirs) {
+        $offenders += $testDirs
+    }
+    if ($testFiles) {
+        $offenders += $testFiles
+    }
+    if ($offenders.Count -gt 0) {
+        $preview = ($offenders | Select-Object -First 30) -join "`n"
+        throw "package audit failed: test files found in runtime payload:`n$preview"
+    }
+}
+
+function Copy-RuntimePayload {
+    param(
+        [string]$Root,
+        [string]$TargetRuntimeDir
+    )
+
+    $src = Join-Path $Root "embedded_python_runtime"
+    if (-not (Test-Path $src)) {
+        throw "embedded runtime not found: $src"
+    }
+
+    Assert-NoTestsInRuntime -Target $src
+
+    if (Test-Path $TargetRuntimeDir) {
+        Remove-Item -Recurse -Force $TargetRuntimeDir
+    }
+
+    New-Item -ItemType Directory -Path $TargetRuntimeDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $src "*") -Destination $TargetRuntimeDir -Recurse -Force
+}
+
 function Audit-PortableZip {
     param(
         [string]$ZipPath,
-        [string]$ExpectedExeName
+        [string]$ExpectedExeName,
+        [string]$ExpectedRuntimeRoot = "runtime"
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $entries = @($zip.Entries | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Name) })
-        if ($entries.Count -ne 1) {
+        if ($entries.Count -lt 2) {
             $names = ($entries | ForEach-Object { $_.FullName }) -join ", "
-            throw "portable zip审查失败：包含多余文件 ($names)"
+            throw "portable zip audit failed: expected exe + runtime, got: $names"
         }
-        if ($entries[0].FullName -ne $ExpectedExeName) {
-            throw "portable zip审查失败：期望仅包含 $ExpectedExeName，实际为 $($entries[0].FullName)"
+
+        $rootEntries = @($entries | ForEach-Object {
+            $name = $_.FullName.Replace('\\', '/')
+            if ($name -match '/') { ($name -split '/')[0] } else { $name }
+        } | Sort-Object -Unique)
+
+        $expectedRoots = @($ExpectedExeName, $ExpectedRuntimeRoot)
+        $unexpectedRoots = @($rootEntries | Where-Object { $_ -notin $expectedRoots })
+        if ($unexpectedRoots.Count -gt 0) {
+            throw "portable zip audit failed: unexpected root entries: $($unexpectedRoots -join ', ')"
+        }
+
+        $exeEntry = @($entries | Where-Object { $_.FullName.Replace('\\', '/') -eq $ExpectedExeName })
+        if ($exeEntry.Count -ne 1) {
+            throw "portable zip audit failed: missing root exe $ExpectedExeName"
+        }
+
+        $runtimeEntries = @($entries | Where-Object { $_.FullName.Replace('\\', '/') -like "$ExpectedRuntimeRoot/*" })
+        if ($runtimeEntries.Count -eq 0) {
+            throw "portable zip audit failed: missing runtime payload"
         }
     }
     finally {
         $zip.Dispose()
-    }
-}
-
-function Audit-EmbeddedPayloadNoTests {
-    param([string]$Root)
-
-    $targets = @(
-        (Join-Path $Root "python"),
-        (Join-Path $Root "embedded_python_runtime")
-    )
-
-    $offenders = @()
-    foreach ($target in $targets) {
-        if (-not (Test-Path $target)) {
-            continue
-        }
-
-        $testDirs = Get-ChildItem -Path $target -Recurse -Directory -Force |
-            Where-Object { $_.Name -in @("test", "tests") } |
-            ForEach-Object { $_.FullName }
-
-        $testFiles = Get-ChildItem -Path $target -Recurse -File -Force |
-            Where-Object { $_.Name -like "test_*.py" -or $_.Name -like "*_test.py" } |
-            ForEach-Object { $_.FullName }
-
-        $offenders += @($testDirs)
-        $offenders += @($testFiles)
-    }
-
-    if ($offenders.Count -gt 0) {
-        $preview = ($offenders | Select-Object -First 30) -join "`n"
-        throw "打包审查失败：检测到测试文件/目录将被打包。请先清理：`n$preview"
     }
 }
 
@@ -111,8 +151,6 @@ if (-not $root) {
 if (-not $root) {
     throw "wails.json not found"
 }
-
-Audit-EmbeddedPayloadNoTests -Root $root
 
 $buildBin = Join-Path $root "build\bin"
 if (-not (Test-Path $buildBin)) {
@@ -128,13 +166,16 @@ if (Test-Path $zipPath) {
     Remove-Item -Force $zipPath
 }
 
+$runtimeDir = Join-Path $buildBin "runtime"
+Copy-RuntimePayload -Root $root -TargetRuntimeDir $runtimeDir
+
 Push-Location $buildBin
 try {
-    Compress-Archive -Path $exeName -DestinationPath $zipPath
+    Compress-Archive -Path @($exeName, "runtime") -DestinationPath $zipPath
 }
 finally {
     Pop-Location
 }
 
-Audit-PortableZip -ZipPath $zipPath -ExpectedExeName $exeName
+Audit-PortableZip -ZipPath $zipPath -ExpectedExeName $exeName -ExpectedRuntimeRoot "runtime"
 Write-Host "Portable package created: $zipPath"
