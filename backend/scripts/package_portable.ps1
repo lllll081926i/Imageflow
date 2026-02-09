@@ -16,6 +16,94 @@ function Find-WailsRoot {
     return $null
 }
 
+function Resolve-Executable {
+    param(
+        [string]$BuildBin,
+        [string]$Root
+    )
+
+    $wailsConfig = Get-Content -Raw (Join-Path $Root "wails.json") | ConvertFrom-Json
+    $outputName = $wailsConfig.outputfilename
+    if (-not $outputName) {
+        $outputName = $wailsConfig.name
+    }
+
+    $exeName = "$outputName.exe"
+    $exePath = Join-Path $BuildBin $exeName
+    if (Test-Path $exePath) {
+        return @{ Name = $exeName; Path = $exePath; OutputName = $outputName }
+    }
+
+    $exe = Get-ChildItem -Path $BuildBin -Filter *.exe |
+        Where-Object { $_.Name -notmatch "installer" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $exe) {
+        throw "app executable not found in $BuildBin"
+    }
+
+    return @{
+        Name = $exe.Name
+        Path = $exe.FullName
+        OutputName = [System.IO.Path]::GetFileNameWithoutExtension($exe.Name)
+    }
+}
+
+function Audit-PortableZip {
+    param(
+        [string]$ZipPath,
+        [string]$ExpectedExeName
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entries = @($zip.Entries | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Name) })
+        if ($entries.Count -ne 1) {
+            $names = ($entries | ForEach-Object { $_.FullName }) -join ", "
+            throw "portable zip审查失败：包含多余文件 ($names)"
+        }
+        if ($entries[0].FullName -ne $ExpectedExeName) {
+            throw "portable zip审查失败：期望仅包含 $ExpectedExeName，实际为 $($entries[0].FullName)"
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
+}
+
+function Audit-EmbeddedPayloadNoTests {
+    param([string]$Root)
+
+    $targets = @(
+        (Join-Path $Root "embedded_python"),
+        (Join-Path $Root "embedded_python_runtime")
+    )
+
+    $offenders = @()
+    foreach ($target in $targets) {
+        if (-not (Test-Path $target)) {
+            continue
+        }
+
+        $testDirs = Get-ChildItem -Path $target -Recurse -Directory -Force |
+            Where-Object { $_.Name -in @("test", "tests") } |
+            ForEach-Object { $_.FullName }
+
+        $testFiles = Get-ChildItem -Path $target -Recurse -File -Force |
+            Where-Object { $_.Name -like "test_*.py" -or $_.Name -like "*_test.py" } |
+            ForEach-Object { $_.FullName }
+
+        $offenders += @($testDirs)
+        $offenders += @($testFiles)
+    }
+
+    if ($offenders.Count -gt 0) {
+        $preview = ($offenders | Select-Object -First 30) -join "`n"
+        throw "打包审查失败：检测到测试文件/目录将被打包。请先清理：`n$preview"
+    }
+}
+
 $root = Find-WailsRoot -Start $PSScriptRoot
 if (-not $root) {
     $root = Find-WailsRoot -Start (Get-Location).Path
@@ -24,153 +112,16 @@ if (-not $root) {
     throw "wails.json not found"
 }
 
-function Find-PythonDir {
-    param([string]$Start)
-    $candidates = @(
-        (Join-Path $Start "python"),
-        (Join-Path $Start "..\\python"),
-        (Join-Path $Start "..\\..\\python")
-    )
-    foreach ($candidate in $candidates) {
-        $full = [System.IO.Path]::GetFullPath($candidate)
-        if (Test-Path (Join-Path $full "converter.py")) {
-            return $full
-        }
-    }
-    return $null
-}
-
-function Trim-PythonRuntime {
-    param([string]$RuntimeRoot)
-    if (-not (Test-Path $RuntimeRoot)) {
-        return
-    }
-
-    $scriptsDir = Join-Path $RuntimeRoot "Scripts"
-    if (Test-Path $scriptsDir) {
-        Remove-Item -Recurse -Force $scriptsDir
-    }
-
-    $removeAtRoot = @(
-        ".keep",
-        "LICENSE.txt",
-        "python.cat"
-    )
-    foreach ($name in $removeAtRoot) {
-        $p = Join-Path $RuntimeRoot $name
-        if (Test-Path $p) {
-            Remove-Item -Force $p -ErrorAction SilentlyContinue
-        }
-    }
-
-    $sitePackages = Join-Path $RuntimeRoot "Lib\\site-packages"
-    if (Test-Path $sitePackages) {
-        $removeTop = @(
-            "pip",
-            "pip-*.dist-info",
-            "wheel",
-            "wheel-*.dist-info",
-            "setuptools",
-            "setuptools-*.dist-info",
-            "pkg_resources",
-            "__pycache__"
-        )
-        foreach ($pattern in $removeTop) {
-            Get-ChildItem -Path $sitePackages -Force -Filter $pattern |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        }
-
-        Get-ChildItem -Path $sitePackages -Force -Directory |
-            Where-Object { $_.Name -like "*.dist-info" } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-        Get-ChildItem -Path $sitePackages -Recurse -Force -Directory |
-            Where-Object { $_.Name -in @("tests", "test", "__pycache__") } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-        Get-ChildItem -Path $sitePackages -Recurse -Force -Directory |
-            Where-Object { $_.Name -in @("include", "includes", "__pyinstaller") } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-        Get-ChildItem -Path $sitePackages -Recurse -Force -File -Include *.pyi, *.pyx, *.pxd, *.h, *.c, *.cpp, *.lib |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-
-        Get-ChildItem -Path $sitePackages -Recurse -Force -File -Include py.typed |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-    }
-
-    Get-ChildItem -Path $RuntimeRoot -Recurse -Force -Include *.pyc, *.pyo |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-
-    Get-ChildItem -Path $RuntimeRoot -Force -Filter "python*._pth" -ErrorAction SilentlyContinue | ForEach-Object {
-        $pthPath = $_.FullName
-        $lines = Get-Content -LiteralPath $pthPath -ErrorAction SilentlyContinue
-        if ($lines -and ($lines -notcontains "..\\python")) {
-            $out = New-Object System.Collections.Generic.List[string]
-            foreach ($l in $lines) {
-                if ($l -eq "import site") {
-                    $out.Add("..\\python")
-                }
-                $out.Add($l)
-            }
-            if ($out -notcontains "..\\python") {
-                $out.Insert([Math]::Min(2, $out.Count), "..\\python")
-            }
-            Set-Content -LiteralPath $pthPath -Value $out -Encoding ASCII
-        }
-    }
-}
-
-$src = Find-PythonDir -Start $root
-if (-not $src) {
-    throw "python scripts dir not found near $root"
-}
+Audit-EmbeddedPayloadNoTests -Root $root
 
 $buildBin = Join-Path $root "build\bin"
 if (-not (Test-Path $buildBin)) {
     throw "build/bin not found; run wails build first"
 }
 
-$wailsConfig = Get-Content -Raw (Join-Path $root "wails.json") | ConvertFrom-Json
-$outputName = $wailsConfig.outputfilename
-if (-not $outputName) {
-    $outputName = $wailsConfig.name
-}
-
-$exeName = "$outputName.exe"
-$exePath = Join-Path $buildBin $exeName
-if (-not (Test-Path $exePath)) {
-    $exe = Get-ChildItem -Path $buildBin -Filter *.exe |
-        Where-Object { $_.Name -notmatch "installer" } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $exe) {
-        throw "app executable not found in $buildBin"
-    }
-    $exePath = $exe.FullName
-    $exeName = $exe.Name
-    $outputName = [System.IO.Path]::GetFileNameWithoutExtension($exeName)
-}
-
-$runtimeSrc = Join-Path $root "embedded_python_runtime"
-if (-not (Test-Path $runtimeSrc)) {
-    throw "embedded_python_runtime not found at $runtimeSrc"
-}
-$runtimeDst = Join-Path $buildBin "python_runtime"
-if (Test-Path $runtimeDst) {
-    Remove-Item -Recurse -Force $runtimeDst
-}
-Copy-Item -Recurse -Force $runtimeSrc $runtimeDst
-Trim-PythonRuntime -RuntimeRoot $runtimeDst
-
-$scriptsDst = Join-Path $buildBin "python"
-if (Test-Path $scriptsDst) {
-    Remove-Item -Recurse -Force $scriptsDst
-}
-Copy-Item -Recurse -Force $src $scriptsDst
-Get-ChildItem -Path $scriptsDst -Recurse -Force -Directory |
-    Where-Object { $_.Name -eq "__pycache__" } |
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+$exeInfo = Resolve-Executable -BuildBin $buildBin -Root $root
+$exeName = $exeInfo.Name
+$outputName = $exeInfo.OutputName
 
 $zipPath = Join-Path $buildBin "$outputName-portable.zip"
 if (Test-Path $zipPath) {
@@ -179,9 +130,11 @@ if (Test-Path $zipPath) {
 
 Push-Location $buildBin
 try {
-    Compress-Archive -Path $exeName, "python_runtime", "python" -DestinationPath $zipPath
-} finally {
+    Compress-Archive -Path $exeName -DestinationPath $zipPath
+}
+finally {
     Pop-Location
 }
 
+Audit-PortableZip -ZipPath $zipPath -ExpectedExeName $exeName
 Write-Host "Portable package created: $zipPath"

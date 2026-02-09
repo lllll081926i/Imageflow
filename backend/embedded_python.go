@@ -1,6 +1,8 @@
+//go:build !windows
+
 package main
 
 import "embed"
 
-// Python runtime/scripts are shipped alongside the executable.
+// Non-Windows builds keep an empty embedded FS and rely on external runtime setup.
 var embeddedPythonFS embed.FS
