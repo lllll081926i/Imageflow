@@ -14,7 +14,7 @@ type ConvertRequest struct {
 	LongEdge      int    `json:"long_edge"`      // used when resize_mode=long_edge
 	KeepMetadata  bool   `json:"keep_metadata"`  // preserve EXIF when possible
 	CompressLevel int    `json:"compress_level"` // 0-9 for PNG
-	ICOSizes      []int  `json:"ico_sizes"`      // list of sizes for ICO (16, 32, 64, 128, 256)
+	ICOSizes      []int  `json:"ico_sizes"`      // list of sizes for ICO (16, 32, 48, 64, 128, 256, 512, 1024)
 }
 
 // ConvertResult represents the result of an image conversion

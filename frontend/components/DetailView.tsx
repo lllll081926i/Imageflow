@@ -135,7 +135,7 @@ const ConverterSettings = memo(({
                      <div className="space-y-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">包含尺寸</label>
                         <div className="flex flex-wrap gap-2 pt-1">
-                            {[16, 32, 48, 64, 128, 256].map(s => (
+                            {[16, 32, 48, 64, 128, 256, 512, 1024].map(s => (
                                 <button 
                                     key={s}
                                     onClick={() => toggleIcoSize(s)}
@@ -1492,7 +1492,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [convFormat, setConvFormat] = useState('JPG');
     const [convQuality, setConvQuality] = useState(80);
     const [convCompressLevel, setConvCompressLevel] = useState(6); // 0-9 for PNG
-    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256]);
+    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256, 512, 1024]);
     const [convResizeMode, setConvResizeMode] = useState('原图尺寸');
     const [convScalePercent, setConvScalePercent] = useState(100);
     const [convFixedWidth, setConvFixedWidth] = useState(0);

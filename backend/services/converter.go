@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/imageflow/backend/models"
@@ -28,6 +29,9 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 // Convert converts an image to a different format
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 	req.InputPath = resolveInputPath(req.InputPath, req.OutputPath)
+	if strings.EqualFold(strings.TrimSpace(req.Format), "ico") {
+		req.ICOSizes = normalizeICOSizes(req.ICOSizes)
+	}
 	if req.OutputPath != "" && !filepath.IsAbs(req.OutputPath) {
 		if abs, err := filepath.Abs(req.OutputPath); err == nil {
 			req.OutputPath = abs
@@ -101,6 +105,32 @@ func resolveInputPath(inputPath, outputPath string) string {
 		return abs
 	}
 	return cleaned
+}
+
+func normalizeICOSizes(sizes []int) []int {
+	if len(sizes) == 0 {
+		return nil
+	}
+
+	unique := make(map[int]struct{}, len(sizes))
+	normalized := make([]int, 0, len(sizes))
+	for _, size := range sizes {
+		if size <= 0 {
+			continue
+		}
+		if _, exists := unique[size]; exists {
+			continue
+		}
+		unique[size] = struct{}{}
+		normalized = append(normalized, size)
+	}
+
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	sort.Ints(normalized)
+	return normalized
 }
 
 // ConvertBatch converts multiple images concurrently
