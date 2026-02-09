@@ -846,7 +846,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         <div className="flex-1 overflow-y-auto overflow-x-hidden relative scrollbar-dark">
                             {/* Scrollable Content */}
                             <div className="absolute inset-0 w-full">
-                                {Object.values(treeRoot).map((node) => (
+                                {(Object.values(treeRoot) as FileTreeNode[]).map((node) => (
                                     <TreeNode
                                         key={node.path}
                                         node={node}

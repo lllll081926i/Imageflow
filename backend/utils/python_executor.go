@@ -373,14 +373,14 @@ func resolvePython() (string, []string, string, error) {
 }
 
 func isPython3Executable(pythonPath string) bool {
-	cmd := exec.Command(pythonPath, "--version")
+	cmd := exec.Command(pythonPath, "-c", "import sys; print(sys.version_info[0])")
 	applyHideWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
 
-	return bytes.Contains(output, []byte("Python 3"))
+	return strings.TrimSpace(string(output)) == "3"
 }
 
 func venvPythonCandidates(baseDir string) []string {

@@ -10,4 +10,15 @@ export interface Feature {
 
 export type Theme = 'light' | 'dark';
 
-export type ViewState = 'dashboard' | string;
+export type FeatureId =
+    | 'converter'
+    | 'compressor'
+    | 'pdf'
+    | 'gif'
+    | 'info'
+    | 'watermark'
+    | 'adjust'
+    | 'filter'
+    | 'settings';
+
+export type ViewState = 'dashboard' | FeatureId;

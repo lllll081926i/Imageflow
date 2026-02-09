@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { WindowControls } from './components/WindowControls';
@@ -10,11 +10,23 @@ import { FEATURES } from './constants';
 
 const FEATURE_IDS = FEATURES.map((feature) => feature.id);
 
+type TaskFailureNotification = {
+    id: string;
+    taskName: string;
+    imageName: string;
+    reason: string;
+    createdAt: number;
+};
+
 const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
     const [loadedFeatureViews, setLoadedFeatureViews] = useState<ViewState[]>([]);
+    const [failureNotifications, setFailureNotifications] = useState<TaskFailureNotification[]>([]);
+    const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
+    const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+    const closeNotificationTimerRef = useRef<number | null>(null);
     const isSecondaryView = activeView !== 'dashboard';
     const isFeatureView = FEATURE_IDS.includes(activeView);
     const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
@@ -57,6 +69,10 @@ const App: React.FC = () => {
         }
 
         return () => {
+            if (closeNotificationTimerRef.current) {
+                window.clearTimeout(closeNotificationTimerRef.current);
+                closeNotificationTimerRef.current = null;
+            }
             window.removeEventListener('dragover', preventDefault);
             window.removeEventListener('drop', preventDefault);
             window.removeEventListener('wheel', preventCtrlZoom);
@@ -95,6 +111,39 @@ const App: React.FC = () => {
 
     const handleBack = useCallback(() => handleNavigate('dashboard'), [handleNavigate]);
 
+    const handleTaskFailure = useCallback((payload: { taskName: string; imageName: string; reason: string }) => {
+        const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const next: TaskFailureNotification = {
+            id,
+            taskName: payload.taskName,
+            imageName: payload.imageName,
+            reason: payload.reason,
+            createdAt: Date.now(),
+        };
+        setFailureNotifications((prev) => [next, ...prev].slice(0, 80));
+        setHasUnreadNotifications(true);
+    }, []);
+
+    const handleNotificationMouseEnter = useCallback(() => {
+        if (closeNotificationTimerRef.current) {
+            window.clearTimeout(closeNotificationTimerRef.current);
+            closeNotificationTimerRef.current = null;
+        }
+        setIsNotificationOpen(true);
+        if (hasUnreadNotifications) {
+            setHasUnreadNotifications(false);
+        }
+    }, [hasUnreadNotifications]);
+
+    const handleNotificationMouseLeave = useCallback(() => {
+        if (closeNotificationTimerRef.current) {
+            window.clearTimeout(closeNotificationTimerRef.current);
+        }
+        closeNotificationTimerRef.current = window.setTimeout(() => {
+            setIsNotificationOpen(false);
+        }, 120);
+    }, []);
+
     return (
         <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
             {/* Custom Title Bar */}
@@ -116,6 +165,41 @@ const App: React.FC = () => {
 
                 {/* Window Controls */}
                 <div className="flex items-center gap-2">
+                    <div
+                        className="relative"
+                        style={{ ['--wails-draggable' as any]: 'no-drag' }}
+                        onMouseEnter={handleNotificationMouseEnter}
+                        onMouseLeave={handleNotificationMouseLeave}
+                    >
+                        <button
+                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50 relative"
+                            title="任务失败通知"
+                        >
+                            <Icon name="Bell" size={16} />
+                            {hasUnreadNotifications && failureNotifications.length > 0 && (
+                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(245,245,247,1)] dark:shadow-[0_0_0_2px_rgba(30,30,30,1)]" />
+                            )}
+                        </button>
+                        {isNotificationOpen && (
+                            <div className="absolute right-0 top-10 w-[320px] max-h-[360px] overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/10 bg-white/95 dark:bg-[#232326]/95 shadow-xl backdrop-blur-sm z-[120]">
+                                <div className="px-3 py-2 border-b border-gray-100 dark:border-white/10 text-xs font-semibold text-gray-600 dark:text-gray-300">
+                                    失败通知
+                                </div>
+                                {failureNotifications.length === 0 ? (
+                                    <div className="px-3 py-6 text-xs text-gray-500 dark:text-gray-400 text-center">暂无失败通知</div>
+                                ) : (
+                                    <div className="max-h-[316px] overflow-y-auto p-2 space-y-2">
+                                        {failureNotifications.map((item) => (
+                                            <div key={item.id} className="rounded-lg border border-red-100 dark:border-red-500/20 bg-red-50/70 dark:bg-red-500/10 px-2.5 py-2">
+                                                <div className="text-xs font-medium text-red-700 dark:text-red-300 truncate">{item.taskName} · {item.imageName}</div>
+                                                <div className="text-[11px] text-red-600/90 dark:text-red-200/85 mt-0.5 leading-4 break-all">{item.reason}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     <button 
                         onClick={toggleTheme}
                         className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50"
@@ -146,6 +230,7 @@ const App: React.FC = () => {
                                             id={viewId}
                                             isActive={activeView === viewId}
                                             onBack={handleBack}
+                                            onTaskFailure={handleTaskFailure}
                                         />
                                     </div>
                                 ))}
