@@ -67,7 +67,7 @@ func (a *App) startup(ctx context.Context) {
 	if os.Getenv("IMAGEFLOW_PYTHON_EXE") == "" {
 		preferredRuntime := ""
 		if exe, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(exe), "python_runtime")
+			candidate := filepath.Join(filepath.Dir(exe), "runtime")
 			if pythonExe := utils.PythonExecutableFromRuntime(candidate); pythonExe != "" {
 				preferredRuntime = candidate
 				_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
@@ -87,7 +87,7 @@ func (a *App) startup(ctx context.Context) {
 
 	scriptsDir, err := utils.ResolvePythonScriptsDir()
 	if err != nil {
-		embeddedDir, embedErr := utils.ExtractEmbeddedPythonScripts(embeddedPythonFS, "embedded_python")
+		embeddedDir, embedErr := utils.ExtractEmbeddedPythonScripts(embeddedPythonFS, "python")
 		if embedErr != nil {
 			a.logger.Error("Failed to resolve Python scripts directory: %v", embedErr)
 			return

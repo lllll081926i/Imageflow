@@ -173,32 +173,32 @@ const App: React.FC = () => {
                     >
                         <button
                             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50 relative"
-                            title="任务失败通知"
+                            title="通知"
                         >
                             <Icon name="Bell" size={16} />
                             {hasUnreadNotifications && failureNotifications.length > 0 && (
                                 <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(245,245,247,1)] dark:shadow-[0_0_0_2px_rgba(30,30,30,1)]" />
                             )}
                         </button>
-                        {isNotificationOpen && (
-                            <div className="absolute right-0 top-10 w-[320px] max-h-[360px] overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/10 bg-white/95 dark:bg-[#232326]/95 shadow-xl backdrop-blur-sm z-[120]">
-                                <div className="px-3 py-2 border-b border-gray-100 dark:border-white/10 text-xs font-semibold text-gray-600 dark:text-gray-300">
-                                    失败通知
-                                </div>
-                                {failureNotifications.length === 0 ? (
-                                    <div className="px-3 py-6 text-xs text-gray-500 dark:text-gray-400 text-center">暂无失败通知</div>
-                                ) : (
-                                    <div className="max-h-[316px] overflow-y-auto p-2 space-y-2">
-                                        {failureNotifications.map((item) => (
-                                            <div key={item.id} className="rounded-lg border border-red-100 dark:border-red-500/20 bg-red-50/70 dark:bg-red-500/10 px-2.5 py-2">
-                                                <div className="text-xs font-medium text-red-700 dark:text-red-300 truncate">{item.taskName} · {item.imageName}</div>
-                                                <div className="text-[11px] text-red-600/90 dark:text-red-200/85 mt-0.5 leading-4 break-all">{item.reason}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                        <div
+                            className={`absolute right-0 top-10 w-[320px] max-h-[360px] overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/10 bg-white/95 dark:bg-[#232326]/95 shadow-xl backdrop-blur-sm z-[120] origin-top-right transition-all duration-150 ease-out ${isNotificationOpen ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1 scale-95 pointer-events-none'}`}
+                        >
+                            <div className="px-3 py-2 border-b border-gray-100 dark:border-white/10 text-xs font-semibold text-gray-600 dark:text-gray-300">
+                                通知
                             </div>
-                        )}
+                            {failureNotifications.length === 0 ? (
+                                <div className="px-3 py-6 text-xs text-gray-500 dark:text-gray-400 text-center">暂无通知</div>
+                            ) : (
+                                <div className="max-h-[316px] overflow-y-auto no-scrollbar p-2 space-y-2">
+                                    {failureNotifications.map((item) => (
+                                        <div key={item.id} className="rounded-lg border border-red-100 dark:border-red-500/20 bg-red-50/70 dark:bg-red-500/10 px-2.5 py-2">
+                                            <div className="text-xs font-medium text-red-700 dark:text-red-300 truncate">{item.taskName} · {item.imageName}</div>
+                                            <div className="text-[11px] text-red-600/90 dark:text-red-200/85 mt-0.5 leading-4 break-all">{item.reason}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <button 
                         onClick={toggleTheme}

@@ -76,7 +76,7 @@ function Audit-EmbeddedPayloadNoTests {
     param([string]$Root)
 
     $targets = @(
-        (Join-Path $Root "embedded_python"),
+        (Join-Path $Root "python"),
         (Join-Path $Root "embedded_python_runtime")
     )
 

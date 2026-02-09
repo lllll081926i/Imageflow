@@ -11,12 +11,12 @@ import (
 
 // ExtractEmbeddedPythonRuntime writes embedded runtime files next to the executable and returns its path.
 func ExtractEmbeddedPythonRuntime(embedded fs.FS, embeddedRoot string) (string, error) {
-	destRoot, err := embeddedExtractRoot("python_runtime")
+	destRoot, err := embeddedExtractRoot("runtime")
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(destRoot, 0755); err != nil {
-		fallback, fallbackErr := embeddedExtractCacheRoot("python_runtime")
+		fallback, fallbackErr := embeddedExtractCacheRoot("runtime")
 		if fallbackErr == nil && fallback != "" && fallback != destRoot {
 			if mkErr := os.MkdirAll(fallback, 0755); mkErr == nil {
 				destRoot = fallback

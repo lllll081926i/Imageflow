@@ -403,6 +403,7 @@ func bundledPythonCandidates(baseDir string) []string {
 		return []string{
 			filepath.Join(baseDir, "python", "python.exe"),
 			filepath.Join(baseDir, "python", "python3.exe"),
+			filepath.Join(baseDir, "runtime", "python.exe"),
 			filepath.Join(baseDir, "python_runtime", "python.exe"),
 			filepath.Join(baseDir, "python.exe"),
 		}

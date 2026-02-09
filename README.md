@@ -54,7 +54,7 @@ Go 负责并发、任务编排与错误处理，Python 负责真实图像处理�
 │   ├── models/               # 请求/响应模型
 │   ├── utils/                # 工具与运行时支持
 │   └── main.go               # Wails 入口
-├── python/                   # Python 图像处理脚本
+├── backend/python/           # Python 图像处理脚本
 │   ├── converter.py
 │   ├── compressor.py
 │   ├── pdf_generator.py
@@ -152,7 +152,7 @@ wails build
 
 ```bash
 # Python 测试
-python -m unittest discover -s python/tests
+python -m unittest discover -s backend/python/tests
 
 # Go 测试
 cd backend
@@ -168,7 +168,7 @@ go test ./...
 - 或先执行 `uv sync` 创建 `.venv`
 
 ### 2) 提示找不到脚本目录
-- 设置 `IMAGEFLOW_SCRIPTS_DIR` 指向 `python/`
+- 设置 `IMAGEFLOW_SCRIPTS_DIR` 指向 `backend/python/`
 
 ### 3) 打包后资源缺失
 - 先执行 `npm run build` 生成 `backend/frontend/dist`

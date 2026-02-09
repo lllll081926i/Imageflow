@@ -47,15 +47,6 @@ func findPythonDirUpwards(start string, maxLevels int) string {
 			return try1
 		}
 
-		try2 := filepath.Join(current, "build", "bin", "python")
-		if isPythonScriptsDir(try2) {
-			abs, err := filepath.Abs(try2)
-			if err == nil {
-				return abs
-			}
-			return try2
-		}
-
 		parent := filepath.Dir(current)
 		if parent == current {
 			break
@@ -74,4 +65,3 @@ func isPythonScriptsDir(dir string) bool {
 	}
 	return true
 }
-

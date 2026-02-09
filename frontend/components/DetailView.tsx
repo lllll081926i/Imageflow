@@ -2423,13 +2423,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         if (idx === -1) return '';
         return normalized.slice(idx + 1).toLowerCase();
     };
-    const matchesFormat = (format: string, ext: string) => {
-        const f = (format || '').toLowerCase();
-        const e = (ext || '').toLowerCase();
-        if (f === 'jpg' || f === 'jpeg') return e === 'jpg' || e === 'jpeg';
-        if (f === 'tif' || f === 'tiff') return e === 'tif' || e === 'tiff';
-        return f === e;
-    };
     const sanitizeFileName = (name: string) => (name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
     const stripExtension = (name: string) => {
         const idx = name.lastIndexOf('.');
@@ -2873,7 +2866,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
 
         const outDir = effectiveOutputDir;
-        if (id !== 'info' && !outDir) {
+        const requiresOutputDir =
+            id !== 'info' &&
+            !((id === 'converter' && convOverwriteSource) || (id === 'compressor' && compOverwriteSource));
+        if (requiresOutputDir && !outDir) {
             setLastMessage('请选择输出目录');
             return;
         }
@@ -2938,7 +2934,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     const chunk = [];
                     for (const f of group) {
                         const input_path = normalizePath(f.input_path);
-                        const canOverwrite = convOverwriteSource && matchesFormat(format, extname(f.input_path));
+                        const canOverwrite = convOverwriteSource;
                         let output_path = input_path;
                         if (!canOverwrite) {
                             const rel = buildOutputRelPath(f, {
