@@ -22,15 +22,18 @@ const defaultSettings: AppSettings = {
 const SettingsView: React.FC = () => {
     const [settings, setSettings] = useState<AppSettings>(defaultSettings);
     const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState<string>('');
 
     const maxConcurrency = useMemo(() => clamp(settings.max_concurrency || 8, 1, 32), [settings.max_concurrency]);
 
     useEffect(() => {
         const run = async () => {
+            setLoading(true);
             const app = window.go?.main?.App;
             if (!app?.GetSettings) {
                 setMessage('未检测到 Wails 运行环境');
+                setLoading(false);
                 return;
             }
             try {
@@ -48,8 +51,11 @@ const SettingsView: React.FC = () => {
                             : defaultSettings.conflict_strategy,
                     });
                 }
-            } catch (e) {
+            } catch (e: any) {
                 console.error(e);
+                setMessage(e?.message ? `读取设置失败：${e.message}` : '读取设置失败，已使用默认值');
+            } finally {
+                setLoading(false);
             }
         };
         run();
@@ -107,7 +113,9 @@ const SettingsView: React.FC = () => {
                     </div>
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                    {message && <span className={message.includes('失败') ? 'text-red-500' : 'text-[#007AFF]'}>{message}</span>}
+                    {loading
+                        ? <span>读取中...</span>
+                        : (message && <span className={message.includes('失败') ? 'text-red-500' : 'text-[#007AFF]'}>{message}</span>)}
                 </div>
             </div>
 
@@ -127,13 +135,13 @@ const SettingsView: React.FC = () => {
                                 className="w-20 text-center text-gray-700 dark:text-gray-200 font-mono text-sm bg-gray-100 dark:bg-white/10 px-3 py-2 rounded-xl outline-none focus:ring-2 focus:ring-[#007AFF]/30 border border-transparent focus:border-[#007AFF]"
                             />
                             <button
-                                disabled={saving}
+                                disabled={saving || loading}
                                 onClick={() => save({
                                     ...settings,
                                     max_concurrency: maxConcurrency,
                                     conflict_strategy: 'rename',
                                 })}
-                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${saving ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
+                                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${(saving || loading) ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
                             >
                                 {saving ? '保存中...' : '保存'}
                             </button>
@@ -197,13 +205,13 @@ const SettingsView: React.FC = () => {
 
                     <div className="mt-4">
                         <button
-                            disabled={saving}
+                            disabled={saving || loading}
                             onClick={() => save({
                                 ...settings,
                                 max_concurrency: maxConcurrency,
                                 conflict_strategy: 'rename',
                             })}
-                            className={`w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${saving ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
+                            className={`w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${(saving || loading) ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
                         >
                             {saving ? '保存中...' : '保存输出规则'}
                         </button>

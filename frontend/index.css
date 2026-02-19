@@ -8,8 +8,6 @@
     margin: 0; 
     overflow: hidden; 
     background-color: #F5F5F7; 
-    user-select: none;
-    -webkit-user-select: none;
   }
 }
 
