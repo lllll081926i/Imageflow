@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/services"
@@ -38,12 +39,14 @@ type App struct {
 	watermarkService    *services.WatermarkService
 	adjusterService     *services.AdjusterService
 	filterService       *services.FilterService
+	cancelRequested     uint32
 }
 
 const (
 	defaultPreviewMaxBytes = int64(4 * 1024 * 1024)
 	previewMaxEdge         = 1280
 	previewJPEGQuality     = 85
+	cancelledErrorMessage  = "[PY_CANCELLED] operation cancelled"
 )
 
 // NewApp creates a new App application struct
@@ -176,6 +179,33 @@ func serviceNotReadyMessage(serviceName string) string {
 	return fmt.Sprintf("%s未就绪，请重启应用后重试", serviceName)
 }
 
+func (a *App) beginCancelableOperation() {
+	atomic.StoreUint32(&a.cancelRequested, 0)
+}
+
+func (a *App) requestCancelOperation() {
+	atomic.StoreUint32(&a.cancelRequested, 1)
+	if a.executor != nil {
+		a.executor.CancelActiveTask()
+	}
+}
+
+func (a *App) isCancelRequested() bool {
+	return atomic.LoadUint32(&a.cancelRequested) == 1
+}
+
+func isCancelledExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "[PY_CANCELLED]")
+}
+
+func (a *App) CancelProcessing() bool {
+	a.requestCancelOperation()
+	return true
+}
+
 func (a *App) GetSettings() (models.AppSettings, error) {
 	return a.settings, nil
 }
@@ -262,6 +292,7 @@ func (a *App) ExpandDroppedPaths(paths []string) (models.ExpandDroppedPathsResul
 
 // Convert converts an image to a different format
 func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
+	a.beginCancelableOperation()
 	if a.converterService == nil {
 		return models.ConvertResult{
 			Success:    false,
@@ -279,7 +310,11 @@ func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -287,6 +322,7 @@ func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 
 // ConvertBatch converts multiple images concurrently
 func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertResult, error) {
+	a.beginCancelableOperation()
 	n := len(requests)
 	results := make([]models.ConvertResult, n)
 	if n == 0 {
@@ -323,6 +359,15 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				if a.isCancelRequested() {
+					results[idx] = models.ConvertResult{
+						Success:    false,
+						InputPath:  requests[idx].InputPath,
+						OutputPath: requests[idx].OutputPath,
+						Error:      cancelledErrorMessage,
+					}
+					continue
+				}
 				res, err := a.converterService.Convert(requests[idx])
 				if err != nil {
 					res.Success = false
@@ -332,13 +377,28 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 					if strings.TrimSpace(res.OutputPath) == "" {
 						res.OutputPath = requests[idx].OutputPath
 					}
-					res.Error = mergeOperationError(res.Error, err)
+					if isCancelledExecutionError(err) || a.isCancelRequested() {
+						res.Error = cancelledErrorMessage
+					} else {
+						res.Error = mergeOperationError(res.Error, err)
+					}
 				}
 				results[idx] = res
 			}
 		}()
 	}
 	for i := 0; i < n; i++ {
+		if a.isCancelRequested() {
+			for j := i; j < n; j++ {
+				results[j] = models.ConvertResult{
+					Success:    false,
+					InputPath:  requests[j].InputPath,
+					OutputPath: requests[j].OutputPath,
+					Error:      cancelledErrorMessage,
+				}
+			}
+			break
+		}
 		jobs <- i
 	}
 	close(jobs)
@@ -348,6 +408,7 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 
 // Compress compresses an image
 func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error) {
+	a.beginCancelableOperation()
 	if a.compressorService == nil {
 		return models.CompressResult{
 			Success:    false,
@@ -365,7 +426,11 @@ func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -373,6 +438,7 @@ func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error
 
 // CompressBatch compresses multiple images concurrently
 func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.CompressResult, error) {
+	a.beginCancelableOperation()
 	n := len(requests)
 	results := make([]models.CompressResult, n)
 	if n == 0 {
@@ -409,6 +475,15 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				if a.isCancelRequested() {
+					results[idx] = models.CompressResult{
+						Success:    false,
+						InputPath:  requests[idx].InputPath,
+						OutputPath: requests[idx].OutputPath,
+						Error:      cancelledErrorMessage,
+					}
+					continue
+				}
 				res, err := a.compressorService.Compress(requests[idx])
 				if err != nil {
 					res.Success = false
@@ -418,13 +493,28 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 					if strings.TrimSpace(res.OutputPath) == "" {
 						res.OutputPath = requests[idx].OutputPath
 					}
-					res.Error = mergeOperationError(res.Error, err)
+					if isCancelledExecutionError(err) || a.isCancelRequested() {
+						res.Error = cancelledErrorMessage
+					} else {
+						res.Error = mergeOperationError(res.Error, err)
+					}
 				}
 				results[idx] = res
 			}
 		}()
 	}
 	for i := 0; i < n; i++ {
+		if a.isCancelRequested() {
+			for j := i; j < n; j++ {
+				results[j] = models.CompressResult{
+					Success:    false,
+					InputPath:  requests[j].InputPath,
+					OutputPath: requests[j].OutputPath,
+					Error:      cancelledErrorMessage,
+				}
+			}
+			break
+		}
 		jobs <- i
 	}
 	close(jobs)
@@ -434,6 +524,7 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 
 // GeneratePDF generates a PDF from multiple images
 func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
+	a.beginCancelableOperation()
 	if a.pdfGeneratorService == nil {
 		return models.PDFResult{
 			Success:    false,
@@ -447,7 +538,11 @@ func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -455,6 +550,7 @@ func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
 
 // SplitGIF handles GIF-related actions (export_frames, reverse, change_speed, build_gif)
 func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
+	a.beginCancelableOperation()
 	if a.gifSplitterService == nil {
 		return models.GIFSplitResult{
 			Success:    false,
@@ -480,7 +576,11 @@ func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -692,6 +792,7 @@ func (a *App) ResolveOutputPath(req models.ResolveOutputPathRequest) (models.Res
 
 // AddWatermark adds a watermark to an image
 func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult, error) {
+	a.beginCancelableOperation()
 	if a.watermarkService == nil {
 		return models.WatermarkResult{
 			Success:    false,
@@ -709,7 +810,11 @@ func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult,
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -788,6 +893,7 @@ func (a *App) ListSystemFonts() ([]string, error) {
 
 // Adjust applies adjustments to an image
 func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
+	a.beginCancelableOperation()
 	if a.adjusterService == nil {
 		return models.AdjustResult{
 			Success:    false,
@@ -805,7 +911,11 @@ func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil
@@ -874,6 +984,7 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 
 // ApplyFilter applies a filter to an image
 func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error) {
+	a.beginCancelableOperation()
 	if a.filterService == nil {
 		return models.FilterResult{
 			Success:    false,
@@ -891,7 +1002,11 @@ func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error)
 		if strings.TrimSpace(result.OutputPath) == "" {
 			result.OutputPath = req.OutputPath
 		}
-		result.Error = mergeOperationError(result.Error, err)
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
 		return result, nil
 	}
 	return result, nil

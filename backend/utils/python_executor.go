@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,11 +24,14 @@ type PythonExecutor struct {
 	timeout    time.Duration
 
 	mu            sync.Mutex
+	procMu        sync.Mutex
+	currentProc   *os.Process
 	workerCmd     *exec.Cmd
 	workerStdin   io.WriteCloser
 	workerStdout  *bufio.Reader
 	workerDone    chan struct{}
 	workerRunning bool
+	cancelFlag    uint32
 }
 
 var (
@@ -105,6 +109,9 @@ func (e *PythonExecutor) startWorkerLocked() error {
 	e.workerStdin = stdin
 	e.workerStdout = bufio.NewReader(stdout)
 	e.workerDone = make(chan struct{})
+	e.procMu.Lock()
+	e.currentProc = cmd.Process
+	e.procMu.Unlock()
 
 	go func() {
 		r := bufio.NewReader(stderr)
@@ -157,8 +164,21 @@ func (e *PythonExecutor) StopWorker() {
 	e.stopWorkerLocked()
 }
 
+func (e *PythonExecutor) CancelActiveTask() {
+	atomic.StoreUint32(&e.cancelFlag, 1)
+	e.procMu.Lock()
+	proc := e.currentProc
+	e.procMu.Unlock()
+	if proc != nil {
+		_ = proc.Kill()
+	}
+}
+
 func (e *PythonExecutor) stopWorkerLocked() {
 	if e.workerCmd == nil {
+		e.procMu.Lock()
+		e.currentProc = nil
+		e.procMu.Unlock()
 		return
 	}
 
@@ -186,6 +206,9 @@ func (e *PythonExecutor) stopWorkerLocked() {
 	e.workerStdin = nil
 	e.workerStdout = nil
 	e.workerDone = nil
+	e.procMu.Lock()
+	e.currentProc = nil
+	e.procMu.Unlock()
 }
 
 func (e *PythonExecutor) Execute(scriptName string, input interface{}) ([]byte, error) {
@@ -198,7 +221,12 @@ func (e *PythonExecutor) Execute(scriptName string, input interface{}) ([]byte, 
 
 	out, workerErr, err := e.executeOnceLocked(scriptName, input)
 	if err == nil {
+		atomic.StoreUint32(&e.cancelFlag, 0)
 		return out, nil
+	}
+	if atomic.SwapUint32(&e.cancelFlag, 0) == 1 {
+		e.stopWorkerLocked()
+		return nil, fmt.Errorf("[PY_CANCELLED] operation cancelled")
 	}
 	if !workerErr {
 		return nil, err

@@ -7,5 +7,6 @@ type PythonRunner interface {
 	StartWorker() error
 	Execute(scriptName string, input interface{}) ([]byte, error)
 	ExecuteAndParse(scriptName string, input interface{}, result interface{}) error
+	CancelActiveTask()
 	StopWorker()
 }

@@ -2627,10 +2627,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             UNSUPPORTED_FORMAT: '当前格式不受支持',
             INVALID_ACTION: '操作类型无效',
             INTERNAL: '处理过程中发生内部错误',
+            PY_CANCELLED: '已取消当前任务',
         };
         const prefix = codeMap[code] || '处理失败';
         if (!detail) return prefix;
         return `${prefix}：${detail}`;
+    };
+    const isCancellationError = (error: unknown) => {
+        if (typeof error === 'string') {
+            const text = error.trim();
+            if (!text) return false;
+            return text.includes('[PY_CANCELLED]') || /operation cancel(?:led|ed)/i.test(text);
+        }
+        const message = (error as any)?.message;
+        if (typeof message === 'string') {
+            const text = message.trim();
+            if (!text) return false;
+            return text.includes('[PY_CANCELLED]') || /operation cancel(?:led|ed)/i.test(text);
+        }
+        return false;
     };
     const getErrorMessage = (error: unknown, fallback: string) => {
         if (typeof error === 'string' && error.trim()) return normalizeBackendError(error);
@@ -2641,6 +2656,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
     const reportTaskFailure = (taskName: string, filePath: string, reason: unknown, fallback = '处理失败') => {
         if (!onTaskFailure) return;
+        if (isCancellationError(reason)) return;
         onTaskFailure({
             taskName,
             imageName: basename(filePath),
@@ -2649,6 +2665,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
     const reportBatchTaskFailure = (taskName: string, files: DroppedFile[], reason: unknown, fallback = '处理失败') => {
         if (!onTaskFailure) return;
+        if (isCancellationError(reason)) return;
         const firstPath = files[0]?.input_path || '';
         const firstName = firstPath ? basename(firstPath) : '批量输入';
         const imageName = files.length > 1 ? `${firstName} 等` : firstName;
@@ -2898,11 +2915,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     };
 
-    const requestCancelProcessing = useCallback(() => {
+    const requestCancelProcessing = useCallback(async () => {
         if (!isProcessing) return;
         cancelRequestedRef.current = true;
         setCancelRequested(true);
         setLastMessage('正在停止处理，请稍候...');
+        try {
+            const appAny = window.go?.main?.App as any;
+            if (appAny?.CancelProcessing) {
+                await appAny.CancelProcessing();
+            }
+        } catch (err) {
+            console.error('Failed to cancel processing on backend:', err);
+        }
     }, [isProcessing]);
 
     const handleStartProcessing = async () => {
@@ -3064,21 +3089,41 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         if (chunk.length === 1) {
                             const res = await window.go.main.App.Convert(chunk[0]);
                             if (!(res as any)?.success) {
+                                if (isCancellationError((res as any)?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
                                 failed += 1;
                                 reportTaskFailure('格式转换', chunk[0].input_path, (res as any)?.error, '转换失败');
                             }
                         } else {
                             const res = await window.go.main.App.ConvertBatch(chunk);
                             if (Array.isArray(res)) {
+                                let cancelledInBatch = false;
                                 res.forEach((item: any, idx: number) => {
                                     if (!item?.success) {
+                                        if (isCancellationError(item?.error)) {
+                                            cancelledInBatch = true;
+                                            return;
+                                        }
                                         failed += 1;
                                         reportTaskFailure('格式转换', chunk[idx]?.input_path || item?.input_path || '', item?.error, '转换失败');
                                     }
                                 });
+                                if (cancelledInBatch) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
                             }
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(err);
                         failed += chunk.length;
                         reportBatchTaskFailure('格式转换', group, err, '转换失败');
@@ -3157,20 +3202,40 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             const res = await window.go.main.App.Compress(chunk[0]);
                             if ((res as any)?.warning) warned++;
                             if (!(res as any)?.success) {
+                                if (isCancellationError((res as any)?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
                                 failed += 1;
                                 reportTaskFailure('图片压缩', chunk[0].input_path, (res as any)?.error, '压缩失败');
                             }
                         } else {
                             const res = await window.go.main.App.CompressBatch(chunk);
                             warned += (res as any[]).filter(r => r?.warning).length;
+                            let cancelledInBatch = false;
                             (res as any[]).forEach((item: any, idx: number) => {
                                 if (!item?.success) {
+                                    if (isCancellationError(item?.error)) {
+                                        cancelledInBatch = true;
+                                        return;
+                                    }
                                     failed += 1;
                                     reportTaskFailure('图片压缩', chunk[idx]?.input_path || item?.input_path || '', item?.error, '压缩失败');
                                 }
                             });
+                            if (cancelledInBatch) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(err);
                         failed += chunk.length;
                         reportBatchTaskFailure('图片压缩', group, err, '压缩失败');
@@ -3255,10 +3320,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.AddWatermark(req);
                         if (!(res as any)?.success) {
+                            if (isCancellationError((res as any)?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
                             failed += 1;
                             reportTaskFailure('图片水印', f.input_path, (res as any)?.error, '水印失败');
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(`Failed to watermark ${f.input_path}:`, err);
                         failed += 1;
                         reportTaskFailure('图片水印', f.input_path, err, '水印失败');
@@ -3311,10 +3386,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.Adjust(req);
                         if (!(res as any)?.success) {
+                            if (isCancellationError((res as any)?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
                             failed += 1;
                             reportTaskFailure('图片调整', f.input_path, (res as any)?.error, '调整失败');
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(`Failed to adjust ${f.input_path}:`, err);
                         failed += 1;
                         reportTaskFailure('图片调整', f.input_path, err, '调整失败');
@@ -3361,10 +3446,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.ApplyFilter(req);
                         if (!(res as any)?.success) {
+                            if (isCancellationError((res as any)?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
                             failed += 1;
                             reportTaskFailure('图片滤镜', f.input_path, (res as any)?.error, '滤镜失败');
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(`Failed to filter ${f.input_path}:`, err);
                         failed += 1;
                         reportTaskFailure('图片滤镜', f.input_path, err, '滤镜失败');
@@ -3435,6 +3530,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 if ((res as any)?.success) {
                     setLastMessage(`PDF 已生成：${req.output_path}`);
                 } else {
+                    if (isCancellationError((res as any)?.error)) {
+                        cancelRequestedRef.current = true;
+                        setCancelRequested(true);
+                        setLastMessage('PDF 处理已取消');
+                        return;
+                    }
                     reportTaskFailure('转 PDF', files[0]?.input_path || '', (res as any)?.error, 'PDF 生成失败');
                     setLastMessage((res as any)?.error || 'PDF 生成失败');
                 }
@@ -3485,10 +3586,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             try {
                                 const res = await appAny.SplitGIF(req);
                                 if (!res?.success) {
+                                    if (isCancellationError(res?.error)) {
+                                        cancelRequestedRef.current = true;
+                                        setCancelRequested(true);
+                                        break;
+                                    }
                                     failed++;
                                     reportTaskFailure('GIF 导出', f.input_path, res?.error, '导出失败');
                                 }
                             } catch (err) {
+                                if (isCancellationError(err) || cancelRequestedRef.current) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
                                 console.error(`Failed to export GIF frames ${f.input_path}:`, err);
                                 failed++;
                                 reportTaskFailure('GIF 导出', f.input_path, err, '导出失败');
@@ -3519,23 +3630,35 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         date: batchTime,
                     });
                     const outputPath = await resolveUniquePath(joinPath(outDir, `${combinedName}.gif`));
-                    try {
-                        const res = await appAny.SplitGIF({
-                            action: 'build_gif',
-                            input_paths: files.map(f => normalizePath(f.input_path)),
-                            output_path: outputPath,
-                            fps: gifBuildFps,
-                        });
-                        if (res?.success) {
-                            setLastMessage(`合成完成：${res.output_path || outputPath}`);
-                        } else {
-                            reportTaskFailure('GIF 合成', files[0]?.input_path || '', res?.error, '合成失败');
-                            setLastMessage(res?.error || '合成失败');
-                        }
-                    } catch (err) {
-                        console.error('Failed to build GIF:', err);
-                        reportTaskFailure('GIF 合成', files[0]?.input_path || '', err, '合成失败');
-                        setLastMessage('合成失败');
+                        try {
+                            const res = await appAny.SplitGIF({
+                                action: 'build_gif',
+                                input_paths: files.map(f => normalizePath(f.input_path)),
+                                output_path: outputPath,
+                                fps: gifBuildFps,
+                            });
+                            if (res?.success) {
+                                setLastMessage(`合成完成：${res.output_path || outputPath}`);
+                            } else {
+                                if (isCancellationError(res?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    setLastMessage('GIF 合成已取消');
+                                    return;
+                                }
+                                reportTaskFailure('GIF 合成', files[0]?.input_path || '', res?.error, '合成失败');
+                                setLastMessage(res?.error || '合成失败');
+                            }
+                        } catch (err) {
+                            if (isCancellationError(err) || cancelRequestedRef.current) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                setLastMessage('GIF 合成已取消');
+                                return;
+                            }
+                            console.error('Failed to build GIF:', err);
+                            reportTaskFailure('GIF 合成', files[0]?.input_path || '', err, '合成失败');
+                            setLastMessage('合成失败');
                     } finally {
                         setProgress(100);
                     }
@@ -3579,10 +3702,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await appAny.SplitGIF(req);
                         if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
                             failed++;
                             reportTaskFailure(`GIF ${gifMode}`, f.input_path, res?.error, '处理失败');
                         }
                     } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
                         console.error(`Failed to process GIF ${f.input_path}:`, err);
                         failed++;
                         reportTaskFailure(`GIF ${gifMode}`, f.input_path, err, '处理失败');
@@ -3610,7 +3743,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         } catch (e: any) {
             console.error(e);
             reportBatchTaskFailure(feature.title, dropResult?.files || [], e, '处理失败');
-            setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
+            if (isCancellationError(e)) {
+                setLastMessage('任务已取消');
+            } else {
+                setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
+            }
         } finally {
             cancelRequestedRef.current = false;
             setCancelRequested(false);

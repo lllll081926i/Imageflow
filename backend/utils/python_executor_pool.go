@@ -63,6 +63,12 @@ func (p *PythonExecutorPool) StopWorker() {
 	}
 }
 
+func (p *PythonExecutorPool) CancelActiveTask() {
+	for _, e := range p.executors {
+		e.CancelActiveTask()
+	}
+}
+
 func (p *PythonExecutorPool) Execute(scriptName string, input interface{}) ([]byte, error) {
 	exec := <-p.ch
 	defer func() { p.ch <- exec }()
