@@ -506,10 +506,14 @@ const WatermarkSettings = memo(({
                              </div>
                          </div>
                      ) : (
-                         <div className="w-full h-28 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter" onClick={handleSelectImage}>
+                         <button
+                             type="button"
+                             onClick={handleSelectImage}
+                             className="w-full h-28 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter"
+                         >
                              <Icon name="Upload" size={20} className="mb-2 opacity-50" />
                              <span className="text-xs text-gray-500">{imageLabel}</span>
-                        </div>
+                        </button>
                     )}
                 </div>
                 <div className="space-y-[18px]">
@@ -2634,10 +2638,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         });
     };
     const clampTwoLinesStyle: React.CSSProperties = {
-        display: '-webkit-box',
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: 'vertical',
-        overflow: 'hidden',
+        maxHeight: '5rem',
+        overflowY: 'auto',
     };
     function toFileUrl(p: string) {
         if (!p) return '';

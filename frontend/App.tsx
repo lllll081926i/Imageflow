@@ -40,27 +40,8 @@ const App: React.FC = () => {
             e.stopPropagation();
         };
 
-        const preventCtrlZoom = (e: WheelEvent) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-            }
-        };
-
-        const preventCtrlKeyZoom = (e: KeyboardEvent) => {
-            if (!e.ctrlKey) return;
-            const key = e.key;
-            if (key === '+' || key === '-' || key === '=' || key === '0') {
-                e.preventDefault();
-            }
-            if (key === 'NumpadAdd' || key === 'NumpadSubtract') {
-                e.preventDefault();
-            }
-        };
-        
         window.addEventListener('dragover', preventDefault);
         window.addEventListener('drop', preventDefault);
-        window.addEventListener('wheel', preventCtrlZoom, { passive: false });
-        window.addEventListener('keydown', preventCtrlKeyZoom);
 
         // Check system preference on load
         if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -75,8 +56,6 @@ const App: React.FC = () => {
             }
             window.removeEventListener('dragover', preventDefault);
             window.removeEventListener('drop', preventDefault);
-            window.removeEventListener('wheel', preventCtrlZoom);
-            window.removeEventListener('keydown', preventCtrlKeyZoom);
         };
     }, []);
 
