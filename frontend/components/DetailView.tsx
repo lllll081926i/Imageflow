@@ -1489,6 +1489,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
+    const [cancelRequested, setCancelRequested] = useState(false);
+    const cancelRequestedRef = useRef(false);
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
@@ -2877,8 +2879,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     };
 
+    const requestCancelProcessing = useCallback(() => {
+        if (!isProcessing) return;
+        cancelRequestedRef.current = true;
+        setCancelRequested(true);
+        setLastMessage('正在停止处理，请稍候...');
+    }, [isProcessing]);
+
     const handleStartProcessing = async () => {
         if (isProcessing) return;
+        cancelRequestedRef.current = false;
+        setCancelRequested(false);
         setLastMessage('');
         setProgress(0);
         if (!dropResult || dropResult.files.length === 0) {
@@ -2960,11 +2971,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let seq = 1;
                 let failed = 0;
                 for (let i = 0; i < files.length; i += chunkSize) {
+                    if (cancelRequestedRef.current) break;
                     const group = files.slice(i, i + chunkSize);
                     const chunk = [];
                     for (const f of group) {
+                        if (cancelRequestedRef.current) break;
                         const input_path = normalizePath(f.input_path);
                         for (const icoSize of icoSizeTasks) {
+                            if (cancelRequestedRef.current) break;
                             const canOverwrite = convOverwriteSource && !isIcoFormat;
                             let output_path = input_path;
 
@@ -3024,6 +3038,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             seq += 1;
                         }
                     }
+                    if (cancelRequestedRef.current || chunk.length === 0) {
+                        break;
+                    }
                     try {
                         if (chunk.length === 1) {
                             const res = await window.go.main.App.Convert(chunk[0]);
@@ -3051,9 +3068,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     completed += chunk.length;
                     setProgress((completed / totalTasks) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(`转换完成：成功 ${success}/${totalTasks} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `转换已停止：成功 ${success}/${totalTasks} 项${extra}`
+                    : `转换完成：成功 ${success}/${totalTasks} 项${extra}`);
                 return;
             }
 
@@ -3082,9 +3102,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const chunkSize = total >= 80 ? 20 : 1;
                 let seq = 1;
                 for (let i = 0; i < files.length; i += chunkSize) {
+                    if (cancelRequestedRef.current) break;
                     const group = files.slice(i, i + chunkSize);
                     const chunk = [];
                     for (const f of group) {
+                        if (cancelRequestedRef.current) break;
                         const input_path = normalizePath(f.input_path);
                         let output_path = input_path;
                         if (!compOverwriteSource) {
@@ -3107,6 +3129,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             strip_metadata: true,
                         });
                         seq += 1;
+                    }
+                    if (cancelRequestedRef.current || chunk.length === 0) {
+                        break;
                     }
                     try {
                         if (chunk.length === 1) {
@@ -3135,9 +3160,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 || warned > 0 ? `（失败 ${failed}，未达目标 ${warned}）` : '';
-                setLastMessage(`压缩完成：成功 ${success}/${total} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `压缩已停止：成功 ${success}/${total} 项${extra}`
+                    : `压缩完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3176,6 +3204,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let seq = 1;
                 let failed = 0;
                 for (const f of files) {
+                    if (cancelRequestedRef.current) break;
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_watermark',
                         seq,
@@ -3219,9 +3248,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(`水印完成：成功 ${success}/${total} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `水印已停止：成功 ${success}/${total} 项${extra}`
+                    : `水印完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3229,6 +3261,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let seq = 1;
                 let failed = 0;
                 for (const f of files) {
+                    if (cancelRequestedRef.current) break;
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_adjusted',
                         seq,
@@ -3271,9 +3304,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(`调整完成：成功 ${success}/${total} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `调整已停止：成功 ${success}/${total} 项${extra}`
+                    : `调整完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3285,6 +3321,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let seq = 1;
                 let failed = 0;
                 for (const f of files) {
+                    if (cancelRequestedRef.current) break;
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_filtered',
                         seq,
@@ -3317,9 +3354,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(`滤镜完成：成功 ${success}/${total} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `滤镜已停止：成功 ${success}/${total} 项${extra}`
+                    : `滤镜完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3404,6 +3444,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         let failed = 0;
                         let seq = 1;
                         for (const f of gifFiles) {
+                            if (cancelRequestedRef.current) break;
                             const name = basename(f.input_path).replace(/\.[^.]+$/, '');
                             const rel = getRelPath(f, preserveStructure);
                             const relDir = getRelDir(rel);
@@ -3437,8 +3478,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             seq += 1;
                             setProgress((completed / gifFiles.length) * 100);
                         }
+                        const cancelled = cancelRequestedRef.current;
+                        const success = Math.max(0, completed - failed);
                         const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                        setLastMessage(`导出完成：${completed}/${gifFiles.length} 项${extra}`);
+                        setLastMessage(cancelled
+                            ? `导出已停止：成功 ${success}/${gifFiles.length} 项${extra}`
+                            : `导出完成：成功 ${success}/${gifFiles.length} 项${extra}`);
                         return;
                     }
 
@@ -3492,6 +3537,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let failed = 0;
                 let seq = 1;
                 for (const f of gifFiles) {
+                    if (cancelRequestedRef.current) break;
                     const suffix = action === 'reverse' ? '_reverse' : `_speed_${gifSpeedPercent}`;
                     const outRel = buildOutputRelPath(f, {
                         suffix,
@@ -3526,8 +3572,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     seq += 1;
                     setProgress((completed / gifFiles.length) * 100);
                 }
+                const cancelled = cancelRequestedRef.current;
+                const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(`${gifMode}完成：${completed}/${gifFiles.length} 项${extra}`);
+                setLastMessage(cancelled
+                    ? `${gifMode}已停止：成功 ${success}/${gifFiles.length} 项${extra}`
+                    : `${gifMode}完成：成功 ${success}/${gifFiles.length} 项${extra}`);
                 return;
             }
 
@@ -3543,6 +3593,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             reportBatchTaskFailure(feature.title, dropResult?.files || [], e, '处理失败');
             setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
         } finally {
+            cancelRequestedRef.current = false;
+            setCancelRequested(false);
             setIsProcessing(false);
         }
     };
@@ -3633,11 +3685,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
             )}
             <button 
-                onClick={handleStartProcessing} 
-                disabled={isProcessing}
-                className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                onClick={isProcessing ? requestCancelProcessing : handleStartProcessing}
+                disabled={isProcessing && cancelRequested}
+                className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
             >
-                <Icon name="Wand2" size={18} /> {isProcessing ? '处理中...' : '开始处理'}
+                <Icon name={isProcessing ? 'Close' : 'Wand2'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
             </button>
         </>
     );
