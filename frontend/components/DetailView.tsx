@@ -135,7 +135,7 @@ const ConverterSettings = memo(({
                      <div className="space-y-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">包含尺寸</label>
                         <div className="flex flex-wrap gap-2 pt-1">
-                            {[16, 32, 48, 64, 128, 256, 512, 1024].map(s => (
+                            {[16, 32, 48, 64, 128, 256].map(s => (
                                 <button 
                                     key={s}
                                     onClick={() => toggleIcoSize(s)}
@@ -1492,7 +1492,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [convFormat, setConvFormat] = useState('JPG');
     const [convQuality, setConvQuality] = useState(80);
     const [convCompressLevel, setConvCompressLevel] = useState(6); // 0-9 for PNG
-    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256, 512, 1024]);
+    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256]);
     const [convResizeMode, setConvResizeMode] = useState('原图尺寸');
     const [convScalePercent, setConvScalePercent] = useState(100);
     const [convFixedWidth, setConvFixedWidth] = useState(0);
@@ -1537,6 +1537,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
     const [previewDataUrl, setPreviewDataUrl] = useState('');
+    const [previewLoadError, setPreviewLoadError] = useState('');
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
     const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
@@ -2550,16 +2551,26 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const rel = getRelPath(file, options.preserveStructure).replace(/\\/g, '/');
         const relDir = getRelDir(rel);
         const fileName = basename(rel);
-        const baseName = stripExtension(fileName);
-        const suffix = options.suffix || '';
+        let baseName = stripExtension(fileName);
+        const suffix = sanitizeFileName(options.suffix || '');
+        if (suffix.startsWith('_ico')) {
+            baseName = baseName.replace(/_ico\d+(?:-\d+)*$/i, '');
+        }
         const ext = (options.ext || extname(fileName)).toLowerCase();
-        const name = buildOutputName(`${baseName}${suffix}`, {
+        let name = buildOutputName(baseName, {
             template: options.template,
             prefix: options.prefix,
             seq: options.seq,
             op: options.op,
             date: options.date,
         });
+        if (suffix && !name.endsWith(suffix)) {
+            const maxBaseLen = Math.max(1, 200 - suffix.length);
+            if (name.length > maxBaseLen) {
+                name = name.slice(0, maxBaseLen);
+            }
+            name = sanitizeOutputName(`${name}${suffix}`) || `${name}${suffix}`;
+        }
         const fullName = ext ? `${name}.${ext}` : name;
         return relDir ? `${relDir}/${fullName}` : fullName;
     };
@@ -2776,6 +2787,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     useEffect(() => {
         if (!isPreviewFeature) {
             setPreviewPath('');
+            setPreviewLoadError('');
             return;
         }
         const first = dropResult?.files?.[0];
@@ -2789,31 +2801,42 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     useEffect(() => {
         if (!isPreviewFeature) {
             setPreviewDataUrl('');
+            setPreviewLoadError('');
             return;
         }
         if (!previewPath) {
             setPreviewDataUrl('');
+            setPreviewLoadError('');
             return;
         }
         let cancelled = false;
         const appAny = window.go?.main?.App as any;
         if (!appAny?.GetImagePreview) {
             setPreviewDataUrl('');
+            setPreviewLoadError('当前环境不支持预览生成');
             return;
         }
         setPreviewDataUrl('');
+        setPreviewLoadError('');
         (async () => {
             try {
                 const res = await appAny.GetImagePreview({ input_path: previewPath });
                 if (cancelled) return;
                 if (res?.success && res.data_url) {
                     setPreviewDataUrl(res.data_url);
+                    setPreviewLoadError('');
                 } else {
                     setPreviewDataUrl('');
+                    const msg = typeof res?.error === 'string' && res.error.trim() ? res.error.trim() : '预览加载失败';
+                    setPreviewLoadError(msg);
                 }
             } catch (err) {
                 if (!cancelled) {
                     setPreviewDataUrl('');
+                    const msg = typeof (err as any)?.message === 'string' && (err as any).message.trim()
+                        ? (err as any).message.trim()
+                        : '预览加载失败';
+                    setPreviewLoadError(msg);
                 }
             }
         })();
@@ -2916,10 +2939,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
 
             if (id === 'converter') {
                 const format = convFormat.toLowerCase();
+                const isIcoFormat = format === 'ico';
                 const quality = convQuality;
                 const compress_level = convCompressLevel;
                 const ico_sizes = convIcoSizes;
                 const effectiveIcoSizes = (ico_sizes || []).filter((s) => typeof s === 'number' && s > 0);
+                const finalIcoSizes = effectiveIcoSizes.length ? effectiveIcoSizes : [16];
+                const icoSizeTasks = isIcoFormat ? finalIcoSizes : [0];
+                const totalTasks = isIcoFormat ? files.length * icoSizeTasks.length : total;
                 const resizeModeMap: Record<string, string> = {
                     '原图尺寸': 'original',
                     '按比例': 'percent',
@@ -2929,46 +2956,77 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
                 const chunkSize = total >= 80 ? 20 : 1;
                 let seq = 1;
+                let failed = 0;
                 for (let i = 0; i < files.length; i += chunkSize) {
                     const group = files.slice(i, i + chunkSize);
                     const chunk = [];
                     for (const f of group) {
                         const input_path = normalizePath(f.input_path);
-                        const canOverwrite = convOverwriteSource;
-                        let output_path = input_path;
-                        if (!canOverwrite) {
-                            const rel = buildOutputRelPath(f, {
-                                ext: format,
-                                seq,
-                                op: 'converter',
-                                template: outputTemplate,
-                                prefix: outputPrefix,
-                                preserveStructure,
-                                date: batchTime,
+                        for (const icoSize of icoSizeTasks) {
+                            const canOverwrite = convOverwriteSource && !isIcoFormat;
+                            let output_path = input_path;
+
+                            if (isIcoFormat) {
+                                const suffix = `_ico${icoSize}`;
+                                if (convOverwriteSource) {
+                                    const sourceFile = basename(input_path);
+                                    const sourceBase = stripExtension(sourceFile).replace(/_ico\d+(?:-\d+)*$/i, '');
+                                    const sourceDirPath = input_path.replace(/\\/g, '/');
+                                    const idx = sourceDirPath.lastIndexOf('/');
+                                    const sourceDir = idx === -1 ? '' : sourceDirPath.slice(0, idx);
+                                    const outName = sanitizeOutputName(`${sourceBase}${suffix}`) || `${sourceBase}${suffix}`;
+                                    const candidate = sourceDir ? `${sourceDir}/${outName}.${format}` : `${outName}.${format}`;
+                                    output_path = await resolveUniquePath(candidate);
+                                } else {
+                                    const rel = buildOutputRelPath(f, {
+                                        ext: format,
+                                        suffix,
+                                        seq,
+                                        op: 'converter',
+                                        template: outputTemplate,
+                                        prefix: outputPrefix,
+                                        preserveStructure,
+                                        date: batchTime,
+                                    });
+                                    output_path = await resolveUniquePath(joinPath(outDir, rel));
+                                }
+                            } else if (!canOverwrite) {
+                                const rel = buildOutputRelPath(f, {
+                                    ext: format,
+                                    seq,
+                                    op: 'converter',
+                                    template: outputTemplate,
+                                    prefix: outputPrefix,
+                                    preserveStructure,
+                                    date: batchTime,
+                                });
+                                output_path = await resolveUniquePath(joinPath(outDir, rel));
+                            }
+
+                            chunk.push({
+                                input_path,
+                                output_path,
+                                format,
+                                quality,
+                                compress_level,
+                                ico_sizes: isIcoFormat ? [icoSize] : [],
+                                icoSizes: isIcoFormat ? [icoSize] : [],
+                                width: resize_mode === 'fixed' ? convFixedWidth : 0,
+                                height: resize_mode === 'fixed' ? convFixedHeight : 0,
+                                maintain_ar: convMaintainAR,
+                                resize_mode,
+                                scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
+                                long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
+                                keep_metadata: convKeepMetadata,
                             });
-                            output_path = await resolveUniquePath(joinPath(outDir, rel));
+                            seq += 1;
                         }
-                        chunk.push({
-                            input_path,
-                            output_path,
-                            format,
-                            quality,
-                            compress_level,
-                            ico_sizes: format === 'ico' ? (effectiveIcoSizes.length ? effectiveIcoSizes : [16]) : [],
-                            width: resize_mode === 'fixed' ? convFixedWidth : 0,
-                            height: resize_mode === 'fixed' ? convFixedHeight : 0,
-                            maintain_ar: convMaintainAR,
-                            resize_mode,
-                            scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
-                            long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
-                            keep_metadata: convKeepMetadata,
-                        });
-                        seq += 1;
                     }
                     try {
                         if (chunk.length === 1) {
                             const res = await window.go.main.App.Convert(chunk[0]);
                             if (!(res as any)?.success) {
+                                failed += 1;
                                 reportTaskFailure('格式转换', chunk[0].input_path, (res as any)?.error, '转换失败');
                             }
                         } else {
@@ -2976,6 +3034,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             if (Array.isArray(res)) {
                                 res.forEach((item: any, idx: number) => {
                                     if (!item?.success) {
+                                        failed += 1;
                                         reportTaskFailure('格式转换', chunk[idx]?.input_path || item?.input_path || '', item?.error, '转换失败');
                                     }
                                 });
@@ -2983,13 +3042,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         }
                     } catch (err) {
                         console.error(err);
+                        failed += chunk.length;
                         reportBatchTaskFailure('格式转换', group, err, '转换失败');
                     }
 
                     completed += chunk.length;
-                    setProgress((completed / total) * 100);
+                    setProgress((completed / totalTasks) * 100);
                 }
-                setLastMessage(`转换完成：${completed}/${total} 项`);
+                const success = Math.max(0, completed - failed);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                setLastMessage(`转换完成：成功 ${success}/${totalTasks} 项${extra}`);
                 return;
             }
 
@@ -3071,8 +3133,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
+                const success = Math.max(0, completed - failed);
                 const extra = failed > 0 || warned > 0 ? `（失败 ${failed}，未达目标 ${warned}）` : '';
-                setLastMessage(`压缩完成：${completed}/${total} 项${extra}`);
+                setLastMessage(`压缩完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3109,6 +3172,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const resolvedPosition = positionMap[watermarkPosition] || watermarkPosition;
 
                 let seq = 1;
+                let failed = 0;
                 for (const f of files) {
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_watermark',
@@ -3141,22 +3205,27 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.AddWatermark(req);
                         if (!(res as any)?.success) {
+                            failed += 1;
                             reportTaskFailure('图片水印', f.input_path, (res as any)?.error, '水印失败');
                         }
                     } catch (err) {
                         console.error(`Failed to watermark ${f.input_path}:`, err);
+                        failed += 1;
                         reportTaskFailure('图片水印', f.input_path, err, '水印失败');
                     }
                     completed++;
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
-                setLastMessage(`水印完成：${completed}/${total} 项`);
+                const success = Math.max(0, completed - failed);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                setLastMessage(`水印完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
             if (id === 'adjust') {
                 let seq = 1;
+                let failed = 0;
                 for (const f of files) {
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_adjusted',
@@ -3188,17 +3257,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.Adjust(req);
                         if (!(res as any)?.success) {
+                            failed += 1;
                             reportTaskFailure('图片调整', f.input_path, (res as any)?.error, '调整失败');
                         }
                     } catch (err) {
                         console.error(`Failed to adjust ${f.input_path}:`, err);
+                        failed += 1;
                         reportTaskFailure('图片调整', f.input_path, err, '调整失败');
                     }
                     completed++;
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
-                setLastMessage(`调整完成：${completed}/${total} 项`);
+                const success = Math.max(0, completed - failed);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                setLastMessage(`调整完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3208,6 +3281,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const grain = clampNumber(filterGrain / 100, 0, 1);
                 const vignette = clampNumber(filterVignette / 100, 0, 1);
                 let seq = 1;
+                let failed = 0;
                 for (const f of files) {
                     const outRel = buildOutputRelPath(f, {
                         suffix: '_filtered',
@@ -3229,17 +3303,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await window.go.main.App.ApplyFilter(req);
                         if (!(res as any)?.success) {
+                            failed += 1;
                             reportTaskFailure('图片滤镜', f.input_path, (res as any)?.error, '滤镜失败');
                         }
                     } catch (err) {
                         console.error(`Failed to filter ${f.input_path}:`, err);
+                        failed += 1;
                         reportTaskFailure('图片滤镜', f.input_path, err, '滤镜失败');
                     }
                     completed++;
                     seq += 1;
                     setProgress((completed / total) * 100);
                 }
-                setLastMessage(`滤镜完成：${completed}/${total} 项`);
+                const success = Math.max(0, completed - failed);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                setLastMessage(`滤镜完成：成功 ${success}/${total} 项${extra}`);
                 return;
             }
 
@@ -3849,7 +3927,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         </div>
                     )
                 ) : (
-                    <div className="text-xs text-gray-400">拖入图片后显示预览</div>
+                    <div className={`text-xs ${previewLoadError ? 'text-red-500' : 'text-gray-400'} px-4 text-center break-all`}>
+                        {previewLoadError || '拖入图片后显示预览'}
+                    </div>
                 )}
                 {watermarkPreviewOverlay}
             </div>
