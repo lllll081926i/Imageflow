@@ -27,6 +27,7 @@ const App: React.FC = () => {
     const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const closeNotificationTimerRef = useRef<number | null>(null);
+    const notificationContainerRef = useRef<HTMLDivElement | null>(null);
     const isSecondaryView = activeView !== 'dashboard';
     const isFeatureView = FEATURE_IDS.includes(activeView);
     const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
@@ -134,6 +135,26 @@ const App: React.FC = () => {
         }
     }, [hasUnreadNotifications]);
 
+    useEffect(() => {
+        if (!isNotificationOpen) return;
+        const handlePointerDown = (event: MouseEvent) => {
+            const target = event.target;
+            if (!(target instanceof Node)) return;
+            if (notificationContainerRef.current?.contains(target)) return;
+            setIsNotificationOpen(false);
+        };
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            setIsNotificationOpen(false);
+        };
+        window.addEventListener('mousedown', handlePointerDown);
+        window.addEventListener('keydown', handleEscape);
+        return () => {
+            window.removeEventListener('mousedown', handlePointerDown);
+            window.removeEventListener('keydown', handleEscape);
+        };
+    }, [isNotificationOpen]);
+
     return (
         <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
             {/* Custom Title Bar */}
@@ -158,6 +179,7 @@ const App: React.FC = () => {
                 {/* Window Controls */}
                 <div className="flex items-center gap-2">
                     <div
+                        ref={notificationContainerRef}
                         className="relative"
                         style={{ ['--wails-draggable' as any]: 'no-drag' }}
                         onMouseEnter={handleNotificationMouseEnter}
@@ -168,6 +190,7 @@ const App: React.FC = () => {
                             title="通知"
                             aria-expanded={isNotificationOpen}
                             aria-haspopup="dialog"
+                            aria-controls="notification-panel"
                             onClick={handleNotificationButtonClick}
                             onFocus={handleNotificationMouseEnter}
                             onBlur={handleNotificationMouseLeave}
@@ -178,6 +201,9 @@ const App: React.FC = () => {
                             )}
                         </button>
                         <div
+                            id="notification-panel"
+                            role="dialog"
+                            aria-label="任务通知"
                             className={`absolute right-0 top-10 w-[320px] max-h-[360px] overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/10 bg-white/95 dark:bg-[#232326]/95 shadow-xl backdrop-blur-sm z-[120] origin-top-right transition-all duration-150 ease-out ${isNotificationOpen ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1 scale-95 pointer-events-none'}`}
                         >
                             <div className="px-3 py-2 border-b border-gray-100 dark:border-white/10 text-xs font-semibold text-gray-600 dark:text-gray-300">

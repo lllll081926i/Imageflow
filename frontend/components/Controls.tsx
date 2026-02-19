@@ -465,6 +465,16 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                                     <div
                                         key={f.input_path}
                                         onClick={() => onItemSelect?.(f)}
+                                        onKeyDown={(e) => {
+                                            if (!onItemSelect) return;
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                onItemSelect(f);
+                                            }
+                                        }}
+                                        role={onItemSelect ? 'button' : undefined}
+                                        tabIndex={onItemSelect ? 0 : -1}
+                                        aria-selected={Boolean(isSelected)}
                                         className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
                                             isSelected
                                                 ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
@@ -880,6 +890,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                         <div
                                             key={f.input_path}
                                             onClick={() => onItemSelect?.(f)}
+                                            onKeyDown={(e) => {
+                                                if (!onItemSelect) return;
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    onItemSelect(f);
+                                                }
+                                            }}
+                                            role={onItemSelect ? 'button' : undefined}
+                                            tabIndex={onItemSelect ? 0 : -1}
+                                            aria-selected={Boolean(isSelected)}
                                             className={`px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 transition-colors group/file ${
                                                 isSelected
                                                     ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
