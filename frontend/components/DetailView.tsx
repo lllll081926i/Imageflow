@@ -2613,10 +2613,29 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
         return normalizePdfFileName(name);
     };
+    const normalizeBackendError = (raw: string) => {
+        const text = raw.trim();
+        if (!text) return text;
+        const match = text.match(/^\[([A-Z_]+)\]\s*(.*)$/);
+        if (!match) return text;
+        const code = match[1];
+        const detail = match[2] || '';
+        const codeMap: Record<string, string> = {
+            NOT_FOUND: '未找到文件',
+            BAD_INPUT: '输入参数无效',
+            PERMISSION_DENIED: '没有权限访问目标路径',
+            UNSUPPORTED_FORMAT: '当前格式不受支持',
+            INVALID_ACTION: '操作类型无效',
+            INTERNAL: '处理过程中发生内部错误',
+        };
+        const prefix = codeMap[code] || '处理失败';
+        if (!detail) return prefix;
+        return `${prefix}：${detail}`;
+    };
     const getErrorMessage = (error: unknown, fallback: string) => {
-        if (typeof error === 'string' && error.trim()) return error.trim();
+        if (typeof error === 'string' && error.trim()) return normalizeBackendError(error);
         if (typeof (error as any)?.message === 'string' && (error as any).message.trim()) {
-            return (error as any).message.trim();
+            return normalizeBackendError((error as any).message);
         }
         return fallback;
     };
