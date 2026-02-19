@@ -537,6 +537,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             files: merged,
         };
     };
+    const mergeAndPublishResult = useCallback((incoming: ExpandDroppedPathsResult) => {
+        let mergedSnapshot: ExpandDroppedPathsResult | null = null;
+        setPreviewResult((prev) => {
+            mergedSnapshot = mergeResults(prev, incoming);
+            return mergedSnapshot;
+        });
+        if (mergedSnapshot) {
+            onPathsExpanded?.(mergedSnapshot);
+        }
+    }, [onPathsExpanded]);
     const resolveFilePaths = (files: File[]) => {
         const direct = files.map((file) => {
             const anyFile = file as any;
@@ -560,9 +570,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         onFilesSelected(files);
         const expanded = await expandPathsFromFiles(files);
         if (expanded) {
-            const merged = mergeResults(previewResult, expanded);
-            setPreviewResult(merged);
-            onPathsExpanded?.(merged);
+            mergeAndPublishResult(expanded);
             return;
         }
 
@@ -583,9 +591,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 };
             })
         };
-        const merged = mergeResults(previewResult, result);
-        setPreviewResult(merged);
-        onPathsExpanded?.(merged);
+        mergeAndPublishResult(result);
     };
 
     useEffect(() => {
@@ -598,9 +604,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
             try {
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
-                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
-                setPreviewResult(merged);
-                onPathsExpanded?.(merged);
+                mergeAndPublishResult(result as ExpandDroppedPathsResult);
             } catch (e) {
                 console.error(e);
             }
@@ -609,7 +613,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         return () => {
             window.runtime?.OnFileDropOff?.();
         };
-    }, [onPathsExpanded, isActive, previewResult]);
+    }, [isActive, mergeAndPublishResult]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -645,9 +649,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 }
 
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
-                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
-                setPreviewResult(merged);
-                onPathsExpanded?.(merged);
+                mergeAndPublishResult(result as ExpandDroppedPathsResult);
                 return;
             }
             if (window.runtime?.OpenFileDialog) {
@@ -674,9 +676,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 }
 
                 const result = await window.go.main.App.ExpandDroppedPaths(paths);
-                const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
-                setPreviewResult(merged);
-                onPathsExpanded?.(merged);
+                mergeAndPublishResult(result as ExpandDroppedPathsResult);
                 return;
             }
         } catch (e) {
@@ -703,9 +703,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         return;
                     }
                     const result = await window.go.main.App.ExpandDroppedPaths([dir]);
-                    const merged = mergeResults(previewResult, result as ExpandDroppedPathsResult);
-                    setPreviewResult(merged);
-                    onPathsExpanded?.(merged);
+                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
                     return;
                 }
             } catch (err) {
