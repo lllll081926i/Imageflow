@@ -5,12 +5,18 @@ import Icon from './Icon';
 // --- Reusable UI Components ---
 
 export const Switch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label?: string }> = memo(({ checked, onChange, label }) => (
-    <div className="flex items-center justify-between cursor-pointer group select-none" onClick={() => onChange(!checked)}>
+    <button
+        type="button"
+        aria-pressed={checked}
+        aria-label={label || '切换开关'}
+        onClick={() => onChange(!checked)}
+        className="w-full flex items-center justify-between cursor-pointer group select-none text-left"
+    >
         {label && <span className="text-sm font-medium text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">{label}</span>}
         <div className={`w-11 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${checked ? 'bg-[#007AFF]' : 'bg-gray-300 dark:bg-white/20'}`}>
             <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-200 ease-in-out ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
         </div>
-    </div>
+    </button>
 ));
 
 export const PositionGrid: React.FC<{ value: string; onChange: (val: string) => void }> = memo(({ value, onChange }) => {
@@ -395,11 +401,19 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
 
     return (
         <div className="border-b border-gray-200/60 dark:border-white/10 last:border-0">
-            <button
-                type="button"
+            <div
+                role="button"
+                tabIndex={0}
                 onClick={(e) => {
                     e.stopPropagation();
                     setOpen((prev) => !prev);
+                }}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setOpen((prev) => !prev);
+                    }
                 }}
                 className="w-full py-3 flex items-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-colors pr-4"
                 style={{ paddingLeft }}
@@ -422,7 +436,7 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                         <Icon name="Trash2" size={14} />
                     </button>
                 )}
-            </button>
+            </div>
 
             <div
                 className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${

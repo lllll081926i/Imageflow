@@ -144,6 +144,17 @@ const App: React.FC = () => {
         }, 120);
     }, []);
 
+    const handleNotificationButtonClick = useCallback(() => {
+        if (closeNotificationTimerRef.current) {
+            window.clearTimeout(closeNotificationTimerRef.current);
+            closeNotificationTimerRef.current = null;
+        }
+        setIsNotificationOpen((prev) => !prev);
+        if (hasUnreadNotifications) {
+            setHasUnreadNotifications(false);
+        }
+    }, [hasUnreadNotifications]);
+
     return (
         <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
             {/* Custom Title Bar */}
@@ -152,16 +163,18 @@ const App: React.FC = () => {
                 style={{ ['--wails-draggable' as any]: 'drag' }}
             >
                 {/* Logo & Title */}
-                <div 
+                <button
+                    type="button"
                     className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity cursor-pointer group"
                     onClick={() => handleNavigate('dashboard')}
                     style={{ ['--wails-draggable' as any]: 'no-drag' }}
+                    title="返回主页"
                 >
                     <div className="w-6 h-6 flex items-center justify-center transition-transform group-hover:scale-105">
                         <Icon name="AppLogo" size={22} />
                     </div>
                     <span className="text-sm font-semibold tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-[#007AFF] via-[#5856D6] to-[#AF52DE]">ImageFlow</span>
-                </div>
+                </button>
 
                 {/* Window Controls */}
                 <div className="flex items-center gap-2">
@@ -174,6 +187,11 @@ const App: React.FC = () => {
                         <button
                             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50 relative"
                             title="通知"
+                            aria-expanded={isNotificationOpen}
+                            aria-haspopup="dialog"
+                            onClick={handleNotificationButtonClick}
+                            onFocus={handleNotificationMouseEnter}
+                            onBlur={handleNotificationMouseLeave}
                         >
                             <Icon name="Bell" size={16} />
                             {hasUnreadNotifications && failureNotifications.length > 0 && (
