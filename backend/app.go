@@ -161,6 +161,21 @@ func (a *App) Ping() string {
 	return "pong"
 }
 
+func mergeOperationError(resultError string, err error) string {
+	trimmed := strings.TrimSpace(resultError)
+	if trimmed != "" {
+		return trimmed
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "处理失败"
+}
+
+func serviceNotReadyMessage(serviceName string) string {
+	return fmt.Sprintf("%s未就绪，请重启应用后重试", serviceName)
+}
+
 func (a *App) GetSettings() (models.AppSettings, error) {
 	return a.settings, nil
 }
@@ -247,7 +262,27 @@ func (a *App) ExpandDroppedPaths(paths []string) (models.ExpandDroppedPathsResul
 
 // Convert converts an image to a different format
 func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
-	return a.converterService.Convert(req)
+	if a.converterService == nil {
+		return models.ConvertResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("格式转换服务"),
+		}, nil
+	}
+	result, err := a.converterService.Convert(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // ConvertBatch converts multiple images concurrently
@@ -257,8 +292,19 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 	if n == 0 {
 		return results, nil
 	}
-	var errsMu sync.Mutex
-	var errs []error
+	if a.converterService == nil {
+		errMsg := serviceNotReadyMessage("格式转换服务")
+		for i, req := range requests {
+			results[i] = models.ConvertResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}
+		return results, nil
+	}
+
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -278,12 +324,17 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 			defer wg.Done()
 			for idx := range jobs {
 				res, err := a.converterService.Convert(requests[idx])
-				results[idx] = res
 				if err != nil {
-					errsMu.Lock()
-					errs = append(errs, fmt.Errorf("convert[%d]: %w", idx, err))
-					errsMu.Unlock()
+					res.Success = false
+					if strings.TrimSpace(res.InputPath) == "" {
+						res.InputPath = requests[idx].InputPath
+					}
+					if strings.TrimSpace(res.OutputPath) == "" {
+						res.OutputPath = requests[idx].OutputPath
+					}
+					res.Error = mergeOperationError(res.Error, err)
 				}
+				results[idx] = res
 			}
 		}()
 	}
@@ -292,15 +343,32 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 	}
 	close(jobs)
 	wg.Wait()
-	if len(errs) > 0 {
-		return results, errors.Join(errs...)
-	}
 	return results, nil
 }
 
 // Compress compresses an image
 func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error) {
-	return a.compressorService.Compress(req)
+	if a.compressorService == nil {
+		return models.CompressResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("图片压缩服务"),
+		}, nil
+	}
+	result, err := a.compressorService.Compress(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // CompressBatch compresses multiple images concurrently
@@ -310,8 +378,19 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 	if n == 0 {
 		return results, nil
 	}
-	var errsMu sync.Mutex
-	var errs []error
+	if a.compressorService == nil {
+		errMsg := serviceNotReadyMessage("图片压缩服务")
+		for i, req := range requests {
+			results[i] = models.CompressResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}
+		return results, nil
+	}
+
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -331,12 +410,17 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 			defer wg.Done()
 			for idx := range jobs {
 				res, err := a.compressorService.Compress(requests[idx])
-				results[idx] = res
 				if err != nil {
-					errsMu.Lock()
-					errs = append(errs, fmt.Errorf("compress[%d]: %w", idx, err))
-					errsMu.Unlock()
+					res.Success = false
+					if strings.TrimSpace(res.InputPath) == "" {
+						res.InputPath = requests[idx].InputPath
+					}
+					if strings.TrimSpace(res.OutputPath) == "" {
+						res.OutputPath = requests[idx].OutputPath
+					}
+					res.Error = mergeOperationError(res.Error, err)
 				}
+				results[idx] = res
 			}
 		}()
 	}
@@ -345,25 +429,82 @@ func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.Compres
 	}
 	close(jobs)
 	wg.Wait()
-	if len(errs) > 0 {
-		return results, errors.Join(errs...)
-	}
 	return results, nil
 }
 
 // GeneratePDF generates a PDF from multiple images
 func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
-	return a.pdfGeneratorService.GeneratePDF(req)
+	if a.pdfGeneratorService == nil {
+		return models.PDFResult{
+			Success:    false,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("PDF 服务"),
+		}, nil
+	}
+	result, err := a.pdfGeneratorService.GeneratePDF(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // SplitGIF handles GIF-related actions (export_frames, reverse, change_speed, build_gif)
 func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
-	return a.gifSplitterService.SplitGIF(req)
+	if a.gifSplitterService == nil {
+		return models.GIFSplitResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			InputPaths: req.InputPaths,
+			OutputDir:  req.OutputDir,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("GIF 服务"),
+		}, nil
+	}
+	result, err := a.gifSplitterService.SplitGIF(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if len(result.InputPaths) == 0 && len(req.InputPaths) > 0 {
+			result.InputPaths = req.InputPaths
+		}
+		if strings.TrimSpace(result.OutputDir) == "" {
+			result.OutputDir = req.OutputDir
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // GetInfo retrieves image information
 func (a *App) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
-	return a.infoViewerService.GetInfo(req)
+	if a.infoViewerService == nil {
+		return models.InfoResult{
+			Success:   false,
+			InputPath: req.InputPath,
+			Error:     serviceNotReadyMessage("信息读取服务"),
+		}, nil
+	}
+	result, err := a.infoViewerService.GetInfo(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 func getPreviewMaxBytes() int64 {
@@ -472,11 +613,51 @@ func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, 
 
 // EditMetadata edits image metadata (EXIF)
 func (a *App) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditResult, error) {
-	return a.infoViewerService.EditMetadata(req)
+	if a.infoViewerService == nil {
+		return models.MetadataEditResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("元数据服务"),
+		}, nil
+	}
+	result, err := a.infoViewerService.EditMetadata(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 func (a *App) StripMetadata(req models.MetadataStripRequest) (models.MetadataStripResult, error) {
-	return a.metadataService.StripMetadata(req)
+	if a.metadataService == nil {
+		return models.MetadataStripResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("隐私清理服务"),
+		}, nil
+	}
+	result, err := a.metadataService.StripMetadata(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // ResolveOutputPath resolves an output path with conflict strategy (rename).
@@ -511,7 +692,27 @@ func (a *App) ResolveOutputPath(req models.ResolveOutputPathRequest) (models.Res
 
 // AddWatermark adds a watermark to an image
 func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult, error) {
-	return a.watermarkService.AddWatermark(req)
+	if a.watermarkService == nil {
+		return models.WatermarkResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("水印服务"),
+		}, nil
+	}
+	result, err := a.watermarkService.AddWatermark(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // AddWatermarkBatch adds watermarks to multiple images concurrently
@@ -521,8 +722,19 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 	if n == 0 {
 		return results, nil
 	}
-	var errsMu sync.Mutex
-	var errs []error
+	if a.watermarkService == nil {
+		errMsg := serviceNotReadyMessage("水印服务")
+		for i, req := range requests {
+			results[i] = models.WatermarkResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}
+		return results, nil
+	}
+
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -542,12 +754,17 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 			defer wg.Done()
 			for idx := range jobs {
 				res, err := a.watermarkService.AddWatermark(requests[idx])
-				results[idx] = res
 				if err != nil {
-					errsMu.Lock()
-					errs = append(errs, fmt.Errorf("watermark[%d]: %w", idx, err))
-					errsMu.Unlock()
+					res.Success = false
+					if strings.TrimSpace(res.InputPath) == "" {
+						res.InputPath = requests[idx].InputPath
+					}
+					if strings.TrimSpace(res.OutputPath) == "" {
+						res.OutputPath = requests[idx].OutputPath
+					}
+					res.Error = mergeOperationError(res.Error, err)
 				}
+				results[idx] = res
 			}
 		}()
 	}
@@ -556,9 +773,6 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 	}
 	close(jobs)
 	wg.Wait()
-	if len(errs) > 0 {
-		return results, errors.Join(errs...)
-	}
 	return results, nil
 }
 
@@ -574,7 +788,27 @@ func (a *App) ListSystemFonts() ([]string, error) {
 
 // Adjust applies adjustments to an image
 func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
-	return a.adjusterService.Adjust(req)
+	if a.adjusterService == nil {
+		return models.AdjustResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("调整服务"),
+		}, nil
+	}
+	result, err := a.adjusterService.Adjust(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // AdjustBatch applies adjustments to multiple images concurrently
@@ -584,8 +818,19 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 	if n == 0 {
 		return results, nil
 	}
-	var errsMu sync.Mutex
-	var errs []error
+	if a.adjusterService == nil {
+		errMsg := serviceNotReadyMessage("调整服务")
+		for i, req := range requests {
+			results[i] = models.AdjustResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}
+		return results, nil
+	}
+
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -605,12 +850,17 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 			defer wg.Done()
 			for idx := range jobs {
 				res, err := a.adjusterService.Adjust(requests[idx])
-				results[idx] = res
 				if err != nil {
-					errsMu.Lock()
-					errs = append(errs, fmt.Errorf("adjust[%d]: %w", idx, err))
-					errsMu.Unlock()
+					res.Success = false
+					if strings.TrimSpace(res.InputPath) == "" {
+						res.InputPath = requests[idx].InputPath
+					}
+					if strings.TrimSpace(res.OutputPath) == "" {
+						res.OutputPath = requests[idx].OutputPath
+					}
+					res.Error = mergeOperationError(res.Error, err)
 				}
+				results[idx] = res
 			}
 		}()
 	}
@@ -619,15 +869,32 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 	}
 	close(jobs)
 	wg.Wait()
-	if len(errs) > 0 {
-		return results, errors.Join(errs...)
-	}
 	return results, nil
 }
 
 // ApplyFilter applies a filter to an image
 func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error) {
-	return a.filterService.ApplyFilter(req)
+	if a.filterService == nil {
+		return models.FilterResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("滤镜服务"),
+		}, nil
+	}
+	result, err := a.filterService.ApplyFilter(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.InputPath) == "" {
+			result.InputPath = req.InputPath
+		}
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		result.Error = mergeOperationError(result.Error, err)
+		return result, nil
+	}
+	return result, nil
 }
 
 // ApplyFilterBatch applies filters to multiple images concurrently
@@ -637,8 +904,19 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 	if n == 0 {
 		return results, nil
 	}
-	var errsMu sync.Mutex
-	var errs []error
+	if a.filterService == nil {
+		errMsg := serviceNotReadyMessage("滤镜服务")
+		for i, req := range requests {
+			results[i] = models.FilterResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}
+		return results, nil
+	}
+
 	workers := a.settings.MaxConcurrency
 	if workers < 1 {
 		workers = 1
@@ -658,12 +936,17 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 			defer wg.Done()
 			for idx := range jobs {
 				res, err := a.filterService.ApplyFilter(requests[idx])
-				results[idx] = res
 				if err != nil {
-					errsMu.Lock()
-					errs = append(errs, fmt.Errorf("filter[%d]: %w", idx, err))
-					errsMu.Unlock()
+					res.Success = false
+					if strings.TrimSpace(res.InputPath) == "" {
+						res.InputPath = requests[idx].InputPath
+					}
+					if strings.TrimSpace(res.OutputPath) == "" {
+						res.OutputPath = requests[idx].OutputPath
+					}
+					res.Error = mergeOperationError(res.Error, err)
 				}
+				results[idx] = res
 			}
 		}()
 	}
@@ -672,8 +955,5 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 	}
 	close(jobs)
 	wg.Wait()
-	if len(errs) > 0 {
-		return results, errors.Join(errs...)
-	}
 	return results, nil
 }
