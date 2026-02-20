@@ -140,6 +140,7 @@ export namespace models {
 	    keep_metadata: boolean;
 	    compress_level: number;
 	    ico_sizes: number[];
+	    icoSizes?: number[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ConvertRequest(source);
@@ -160,6 +161,7 @@ export namespace models {
 	        this.keep_metadata = source["keep_metadata"];
 	        this.compress_level = source["compress_level"];
 	        this.ico_sizes = source["ico_sizes"];
+	        this.icoSizes = source["icoSizes"];
 	    }
 	}
 	export class ConvertResult {

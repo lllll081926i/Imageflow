@@ -75,6 +75,7 @@ class ImageConverter:
     
     # Supported output formats and their parameters
     OUTPUT_FORMATS = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif', 'ico', 'avif']
+    VALID_ICO_SIZES = {16, 32, 48, 64, 128, 256}
 
     # Quality-aware formats
     QUALITY_FORMATS = ['jpg', 'jpeg', 'webp', 'avif']
@@ -256,7 +257,7 @@ class ImageConverter:
             for s in ico_sizes:
                 try:
                     v = int(s)
-                    if v > 0:
+                    if v in self.VALID_ICO_SIZES:
                         values.append(v)
                 except Exception:
                     continue
@@ -639,6 +640,8 @@ def process(input_data):
         keep_metadata = input_data.get('keep_metadata', False)
         compress_level = input_data.get('compress_level', 6)
         ico_sizes = input_data.get('ico_sizes', None)
+        if not ico_sizes:
+            ico_sizes = input_data.get('icoSizes', None)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -703,6 +706,8 @@ def main():
         keep_metadata = input_data.get('keep_metadata', False)
         compress_level = input_data.get('compress_level', 6)
         ico_sizes = input_data.get('ico_sizes', None)
+        if not ico_sizes:
+            ico_sizes = input_data.get('icoSizes', None)
         
         # Validate required parameters
         if not input_path or not output_path:

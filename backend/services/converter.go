@@ -30,6 +30,9 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 	req.InputPath = resolveInputPath(req.InputPath, req.OutputPath)
 	if strings.EqualFold(strings.TrimSpace(req.Format), "ico") {
+		if len(req.ICOSizes) == 0 && len(req.ICOSizesAlt) > 0 {
+			req.ICOSizes = req.ICOSizesAlt
+		}
 		req.ICOSizes = normalizeICOSizes(req.ICOSizes)
 	}
 	if req.OutputPath != "" && !filepath.IsAbs(req.OutputPath) {
@@ -112,10 +115,22 @@ func normalizeICOSizes(sizes []int) []int {
 		return nil
 	}
 
+	allowed := map[int]struct{}{
+		16:  {},
+		32:  {},
+		48:  {},
+		64:  {},
+		128: {},
+		256: {},
+	}
+
 	unique := make(map[int]struct{}, len(sizes))
 	normalized := make([]int, 0, len(sizes))
 	for _, size := range sizes {
 		if size <= 0 {
+			continue
+		}
+		if _, ok := allowed[size]; !ok {
 			continue
 		}
 		if _, exists := unique[size]; exists {
