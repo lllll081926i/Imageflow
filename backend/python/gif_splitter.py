@@ -44,9 +44,6 @@ class GIFTool:
     def export_frames(self, input_path, output_dir, output_format="png", frame_range="all"):
         try:
             output_format = (output_format or "png").lower()
-            if output_format in ("jpg", "jpeg"):
-                logger.info("Requested frame format %s is normalized to PNG", output_format)
-                output_format = "png"
             if output_format not in FRAME_OUTPUT_FORMATS:
                 return {"success": False, "error": f"Unsupported output format: {output_format}"}
 
@@ -152,20 +149,13 @@ class GIFTool:
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
-                frames, durations, gif_loop = self._extract_gif_frames(gif)
+                frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
 
             quality_value = self._sanitize_quality(quality)
             palette_size = self._quality_to_palette_size(quality_value)
             compressed_frames = []
             for frame in frames:
-                compressed_frames.append(
-                    frame.convert(
-                        "P",
-                        palette=Image.ADAPTIVE,
-                        colors=palette_size,
-                        dither=Image.FLOYDSTEINBERG,
-                    )
-                )
+                compressed_frames.append(self._quantize_rgba_frame(frame, palette_size))
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
@@ -175,7 +165,8 @@ class GIFTool:
                 durations,
                 loop_value,
                 optimize=True,
-                disposal=2,
+                disposal=disposals,
+                transparency=255,
             )
 
             in_size = os.path.getsize(input_path) if os.path.exists(input_path) else 0
@@ -269,6 +260,25 @@ class GIFTool:
         loop = gif.info.get("loop", 0)
         return frames, durations, loop
 
+    def _extract_gif_frames_with_disposal(self, gif):
+        frames = []
+        durations = []
+        disposals = []
+        default_duration = gif.info.get("duration", 100)
+        for frame in ImageSequence.Iterator(gif):
+            # Use RGBA to preserve alpha information during compression.
+            frames.append(frame.convert("RGBA").copy())
+            duration = frame.info.get("duration", default_duration)
+            if not isinstance(duration, int) or duration <= 0:
+                duration = default_duration
+            durations.append(duration)
+            disposal = frame.info.get("disposal", getattr(frame, "disposal_method", 0))
+            if not isinstance(disposal, int) or disposal < 0:
+                disposal = 0
+            disposals.append(disposal)
+        loop = gif.info.get("loop", 0)
+        return frames, durations, loop, disposals
+
     def _parse_frame_range(self, frame_range, total_frames):
         if not frame_range or frame_range == "all":
             return list(range(total_frames))
@@ -287,7 +297,7 @@ class GIFTool:
             logger.warning("Invalid frame range '%s': %s. Using all frames.", frame_range, exc)
             return list(range(total_frames))
 
-    def _save_gif(self, frames, output_path, durations, loop, optimize=False, disposal=None):
+    def _save_gif(self, frames, output_path, durations, loop, optimize=False, disposal=None, transparency=None):
         if not frames:
             raise ValueError("No frames to save")
         first, rest = frames[0], frames[1:]
@@ -300,6 +310,8 @@ class GIFTool:
         }
         if disposal is not None:
             save_kwargs["disposal"] = disposal
+        if transparency is not None:
+            save_kwargs["transparency"] = transparency
         first.save(
             output_path,
             **save_kwargs,
@@ -345,8 +357,26 @@ class GIFTool:
         return max(MIN_QUALITY, min(MAX_QUALITY, quality))
 
     def _quality_to_palette_size(self, quality):
-        # GIF palette size max is 256, min practical value keeps animation recognizable.
-        return max(16, min(256, int(round((quality / 100.0) * 256))))
+        # Keep one palette index reserved for transparency.
+        return max(16, min(255, int(round((quality / 100.0) * 255))))
+
+    def _quantize_rgba_frame(self, frame, palette_size):
+        rgba = frame.convert("RGBA")
+        alpha = rgba.getchannel("A")
+        # Reserve one index (255) for transparent pixels.
+        colors = max(2, min(255, int(palette_size)))
+        quantized = rgba.quantize(
+            colors=colors,
+            method=Image.FASTOCTREE,
+            dither=Image.FLOYDSTEINBERG,
+        )
+        palette = quantized.getpalette() or []
+        if len(palette) < 768:
+            quantized.putpalette(palette + [0] * (768 - len(palette)))
+        transparent_mask = alpha.point(lambda a: 255 if a <= 127 else 0, mode="L")
+        quantized.paste(255, mask=transparent_mask)
+        quantized.info["transparency"] = 255
+        return quantized
 
     def _ensure_parent_dir(self, path):
         parent = os.path.dirname(path)

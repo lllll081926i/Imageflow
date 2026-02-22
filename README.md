@@ -193,7 +193,7 @@ wails build
 - `jpg`, `jpeg`, `png`, `webp`, `bmp`, `tiff`, `tif`, `ico`, `avif`
 
 ### GIF 帧导出格式
-- `png`, `jpg/jpeg`, `bmp`
+- `png`, `bmp`
 
 ---
 

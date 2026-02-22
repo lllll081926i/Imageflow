@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 
-from PIL import Image
+from PIL import Image, ImageSequence
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -41,6 +41,28 @@ class GifSplitterTests(unittest.TestCase):
         Image.new("RGB", (12, 12), color).save(path, format="PNG")
         return path
 
+    def _make_transparent_gif(self):
+        path = self._path("sample_transparent.gif")
+        frames = []
+        for idx in range(4):
+            frame = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+            x0 = 2 + idx * 4
+            x1 = x0 + 8
+            for x in range(x0, min(x1, 24)):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (255, 0, 0, 255))
+            frames.append(frame)
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[90] * len(frames),
+            loop=0,
+            disposal=2,
+        )
+        return path
+
     def test_export_frames_png(self):
         gif_path = self._make_gif()
         out_dir = self._path("frames")
@@ -59,9 +81,9 @@ class GifSplitterTests(unittest.TestCase):
             with Image.open(frame_path) as img:
                 self.assertEqual(img.format, "PNG")
 
-    def test_export_frames_jpg_request_normalized_to_png(self):
+    def test_export_frames_jpg_request_rejected(self):
         gif_path = self._make_gif()
-        out_dir = self._path("frames_jpg_normalized")
+        out_dir = self._path("frames_jpg_rejected")
         result = handle_request(
             {
                 "action": "export_frames",
@@ -70,13 +92,8 @@ class GifSplitterTests(unittest.TestCase):
                 "output_format": "jpg",
             }
         )
-        self.assertTrue(result.get("success"))
-        self.assertEqual(result.get("export_count"), 2)
-        for frame_path in result.get("frame_paths", []):
-            self.assertTrue(frame_path.lower().endswith(".png"))
-            self.assertTrue(os.path.exists(frame_path))
-            with Image.open(frame_path) as img:
-                self.assertEqual(img.format, "PNG")
+        self.assertFalse(result.get("success"))
+        self.assertIn("Unsupported output format: jpg", result.get("error", ""))
 
     def test_get_frame_count_success(self):
         gif_path = self._make_gif()
@@ -128,6 +145,24 @@ class GifSplitterTests(unittest.TestCase):
         )
         self.assertTrue(result.get("success"))
         self.assertEqual(result.get("quality"), 90)
+
+    def test_compress_gif_preserves_transparent_background(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("sample_transparent_compress.gif")
+        result = handle_request(
+            {
+                "action": "compress",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "quality": 75,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            for frame in ImageSequence.Iterator(img):
+                rgba = frame.convert("RGBA")
+                self.assertEqual(rgba.getpixel((0, 0))[3], 0)
 
     def test_reverse_gif_success(self):
         gif_path = self._make_gif()

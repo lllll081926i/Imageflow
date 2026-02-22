@@ -78,11 +78,11 @@ type GIFSplitRequest struct {
 	InputPaths   []string `json:"input_paths,omitempty"`   // used for build_gif
 	OutputDir    string   `json:"output_dir,omitempty"`    // used for export_frames
 	OutputPath   string   `json:"output_path,omitempty"`   // used for reverse/change_speed/build_gif
-	OutputFormat string   `json:"output_format,omitempty"` // png, jpg, etc.
+	OutputFormat string   `json:"output_format,omitempty"` // png/bmp
 	FrameRange   string   `json:"frame_range,omitempty"`   // all, start-end, start:step
 	StartFrame   int      `json:"start_frame,omitempty"`   // legacy support
 	EndFrame     int      `json:"end_frame,omitempty"`     // legacy support
-	Format       string   `json:"format,omitempty"`        // legacy support (png, jpg)
+	Format       string   `json:"format,omitempty"`        // legacy support (png/bmp)
 	SpeedFactor  float64  `json:"speed_factor,omitempty"`  // 0.1-2.0
 	FPS          float64  `json:"fps,omitempty"`           // used for build_gif
 	Quality      int      `json:"quality,omitempty"`       // used for compress (1-100)
