@@ -8,23 +8,14 @@ import (
 	"strings"
 )
 
-// ExtractEmbeddedPythonScripts writes embedded python files next to the executable and returns its path.
+// ExtractEmbeddedPythonScripts writes embedded python files into the user cache directory and returns its path.
 func ExtractEmbeddedPythonScripts(embedded fs.FS, embeddedRoot string) (string, error) {
-	destRoot, err := embeddedExtractRoot("python")
+	destRoot, err := embeddedExtractCacheRoot("python")
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(destRoot, 0755); err != nil {
-		fallback, fallbackErr := embeddedExtractCacheRoot("python")
-		if fallbackErr == nil && fallback != "" && fallback != destRoot {
-			if mkErr := os.MkdirAll(fallback, 0755); mkErr == nil {
-				destRoot = fallback
-			} else {
-				return "", fmt.Errorf("create embedded python dir: %w", mkErr)
-			}
-		} else {
-			return "", fmt.Errorf("create embedded python dir: %w", err)
-		}
+		return "", fmt.Errorf("create embedded python dir: %w", err)
 	}
 
 	err = fs.WalkDir(embedded, embeddedRoot, func(p string, d fs.DirEntry, walkErr error) error {

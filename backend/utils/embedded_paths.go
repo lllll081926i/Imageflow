@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+const embeddedCacheRootEnv = "IMAGEFLOW_EMBEDDED_CACHE_ROOT"
 
 func embeddedExtractRoot(subdir string) (string, error) {
 	if exe, err := os.Executable(); err == nil {
@@ -25,6 +28,10 @@ func embeddedExtractRoot(subdir string) (string, error) {
 }
 
 func embeddedExtractCacheRoot(subdir string) (string, error) {
+	if override := strings.TrimSpace(os.Getenv(embeddedCacheRootEnv)); override != "" {
+		return filepath.Join(override, subdir), nil
+	}
+
 	cacheDir, err := os.UserCacheDir()
 	if err != nil || cacheDir == "" {
 		cacheDir = os.TempDir()

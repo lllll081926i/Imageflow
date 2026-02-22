@@ -26,6 +26,10 @@ export function ApplyFilterBatch(arg1) {
   return window['go']['main']['App']['ApplyFilterBatch'](arg1);
 }
 
+export function CancelProcessing() {
+  return window['go']['main']['App']['CancelProcessing']();
+}
+
 export function Compress(arg1) {
   return window['go']['main']['App']['Compress'](arg1);
 }

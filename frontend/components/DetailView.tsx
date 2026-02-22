@@ -4,6 +4,7 @@ import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
 import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone, ProgressBar } from './Controls';
+import { buildGifProcessSuffix, resolveGifAction } from './gifHelpers';
 
 interface DetailViewProps {
     id: ViewState;
@@ -980,6 +981,8 @@ type GifSettingsProps = {
     setExportFormat: (v: string) => void;
     speedPercent: number;
     setSpeedPercent: (v: number) => void;
+    compressQuality: number;
+    setCompressQuality: (v: number) => void;
     sourceType: 'gif' | 'images' | 'mixed' | 'empty';
     buildFps: number;
     setBuildFps: (v: number) => void;
@@ -992,6 +995,8 @@ const GifSettings = memo(({
     setExportFormat,
     speedPercent,
     setSpeedPercent,
+    compressQuality,
+    setCompressQuality,
     sourceType,
     buildFps,
     setBuildFps,
@@ -1002,7 +1007,7 @@ const GifSettings = memo(({
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">合成 GIF</label>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                        PNG/JPG 直接合成，其它格式会先转为 JPG。
+                        所有输入都会按 PNG 流程处理，非 PNG 会先转换后再合成 GIF。
                     </div>
                 </div>
                 <div className="space-y-3 animate-enter">
@@ -1026,7 +1031,7 @@ const GifSettings = memo(({
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
                 <SegmentedControl
-                    options={['导出', '倒放', '修改帧率']}
+                    options={['导出', '倒放', '修改帧率', '压缩']}
                     value={mode}
                     onChange={setMode}
                 />
@@ -1036,12 +1041,12 @@ const GifSettings = memo(({
                 <div className="space-y-3 animate-enter">
                     <CustomSelect
                         label="导出帧格式"
-                        options={['PNG', 'JPG']}
+                        options={['PNG']}
                         value={exportFormat}
                         onChange={setExportFormat}
                     />
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                        GIF 输入导出帧，图片输入合成 GIF（非 PNG/JPG 会先转为 JPG）。
+                        GIF 输入导出帧，图片输入合成 GIF（统一按 PNG 流程处理）。
                     </div>
                 </div>
             )}
@@ -1057,6 +1062,29 @@ const GifSettings = memo(({
                     />
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         10% 表示 10 倍慢，200% 表示 2 倍快。
+                    </div>
+                </div>
+            )}
+
+            {mode === '压缩' && (
+                <div className="animate-enter space-y-3">
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">保留质量</label>
+                    <div className="flex items-center gap-3">
+                        <input
+                            type="range"
+                            min={1}
+                            max={100}
+                            step={1}
+                            value={compressQuality}
+                            onChange={(e) => setCompressQuality(Number(e.target.value))}
+                            className="w-full accent-[#007AFF]"
+                        />
+                        <div className="w-16 shrink-0 text-center font-mono text-sm text-[#007AFF] bg-[#007AFF]/10 border border-[#007AFF]/20 rounded-lg py-1.5">
+                            {compressQuality}%
+                        </div>
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        质量越高细节保留越多，文件体积通常也会更大。
                     </div>
                 </div>
             )}
@@ -1538,6 +1566,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [gifMode, setGifMode] = useState('导出');
     const [gifExportFormat, setGifExportFormat] = useState('PNG');
     const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
+    const [gifCompressQuality, setGifCompressQuality] = useState(90);
     const [gifBuildFps, setGifBuildFps] = useState(10);
     const [infoFilePath, setInfoFilePath] = useState('');
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
@@ -2265,6 +2294,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         setExportFormat={setGifExportFormat}
                         speedPercent={gifSpeedPercent}
                         setSpeedPercent={setGifSpeedPercent}
+                        compressQuality={gifCompressQuality}
+                        setCompressQuality={setGifCompressQuality}
                         sourceType={gifInputType}
                         buildFps={gifBuildFps}
                         setBuildFps={setGifBuildFps}
@@ -3670,17 +3701,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
                 if (otherFiles.length > 0) {
-                    setLastMessage('倒放与修改帧率只支持 GIF 输入');
+                    setLastMessage('倒放、修改帧率和压缩只支持 GIF 输入');
                     return;
                 }
 
-                const action = gifMode === '倒放' ? 'reverse' : 'change_speed';
+                const action = resolveGifAction(gifMode);
                 const speedFactor = gifSpeedPercent / 100;
                 let failed = 0;
                 let seq = 1;
                 for (const f of gifFiles) {
                     if (cancelRequestedRef.current) break;
-                    const suffix = action === 'reverse' ? '_reverse' : `_speed_${gifSpeedPercent}`;
+                    const suffix = buildGifProcessSuffix(action, gifSpeedPercent, gifCompressQuality);
                     const outRel = buildOutputRelPath(f, {
                         suffix,
                         seq,
@@ -3698,6 +3729,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     };
                     if (action === 'change_speed') {
                         req.speed_factor = speedFactor;
+                    } else if (action === 'compress') {
+                        req.quality = gifCompressQuality;
                     }
                     try {
                         const res = await appAny.SplitGIF(req);

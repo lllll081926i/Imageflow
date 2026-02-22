@@ -73,7 +73,7 @@ type PDFResult struct {
 
 // GIFSplitRequest represents a request to process GIF-related actions
 type GIFSplitRequest struct {
-	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif
+	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif, compress
 	InputPath    string   `json:"input_path,omitempty"`
 	InputPaths   []string `json:"input_paths,omitempty"`   // used for build_gif
 	OutputDir    string   `json:"output_dir,omitempty"`    // used for export_frames
@@ -85,6 +85,7 @@ type GIFSplitRequest struct {
 	Format       string   `json:"format,omitempty"`        // legacy support (png, jpg)
 	SpeedFactor  float64  `json:"speed_factor,omitempty"`  // 0.1-2.0
 	FPS          float64  `json:"fps,omitempty"`           // used for build_gif
+	Quality      int      `json:"quality,omitempty"`       // used for compress (1-100)
 	Loop         int      `json:"loop,omitempty"`
 }
 
@@ -100,6 +101,7 @@ type GIFSplitResult struct {
 	FramePaths  []string `json:"frame_paths,omitempty"`
 	SpeedFactor float64  `json:"speed_factor,omitempty"`
 	FPS         float64  `json:"fps,omitempty"`
+	Quality     int      `json:"quality,omitempty"`
 	Warning     string   `json:"warning,omitempty"`
 	Error       string   `json:"error,omitempty"`
 }

@@ -7,6 +7,7 @@ This script handles GIF operations using the Pillow library:
 - reverse a GIF
 - change GIF playback speed
 - build a GIF from input images
+- compress a GIF with adjustable quality
 
 Usage:
     python gif_splitter.py
@@ -29,8 +30,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_FPS = 10
 MIN_SPEED_FACTOR = 0.1
 MAX_SPEED_FACTOR = 2.0
-FRAME_OUTPUT_FORMATS = {"png", "jpg", "jpeg", "bmp"}
-DIRECT_GIF_INPUT_EXTS = {".jpg", ".jpeg", ".png"}
+MIN_QUALITY = 1
+MAX_QUALITY = 100
+FRAME_OUTPUT_FORMATS = {"png", "bmp"}
 
 
 class GIFTool:
@@ -42,8 +44,9 @@ class GIFTool:
     def export_frames(self, input_path, output_dir, output_format="png", frame_range="all"):
         try:
             output_format = (output_format or "png").lower()
-            if output_format == "jpeg":
-                output_format = "jpg"
+            if output_format in ("jpg", "jpeg"):
+                logger.info("Requested frame format %s is normalized to PNG", output_format)
+                output_format = "png"
             if output_format not in FRAME_OUTPUT_FORMATS:
                 return {"success": False, "error": f"Unsupported output format: {output_format}"}
 
@@ -68,10 +71,7 @@ class GIFTool:
                     output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
                     output_path = os.path.join(output_dir, output_filename)
 
-                    if output_format == "jpg" and frame.mode in ("RGBA", "LA", "P"):
-                        frame = self._flatten_to_rgb(frame)
-
-                    save_format = "JPEG" if output_format == "jpg" else output_format.upper()
+                    save_format = output_format.upper()
                     frame.save(output_path, format=save_format)
                     frame_files.append(output_path)
 
@@ -147,6 +147,56 @@ class GIFTool:
             logger.error("GIF speed change failed: %s", exc, exc_info=True)
             return {"success": False, "error": str(exc)}
 
+    def compress_gif(self, input_path, output_path, quality=90, loop=None):
+        try:
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+                frames, durations, gif_loop = self._extract_gif_frames(gif)
+
+            quality_value = self._sanitize_quality(quality)
+            palette_size = self._quality_to_palette_size(quality_value)
+            compressed_frames = []
+            for frame in frames:
+                compressed_frames.append(
+                    frame.convert(
+                        "P",
+                        palette=Image.ADAPTIVE,
+                        colors=palette_size,
+                        dither=Image.FLOYDSTEINBERG,
+                    )
+                )
+
+            loop_value = gif_loop if loop is None else loop
+            self._ensure_parent_dir(output_path)
+            self._save_gif(
+                compressed_frames,
+                output_path,
+                durations,
+                loop_value,
+                optimize=True,
+                disposal=2,
+            )
+
+            in_size = os.path.getsize(input_path) if os.path.exists(input_path) else 0
+            out_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            return {
+                "success": True,
+                "input_path": input_path,
+                "output_path": output_path,
+                "frame_count": len(compressed_frames),
+                "quality": quality_value,
+                "input_size": in_size,
+                "output_size": out_size,
+            }
+        except FileNotFoundError:
+            return {"success": False, "error": f"Input file not found: {input_path}"}
+        except UnidentifiedImageError:
+            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+        except Exception as exc:
+            logger.error("GIF compression failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
     def build_gif(self, input_paths, output_path, fps=None, loop=0):
         try:
             paths = [p for p in (input_paths or []) if p]
@@ -161,16 +211,9 @@ class GIFTool:
             for path in paths:
                 with Image.open(path) as img:
                     ext = Path(path).suffix.lower()
-                    if ext not in DIRECT_GIF_INPUT_EXTS:
-                        logger.info("Converting %s to JPG before GIF", path)
-                        img = self._flatten_to_rgb(img)
-                    elif ext in (".jpg", ".jpeg"):
-                        img = img.convert("RGB")
-                    else:
-                        img = img.convert("RGBA")
-
-                    if img.mode != "RGBA":
-                        img = img.convert("RGBA")
+                    if ext != ".png":
+                        logger.info("Converting %s to PNG-compatible RGBA before GIF", path)
+                    img = img.convert("RGBA")
 
                     frame = img.copy()
                 frames.append(frame)
@@ -244,26 +287,23 @@ class GIFTool:
             logger.warning("Invalid frame range '%s': %s. Using all frames.", frame_range, exc)
             return list(range(total_frames))
 
-    def _save_gif(self, frames, output_path, durations, loop):
+    def _save_gif(self, frames, output_path, durations, loop, optimize=False, disposal=None):
         if not frames:
             raise ValueError("No frames to save")
         first, rest = frames[0], frames[1:]
+        save_kwargs = {
+            "save_all": True,
+            "append_images": rest,
+            "duration": durations,
+            "loop": loop if loop is not None else 0,
+            "optimize": bool(optimize),
+        }
+        if disposal is not None:
+            save_kwargs["disposal"] = disposal
         first.save(
             output_path,
-            save_all=True,
-            append_images=rest,
-            duration=durations,
-            loop=loop if loop is not None else 0,
-            optimize=False,
+            **save_kwargs,
         )
-
-    def _flatten_to_rgb(self, img):
-        if img.mode in ("RGBA", "LA", "P"):
-            rgba = img.convert("RGBA")
-            background = Image.new("RGB", rgba.size, (255, 255, 255))
-            background.paste(rgba, mask=rgba.split()[-1])
-            return background
-        return img.convert("RGB")
 
     def _pad_to_size(self, img, size):
         if img.size == size:
@@ -296,6 +336,17 @@ class GIFTool:
         if fps <= 0:
             fps = float(DEFAULT_FPS)
         return fps
+
+    def _sanitize_quality(self, value):
+        try:
+            quality = int(round(float(value)))
+        except (TypeError, ValueError):
+            quality = 90
+        return max(MIN_QUALITY, min(MAX_QUALITY, quality))
+
+    def _quality_to_palette_size(self, quality):
+        # GIF palette size max is 256, min practical value keeps animation recognizable.
+        return max(16, min(256, int(round((quality / 100.0) * 256))))
 
     def _ensure_parent_dir(self, path):
         parent = os.path.dirname(path)
@@ -330,6 +381,8 @@ def _normalize_action(value):
         return "reverse"
     if action in ("change_speed", "change_frame_rate", "speed"):
         return "change_speed"
+    if action in ("compress", "compress_gif"):
+        return "compress"
     if action in ("build", "compose", "combine", "build_gif", "make_gif"):
         return "build_gif"
     if action == "get_frame_count":
@@ -392,6 +445,15 @@ def handle_request(input_data):
         if not input_path or not output_path:
             return {"success": False, "error": "Missing input_path or output_path"}
         return tool.change_speed(input_path, output_path, speed_factor, loop)
+
+    if action == "compress":
+        input_path = input_data.get("input_path")
+        output_path = input_data.get("output_path")
+        quality = input_data.get("quality", 90)
+        loop = input_data.get("loop")
+        if not input_path or not output_path:
+            return {"success": False, "error": "Missing input_path or output_path"}
+        return tool.compress_gif(input_path, output_path, quality, loop)
 
     if action == "build_gif":
         output_path = input_data.get("output_path")

@@ -14,6 +14,8 @@ export function ApplyFilter(arg1:models.FilterRequest):Promise<models.FilterResu
 
 export function ApplyFilterBatch(arg1:Array<models.FilterRequest>):Promise<Array<models.FilterResult>>;
 
+export function CancelProcessing():Promise<boolean>;
+
 export function Compress(arg1:models.CompressRequest):Promise<models.CompressResult>;
 
 export function CompressBatch(arg1:Array<models.CompressRequest>):Promise<Array<models.CompressResult>>;

@@ -289,6 +289,7 @@ export namespace models {
 	    format?: string;
 	    speed_factor?: number;
 	    fps?: number;
+	    quality?: number;
 	    loop?: number;
 	
 	    static createFrom(source: any = {}) {
@@ -309,6 +310,7 @@ export namespace models {
 	        this.format = source["format"];
 	        this.speed_factor = source["speed_factor"];
 	        this.fps = source["fps"];
+	        this.quality = source["quality"];
 	        this.loop = source["loop"];
 	    }
 	}
@@ -323,6 +325,7 @@ export namespace models {
 	    frame_paths?: string[];
 	    speed_factor?: number;
 	    fps?: number;
+	    quality?: number;
 	    warning?: string;
 	    error?: string;
 	
@@ -342,6 +345,7 @@ export namespace models {
 	        this.frame_paths = source["frame_paths"];
 	        this.speed_factor = source["speed_factor"];
 	        this.fps = source["fps"];
+	        this.quality = source["quality"];
 	        this.warning = source["warning"];
 	        this.error = source["error"];
 	    }
