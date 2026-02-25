@@ -81,6 +81,76 @@ class GifSplitterTests(unittest.TestCase):
         )
         return path
 
+    def _make_apng(self):
+        path = self._path("sample.apng")
+        frames = [
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+        ]
+        for idx, frame in enumerate(frames):
+            for x in range(4 + idx * 8, 12 + idx * 8):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (0, 128, 255, 255))
+        frames[0].save(
+            path,
+            format="PNG",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[80, 140],
+            loop=0,
+        )
+        return path
+
+    def _make_webp_animation(self):
+        path = self._path("sample.webp")
+        frames = [
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+        ]
+        for idx, frame in enumerate(frames):
+            for x in range(3 + idx * 9, 11 + idx * 9):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (255, 165, 0, 255))
+        frames[0].save(
+            path,
+            format="WEBP",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[70, 130],
+            loop=0,
+            lossless=True,
+            method=6,
+        )
+        return path
+
+    def _ensure_webp_anim_support(self):
+        probe_path = self._path("webp_anim_probe.webp")
+        try:
+            frames = [
+                Image.new("RGBA", (4, 4), (255, 0, 0, 255)),
+                Image.new("RGBA", (4, 4), (0, 255, 0, 255)),
+            ]
+            frames[0].save(
+                probe_path,
+                format="WEBP",
+                save_all=True,
+                append_images=frames[1:],
+                duration=[50, 50],
+                loop=0,
+                lossless=True,
+                method=6,
+            )
+            with Image.open(probe_path) as probe:
+                if getattr(probe, "n_frames", 1) <= 1:
+                    self.skipTest("Pillow build does not support animated WebP")
+        except Exception:
+            self.skipTest("Pillow build does not support animated WebP")
+
+    def _assert_durations_close(self, expected, actual, tolerance=25):
+        self.assertEqual(len(expected), len(actual))
+        for exp, got in zip(expected, actual):
+            self.assertLessEqual(abs(int(exp) - int(got)), tolerance)
+
     def test_export_frames_png(self):
         gif_path = self._make_gif()
         out_dir = self._path("frames")
@@ -309,6 +379,81 @@ class GifSplitterTests(unittest.TestCase):
         result = handle_request({"action": "unknown_action"})
         self.assertFalse(result.get("success"))
         self.assertEqual(result.get("error_code"), "GIF_UNSUPPORTED_ACTION")
+
+    def test_convert_gif_to_apng_preserves_timing_and_alpha(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("converted.apng")
+        result = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "output_format": "apng",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("output_format"), "apng")
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "PNG")
+            self.assertEqual(getattr(img, "n_frames", 1), 4)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([90, 90, 90, 90], durations)
+            for frame in ImageSequence.Iterator(img):
+                self.assertEqual(frame.convert("RGBA").getpixel((0, 0))[3], 0)
+
+    def test_convert_apng_to_webp_preserves_timing_and_alpha(self):
+        self._ensure_webp_anim_support()
+        apng_path = self._make_apng()
+        webp_output_path = self._path("apng_to_webp.webp")
+        result_webp = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": apng_path,
+                "output_path": webp_output_path,
+                "output_format": "webp",
+            }
+        )
+        self.assertTrue(result_webp.get("success"))
+        self.assertEqual(result_webp.get("output_format"), "webp")
+        with Image.open(webp_output_path) as img:
+            self.assertEqual(img.format, "WEBP")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+
+        gif_output_path = self._path("apng_to_webp_to_gif.gif")
+        result_gif = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": webp_output_path,
+                "output_path": gif_output_path,
+                "output_format": "gif",
+            }
+        )
+        self.assertTrue(result_gif.get("success"))
+        with Image.open(gif_output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([80, 140], durations)
+
+    def test_convert_webp_to_gif_preserves_frame_count_and_alpha(self):
+        self._ensure_webp_anim_support()
+        webp_path = self._make_webp_animation()
+        output_path = self._path("webp_to_gif.gif")
+        result = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": webp_path,
+                "output_path": output_path,
+                "output_format": "gif",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("output_format"), "gif")
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([70, 130], durations)
 
 
 if __name__ == "__main__":

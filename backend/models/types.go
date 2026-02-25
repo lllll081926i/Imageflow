@@ -73,12 +73,12 @@ type PDFResult struct {
 
 // GIFSplitRequest represents a request to process GIF-related actions
 type GIFSplitRequest struct {
-	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif, compress, resize
+	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif, compress, resize, convert_animation
 	InputPath    string   `json:"input_path,omitempty"`
 	InputPaths   []string `json:"input_paths,omitempty"`   // used for build_gif
 	OutputDir    string   `json:"output_dir,omitempty"`    // used for export_frames
 	OutputPath   string   `json:"output_path,omitempty"`   // used for reverse/change_speed/build_gif
-	OutputFormat string   `json:"output_format,omitempty"` // png/bmp
+	OutputFormat string   `json:"output_format,omitempty"` // png/bmp/gif/apng/webp
 	FrameRange   string   `json:"frame_range,omitempty"`   // all, start-end, start:step
 	StartFrame   int      `json:"start_frame,omitempty"`   // legacy support
 	EndFrame     int      `json:"end_frame,omitempty"`     // legacy support

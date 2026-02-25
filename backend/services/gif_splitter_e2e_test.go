@@ -99,6 +99,28 @@ func TestSplitGIF_EndToEnd_ExportCompressResize(t *testing.T) {
 			t.Fatalf("resized output missing: %v", statErr)
 		}
 	})
+
+	t.Run("convert_animation", func(t *testing.T) {
+		outputPath := filepath.Join(tempDir, "converted.apng")
+		res, err := service.SplitGIF(models.GIFSplitRequest{
+			Action:       "convert_animation",
+			InputPath:    inputPath,
+			OutputPath:   outputPath,
+			OutputFormat: "apng",
+		})
+		if shouldSkipGifE2E(err, res) {
+			t.Skipf("skip e2e gif test (convert): %v / %s", err, res.Error)
+		}
+		if err != nil {
+			t.Fatalf("convert failed: %v", err)
+		}
+		if !res.Success {
+			t.Fatalf("unexpected convert result: %+v", res)
+		}
+		if _, statErr := os.Stat(outputPath); statErr != nil {
+			t.Fatalf("converted output missing: %v", statErr)
+		}
+	})
 }
 
 func writeSampleGIF(path string) error {

@@ -18,6 +18,10 @@ describe('resolveGifAction', () => {
         expect(resolveGifAction('缩放')).toBe('resize');
     });
 
+    it('maps 互转 to convert_animation', () => {
+        expect(resolveGifAction('互转')).toBe('convert_animation');
+    });
+
     it('falls back to change_speed for unknown mode', () => {
         expect(resolveGifAction('未知模式')).toBe('change_speed');
     });
@@ -38,5 +42,9 @@ describe('buildGifProcessSuffix', () => {
 
     it('returns resize suffix', () => {
         expect(buildGifProcessSuffix('resize', 100, 77, 320, 180)).toBe('_resize_320x180');
+    });
+
+    it('returns convert suffix', () => {
+        expect(buildGifProcessSuffix('convert_animation', 100, 77, 0, 0, 'WEBP')).toBe('_to_webp');
     });
 });

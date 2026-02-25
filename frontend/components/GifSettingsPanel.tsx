@@ -6,6 +6,8 @@ export type GifSettingsPanelProps = {
     setMode: (v: string) => void;
     exportFormat: string;
     setExportFormat: (v: string) => void;
+    convertFormat: string;
+    setConvertFormat: (v: string) => void;
     speedPercent: number;
     setSpeedPercent: (v: number) => void;
     compressQuality: number;
@@ -28,6 +30,8 @@ const GifSettingsPanel = memo(({
     setMode,
     exportFormat,
     setExportFormat,
+    convertFormat,
+    setConvertFormat,
     speedPercent,
     setSpeedPercent,
     compressQuality,
@@ -74,7 +78,7 @@ const GifSettingsPanel = memo(({
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
                 <SegmentedControl
-                    options={['导出', '倒放', '修改帧率', '压缩', '缩放']}
+                    options={['导出', '互转', '倒放', '修改帧率', '压缩', '缩放']}
                     value={mode}
                     onChange={setMode}
                 />
@@ -90,6 +94,20 @@ const GifSettingsPanel = memo(({
                     />
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         GIF 输入导出帧，图片输入合成 GIF（统一按 PNG 流程处理）。
+                    </div>
+                </div>
+            )}
+
+            {mode === '互转' && (
+                <div className="space-y-3 animate-enter">
+                    <CustomSelect
+                        label="目标动图格式"
+                        options={['GIF', 'APNG', 'WEBP']}
+                        value={convertFormat}
+                        onChange={setConvertFormat}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        支持 GIF / APNG / Animated WebP 互转，尽量保留透明背景与帧时序。
                     </div>
                 </div>
             )}

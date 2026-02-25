@@ -548,7 +548,7 @@ func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
 	return result, nil
 }
 
-// SplitGIF handles GIF-related actions (export_frames, reverse, change_speed, build_gif, compress, resize)
+// SplitGIF handles animation actions (export_frames, reverse, change_speed, build_gif, compress, resize, convert_animation)
 func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
 	a.beginCancelableOperation()
 	if a.gifSplitterService == nil {

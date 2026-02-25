@@ -213,3 +213,43 @@ func TestSplitGIF_PreservesErrorCodeFromPython(t *testing.T) {
 		t.Fatalf("expected error detail to be preserved, got %s", res.ErrorDetail)
 	}
 }
+
+func TestSplitGIF_ConvertAnimationPassesOutputFormat(t *testing.T) {
+	logger := newTestLogger(t)
+	defer logger.Close()
+
+	runner := &mockPythonRunner{
+		executeAndParseFn: func(scriptName string, input interface{}, result interface{}) error {
+			if scriptName != "gif_splitter.py" {
+				t.Fatalf("expected script gif_splitter.py, got %s", scriptName)
+			}
+			payload, ok := input.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected payload map, got %T", input)
+			}
+			if payload["action"] != "convert_animation" {
+				t.Fatalf("expected action convert_animation, got %#v", payload["action"])
+			}
+			if payload["output_format"] != "webp" {
+				t.Fatalf("expected output_format webp, got %#v", payload["output_format"])
+			}
+			res := result.(*models.GIFSplitResult)
+			*res = models.GIFSplitResult{Success: true, OutputPath: "out.webp"}
+			return nil
+		},
+	}
+
+	service := NewGIFSplitterService(runner, logger)
+	res, err := service.SplitGIF(models.GIFSplitRequest{
+		Action:       "convert_animation",
+		InputPath:    "in.gif",
+		OutputPath:   "out.webp",
+		OutputFormat: "webp",
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !res.Success || res.OutputPath != "out.webp" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}

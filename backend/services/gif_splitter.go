@@ -22,7 +22,7 @@ func NewGIFSplitterService(executor utils.PythonRunner, logger *utils.Logger) *G
 	}
 }
 
-// SplitGIF processes GIF-related actions (export_frames, reverse, change_speed, build_gif, compress, resize)
+// SplitGIF processes animation actions (export_frames, reverse, change_speed, build_gif, compress, resize, convert_animation)
 func (s *GIFSplitterService) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 	if action == "" {

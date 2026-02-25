@@ -1504,6 +1504,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [filterSelected, setFilterSelected] = useState(0);
     const [gifMode, setGifMode] = useState('导出');
     const [gifExportFormat, setGifExportFormat] = useState('PNG');
+    const [gifConvertFormat, setGifConvertFormat] = useState('WEBP');
     const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
     const [gifCompressQuality, setGifCompressQuality] = useState(90);
     const [gifBuildFps, setGifBuildFps] = useState(10);
@@ -1575,23 +1576,24 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const normalized = p.replace(/\\/g, '/');
         const idx = normalized.lastIndexOf('.');
         if (idx === -1) return false;
-        return normalized.slice(idx + 1).toLowerCase() === 'gif';
+        const ext = normalized.slice(idx + 1).toLowerCase();
+        return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
 
     const gifInputType = useMemo(() => {
         const list = dropResult?.files || [];
         if (list.length === 0) return 'empty' as const;
-        let hasGif = false;
+        let hasAnimated = false;
         let hasOther = false;
         list.forEach((f) => {
             if (isGifPath(f.input_path)) {
-                hasGif = true;
+                hasAnimated = true;
             } else {
                 hasOther = true;
             }
         });
-        if (hasGif && !hasOther) return 'gif' as const;
-        if (!hasGif && hasOther) return 'images' as const;
+        if (hasAnimated && !hasOther) return 'gif' as const;
+        if (!hasAnimated && hasOther) return 'images' as const;
         return 'mixed' as const;
     }, [dropResult]);
     const {
@@ -2262,6 +2264,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         setMode={setGifMode}
                         exportFormat={gifExportFormat}
                         setExportFormat={setGifExportFormat}
+                        convertFormat={gifConvertFormat}
+                        setConvertFormat={setGifConvertFormat}
                         speedPercent={gifSpeedPercent}
                         setSpeedPercent={setGifSpeedPercent}
                         compressQuality={gifCompressQuality}
@@ -2723,6 +2727,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 ...shared,
                 gifMode,
                 gifExportFormat,
+                gifConvertFormat,
                 gifSpeedPercent,
                 gifCompressQuality,
                 gifBuildFps,
@@ -2814,6 +2819,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         } else if (id === 'gif') {
             if (typeof payload.gifMode === 'string') setGifMode(payload.gifMode);
             if (typeof payload.gifExportFormat === 'string') setGifExportFormat(payload.gifExportFormat);
+            if (typeof payload.gifConvertFormat === 'string') setGifConvertFormat(payload.gifConvertFormat);
             if (typeof payload.gifSpeedPercent === 'number') setGifSpeedPercent(payload.gifSpeedPercent);
             if (typeof payload.gifCompressQuality === 'number') setGifCompressQuality(payload.gifCompressQuality);
             if (typeof payload.gifBuildFps === 'number') setGifBuildFps(payload.gifBuildFps);
@@ -3899,21 +3905,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
 
-                const isGifFile = (path: string) => extname(path) === 'gif';
-                const gifFiles = files.filter(f => isGifFile(f.input_path));
-                const otherFiles = files.filter(f => !isGifFile(f.input_path));
+                const isAnimatedFile = (path: string) => {
+                    const ext = extname(path);
+                    return ext === 'gif' || ext === 'apng' || ext === 'webp';
+                };
+                const animatedFiles = files.filter(f => isAnimatedFile(f.input_path));
+                const pureGifFiles = animatedFiles.filter((f) => extname(f.input_path) === 'gif');
+                const otherFiles = files.filter(f => !isAnimatedFile(f.input_path));
 
                 if (gifMode === '导出') {
-                    if (gifFiles.length > 0 && otherFiles.length > 0) {
-                        setLastMessage('导出模式请只选择 GIF 或图片序列');
+                    if (animatedFiles.length > 0 && otherFiles.length > 0) {
+                        setLastMessage('导出模式请只选择动图文件或图片序列');
                         return;
                     }
 
-                    if (gifFiles.length > 0) {
+                    if (animatedFiles.length > 0) {
                         const outputFormat = gifExportFormat.toLowerCase();
                         let failed = 0;
                         let seq = 1;
-                        for (const f of gifFiles) {
+                        for (const f of animatedFiles) {
                             if (cancelRequestedRef.current) break;
                             const name = basename(f.input_path).replace(/\.[^.]+$/, '');
                             const rel = getRelPath(f, preserveStructure);
@@ -3951,20 +3961,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                                     setCancelRequested(true);
                                     break;
                                 }
-                                console.error(`Failed to export GIF frames ${f.input_path}:`, err);
+                                console.error(`Failed to export animated frames ${f.input_path}:`, err);
                                 failed++;
-                                reportTaskFailure('GIF 导出', f.input_path, err, '导出失败');
+                                reportTaskFailure('动图导出', f.input_path, err, '导出失败');
                             }
                             completed++;
                             seq += 1;
-                            setProgress((completed / gifFiles.length) * 100);
+                            setProgress((completed / animatedFiles.length) * 100);
                         }
                         const cancelled = cancelRequestedRef.current;
                         const success = Math.max(0, completed - failed);
                         const extra = failed > 0 ? `（失败 ${failed}）` : '';
                         setLastMessage(cancelled
-                            ? `导出已停止：成功 ${success}/${gifFiles.length} 项${extra}`
-                            : `导出完成：成功 ${success}/${gifFiles.length} 项${extra}`);
+                            ? `导出已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
+                            : `导出完成：成功 ${success}/${animatedFiles.length} 项${extra}`);
                         return;
                     }
 
@@ -4017,11 +4027,91 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
 
-                if (gifFiles.length === 0) {
+                if (gifMode === '互转') {
+                    if (animatedFiles.length === 0) {
+                        setLastMessage('请先选择 GIF/APNG/WEBP 动图文件');
+                        return;
+                    }
+                    if (otherFiles.length > 0) {
+                        setLastMessage('互转模式仅支持 GIF/APNG/WEBP 动图输入');
+                        return;
+                    }
+
+                    const targetExtMap: Record<string, string> = {
+                        GIF: 'gif',
+                        APNG: 'apng',
+                        WEBP: 'webp',
+                    };
+                    const targetLabel = (gifConvertFormat || 'WEBP').toUpperCase();
+                    const targetExt = targetExtMap[targetLabel] || 'webp';
+                    let failed = 0;
+                    let seq = 1;
+                    for (const f of animatedFiles) {
+                        if (cancelRequestedRef.current) break;
+                        const suffix = buildGifProcessSuffix(
+                            'convert_animation',
+                            gifSpeedPercent,
+                            gifCompressQuality,
+                            gifResizeWidth,
+                            gifResizeHeight,
+                            targetLabel,
+                        );
+                        const outRel = buildOutputRelPath(f, {
+                            suffix,
+                            seq,
+                            op: 'gif_convert',
+                            ext: targetExt,
+                            template: outputTemplate,
+                            prefix: outputPrefix,
+                            preserveStructure,
+                            date: batchTime,
+                        });
+                        const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
+                        try {
+                            const res = await appAny.SplitGIF({
+                                action: 'convert_animation',
+                                input_path: normalizePath(f.input_path),
+                                output_path: outputPath,
+                                output_format: targetExt,
+                            });
+                            if (!res?.success) {
+                                const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
+                                if (isCancellationError(res?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
+                                failed++;
+                                reportTaskFailure('动图互转', f.input_path, normalizedError, '互转失败');
+                            }
+                        } catch (err) {
+                            if (isCancellationError(err) || cancelRequestedRef.current) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
+                            console.error(`Failed to convert animated image ${f.input_path}:`, err);
+                            failed++;
+                            reportTaskFailure('动图互转', f.input_path, err, '互转失败');
+                        }
+                        completed++;
+                        seq += 1;
+                        setProgress((completed / animatedFiles.length) * 100);
+                    }
+                    const cancelled = cancelRequestedRef.current;
+                    const success = Math.max(0, completed - failed);
+                    const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                    setLastMessage(cancelled
+                        ? `互转已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
+                        : `互转完成：成功 ${success}/${animatedFiles.length} 项${extra}`);
+                    return;
+                }
+
+                if (pureGifFiles.length === 0) {
                     setLastMessage('请先选择 GIF 文件');
                     return;
                 }
-                if (otherFiles.length > 0) {
+                if (animatedFiles.length !== pureGifFiles.length || otherFiles.length > 0) {
                     setLastMessage('倒放、修改帧率、压缩和缩放只支持 GIF 输入');
                     return;
                 }
@@ -4036,7 +4126,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 }
                 let failed = 0;
                 let seq = 1;
-                for (const f of gifFiles) {
+                for (const f of pureGifFiles) {
                     if (cancelRequestedRef.current) break;
                     const suffix = buildGifProcessSuffix(
                         action,
@@ -4093,14 +4183,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     }
                     completed++;
                     seq += 1;
-                    setProgress((completed / gifFiles.length) * 100);
+                    setProgress((completed / pureGifFiles.length) * 100);
                 }
                 const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
                 setLastMessage(cancelled
-                    ? `${gifMode}已停止：成功 ${success}/${gifFiles.length} 项${extra}`
-                    : `${gifMode}完成：成功 ${success}/${gifFiles.length} 项${extra}`);
+                    ? `${gifMode}已停止：成功 ${success}/${pureGifFiles.length} 项${extra}`
+                    : `${gifMode}完成：成功 ${success}/${pureGifFiles.length} 项${extra}`);
                 return;
             }
 
@@ -4318,6 +4408,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             return [`${combined}.gif`];
         }
 
+        if (id === 'gif' && gifMode === '互转') {
+            const targetExtMap: Record<string, string> = {
+                GIF: 'gif',
+                APNG: 'apng',
+                WEBP: 'webp',
+            };
+            const targetLabel = (gifConvertFormat || 'WEBP').toUpperCase();
+            const targetExt = targetExtMap[targetLabel] || 'webp';
+            return sample.map((f, idx) => {
+                const seq = idx + 1;
+                return buildOutputRelPath(f, {
+                    suffix: buildGifProcessSuffix(
+                        'convert_animation',
+                        gifSpeedPercent,
+                        gifCompressQuality,
+                        gifResizeWidth,
+                        gifResizeHeight,
+                        targetLabel,
+                    ),
+                    seq,
+                    op: 'gif_convert',
+                    ext: targetExt,
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            });
+        }
+
         return sample.map((f, idx) => {
             const seq = idx + 1;
             if (id === 'converter') {
@@ -4382,6 +4502,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     gifCompressQuality,
                     gifResizeWidth,
                     gifResizeHeight,
+                    gifConvertFormat,
                 );
                 return buildOutputRelPath(f, {
                     suffix,
@@ -4406,6 +4527,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         convFormat,
         dropResult,
         gifCompressQuality,
+        gifConvertFormat,
         gifExportFormat,
         gifMode,
         gifResizeHeight,

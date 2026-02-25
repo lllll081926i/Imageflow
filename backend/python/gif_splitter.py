@@ -9,6 +9,7 @@ This script handles GIF operations using the Pillow library:
 - build a GIF from input images
 - compress a GIF with adjustable quality
 - resize a GIF while keeping aspect ratio
+- convert animated GIF/APNG/WEBP between each other
 
 Usage:
     python gif_splitter.py
@@ -19,6 +20,7 @@ Usage:
 import json
 import logging
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -35,6 +37,7 @@ MIN_QUALITY = 1
 MAX_QUALITY = 100
 FRAME_OUTPUT_FORMATS = {"png", "bmp"}
 MAX_FRAME_PIXEL_BUDGET = 120_000_000
+ANIMATED_OUTPUT_FORMATS = {"gif", "apng", "webp"}
 
 
 def _error_response(code, message, detail=None):
@@ -55,40 +58,37 @@ class GIFTool:
             output_format = (output_format or "png").lower()
             if output_format not in FRAME_OUTPUT_FORMATS:
                 return _error_response("GIF_EXPORT_UNSUPPORTED_FORMAT", f"Unsupported output format: {output_format}")
+            with Image.open(input_path) as animated:
+                frames, _, _, _, _ = self._extract_animation_frames(
+                    animated,
+                    require_animated=True,
+                    source_path=input_path,
+                )
+            frame_count = len(frames)
+            frame_indices = self._parse_frame_range(frame_range, frame_count)
+            frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
+            if not frame_indices:
+                return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
 
-            with Image.open(input_path) as gif:
-                if gif.format != "GIF":
-                    raise ValueError("Input file is not a GIF")
+            os.makedirs(output_dir, exist_ok=True)
+            base_name = Path(input_path).stem
+            frame_files = []
+            save_format = output_format.upper()
 
-                frame_count = self._get_frame_count(gif)
-                frame_indices = self._parse_frame_range(frame_range, frame_count)
-                frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
-                if not frame_indices:
-                    return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
-
-                os.makedirs(output_dir, exist_ok=True)
-                base_name = Path(input_path).stem
-                frame_files = []
-
-                for frame_idx in frame_indices:
-                    gif.seek(frame_idx)
-                    frame = gif.copy()
-
-                    output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
-                    output_path = os.path.join(output_dir, output_filename)
-
-                    save_format = output_format.upper()
-                    frame.save(output_path, format=save_format)
-                    frame_files.append(output_path)
-
-                return {
-                    "success": True,
-                    "input_path": input_path,
-                    "output_dir": output_dir,
-                    "frame_count": frame_count,
-                    "export_count": len(frame_files),
-                    "frame_paths": frame_files,
-                }
+            for frame_idx in frame_indices:
+                frame = frames[frame_idx]
+                output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
+                output_path = os.path.join(output_dir, output_filename)
+                frame.save(output_path, format=save_format)
+                frame_files.append(output_path)
+            return {
+                "success": True,
+                "input_path": input_path,
+                "output_dir": output_dir,
+                "frame_count": frame_count,
+                "export_count": len(frame_files),
+                "frame_paths": frame_files,
+            }
 
         except FileNotFoundError:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
@@ -304,6 +304,55 @@ class GIFTool:
             logger.error("GIF resize failed: %s", exc, exc_info=True)
             return _error_response("GIF_RESIZE_FAILED", str(exc))
 
+    def convert_animation(self, input_path, output_path, output_format, quality=90, loop=None):
+        try:
+            target = self._sanitize_animation_output_format(output_format)
+            with Image.open(input_path) as animated:
+                frames, durations, animated_loop, disposals, source_format = self._extract_animation_frames(
+                    animated,
+                    require_animated=True,
+                    source_path=input_path,
+                )
+
+            loop_value = animated_loop if loop is None else loop
+            self._ensure_parent_dir(output_path)
+
+            if target == "gif":
+                quantized = [self._quantize_rgba_frame(frame, 255) for frame in frames]
+                self._save_gif(
+                    quantized,
+                    output_path,
+                    durations,
+                    loop_value,
+                    disposal=disposals,
+                    transparency=255,
+                )
+            elif target == "apng":
+                self._save_apng(frames, output_path, durations, loop_value, disposal=disposals)
+            elif target == "webp":
+                quality_value = self._sanitize_quality(quality)
+                self._save_webp(frames, output_path, durations, loop_value, quality_value)
+            else:
+                return _error_response("ANIMATED_CONVERT_BAD_FORMAT", f"Unsupported output format: {target}")
+
+            return {
+                "success": True,
+                "input_path": input_path,
+                "output_path": output_path,
+                "frame_count": len(frames),
+                "output_format": target,
+                "source_format": source_format,
+            }
+        except FileNotFoundError:
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
+        except UnidentifiedImageError:
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
+        except ValueError as exc:
+            return _error_response("ANIMATED_CONVERT_BAD_INPUT", str(exc))
+        except Exception as exc:
+            logger.error("Animated convert failed: %s", exc, exc_info=True)
+            return _error_response("ANIMATED_CONVERT_FAILED", str(exc))
+
     def _open_gif(self, input_path):
         gif = Image.open(input_path)
         if gif.format != "GIF":
@@ -321,6 +370,8 @@ class GIFTool:
         return frame_count
 
     def _extract_gif_frames(self, gif):
+        if gif.format != "GIF":
+            raise ValueError("Input file is not a GIF")
         frames = []
         durations = []
         default_duration = gif.info.get("duration", 100)
@@ -334,6 +385,8 @@ class GIFTool:
         return frames, durations, loop
 
     def _extract_gif_frames_with_disposal(self, gif):
+        if gif.format != "GIF":
+            raise ValueError("Input file is not a GIF")
         frames = []
         durations = []
         disposals = []
@@ -351,6 +404,103 @@ class GIFTool:
             disposals.append(disposal)
         loop = gif.info.get("loop", 0)
         return frames, durations, loop, disposals
+
+    def _extract_animation_frames(self, animated, require_animated=False, source_path=None):
+        image_format = str(animated.format or "").upper()
+        if image_format not in {"GIF", "PNG", "WEBP"}:
+            raise ValueError(f"Unsupported animated source format: {image_format or 'unknown'}")
+        frame_count = int(getattr(animated, "n_frames", 1) or 1)
+        if require_animated and frame_count <= 1:
+            raise ValueError("Input image is not an animated image")
+
+        frames = []
+        durations = []
+        disposals = []
+        default_duration = animated.info.get("duration", 100)
+        if not isinstance(default_duration, int) or default_duration <= 0:
+            default_duration = 100
+
+        for frame in ImageSequence.Iterator(animated):
+            rgba = frame.convert("RGBA").copy()
+            frames.append(rgba)
+            duration = frame.info.get("duration", default_duration)
+            if not isinstance(duration, int) or duration <= 0:
+                duration = default_duration
+            durations.append(duration)
+            disposal = frame.info.get("disposal", getattr(frame, "disposal_method", 0))
+            if not isinstance(disposal, int) or disposal < 0:
+                disposal = 0
+            disposals.append(disposal)
+
+        if image_format == "WEBP" and source_path and len(frames) > 1:
+            parsed = self._extract_webp_durations(source_path)
+            if parsed and len(parsed) == len(frames):
+                durations = parsed
+        if image_format == "PNG" and source_path and len(frames) > 1:
+            parsed = self._extract_apng_durations(source_path)
+            if parsed and len(parsed) == len(frames):
+                durations = parsed
+
+        loop = animated.info.get("loop", 0)
+        if not isinstance(loop, int) or loop < 0:
+            loop = 0
+        return frames, durations, loop, disposals, image_format
+
+    def _extract_webp_durations(self, file_path):
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+                return None
+            offset = 12
+            durations = []
+            data_len = len(data)
+            while offset + 8 <= data_len:
+                chunk_id = data[offset:offset + 4]
+                chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
+                chunk_start = offset + 8
+                chunk_end = chunk_start + chunk_size
+                if chunk_end > data_len:
+                    break
+                if chunk_id == b"ANMF" and chunk_size >= 16:
+                    payload = data[chunk_start:chunk_end]
+                    duration = payload[12] | (payload[13] << 8) | (payload[14] << 16)
+                    durations.append(max(1, int(duration)))
+                offset = chunk_end + (chunk_size & 1)
+            return durations or None
+        except Exception:
+            return None
+
+    def _extract_apng_durations(self, file_path):
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            if len(data) < 8 or data[:8] != b"\x89PNG\r\n\x1a\n":
+                return None
+            offset = 8
+            durations = []
+            data_len = len(data)
+            while offset + 12 <= data_len:
+                chunk_size = struct.unpack_from(">I", data, offset)[0]
+                chunk_type = data[offset + 4:offset + 8]
+                chunk_start = offset + 8
+                chunk_end = chunk_start + chunk_size
+                if chunk_end + 4 > data_len:
+                    break
+                if chunk_type == b"fcTL" and chunk_size >= 26:
+                    payload = data[chunk_start:chunk_end]
+                    delay_num = struct.unpack_from(">H", payload, 20)[0]
+                    delay_den = struct.unpack_from(">H", payload, 22)[0]
+                    if delay_den == 0:
+                        delay_den = 100
+                    if delay_num == 0:
+                        delay_num = 1
+                    duration_ms = max(1, int(round((delay_num / delay_den) * 1000.0)))
+                    durations.append(duration_ms)
+                offset = chunk_end + 4
+            return durations or None
+        except Exception:
+            return None
 
     def _parse_frame_range(self, frame_range, total_frames):
         if not frame_range or frame_range == "all":
@@ -388,6 +538,45 @@ class GIFTool:
         first.save(
             output_path,
             **save_kwargs,
+        )
+
+    def _save_apng(self, frames, output_path, durations, loop, disposal=None):
+        if not frames:
+            raise ValueError("No frames to save")
+        first, rest = frames[0], frames[1:]
+        save_kwargs = {
+            "save_all": True,
+            "append_images": rest,
+            "duration": durations,
+            "loop": loop if loop is not None else 0,
+            "optimize": False,
+        }
+        if disposal is not None:
+            if isinstance(disposal, (list, tuple)):
+                save_kwargs["disposal"] = [max(0, min(2, int(v))) for v in disposal]
+            else:
+                save_kwargs["disposal"] = max(0, min(2, int(disposal)))
+        first.save(
+            output_path,
+            format="PNG",
+            **save_kwargs,
+        )
+
+    def _save_webp(self, frames, output_path, durations, loop, quality):
+        if not frames:
+            raise ValueError("No frames to save")
+        first, rest = frames[0], frames[1:]
+        first.save(
+            output_path,
+            format="WEBP",
+            save_all=True,
+            append_images=rest,
+            duration=durations,
+            loop=loop if loop is not None else 0,
+            quality=quality,
+            lossless=True,
+            method=6,
+            background=(0, 0, 0, 0),
         )
 
     def _pad_to_size(self, img, size):
@@ -428,6 +617,14 @@ class GIFTool:
         except (TypeError, ValueError):
             quality = 90
         return max(MIN_QUALITY, min(MAX_QUALITY, quality))
+
+    def _sanitize_animation_output_format(self, value):
+        text = str(value or "").strip().lower()
+        if text in ("png", "apng"):
+            return "apng"
+        if text in ("gif", "webp"):
+            return text
+        raise ValueError(f"Unsupported output format: {value}")
 
     def _sanitize_dimension(self, value):
         try:
@@ -553,6 +750,8 @@ def _normalize_action(value):
         return "resize"
     if action in ("build", "compose", "combine", "build_gif", "make_gif"):
         return "build_gif"
+    if action in ("convert", "convert_animation", "transcode", "convert_animated", "convert_anim"):
+        return "convert_animation"
     if action == "get_frame_count":
         return "get_frame_count"
     return action
@@ -642,6 +841,18 @@ def handle_request(input_data):
         if not output_path:
             return _error_response("GIF_BAD_REQUEST", "Missing output_path")
         return tool.build_gif(input_paths, output_path, fps, loop)
+
+    if action == "convert_animation":
+        input_path = input_data.get("input_path")
+        output_path = input_data.get("output_path")
+        output_format = input_data.get("output_format") or input_data.get("format")
+        quality = input_data.get("quality", 90)
+        loop = input_data.get("loop")
+        if not input_path or not output_path:
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
+        if not output_format:
+            return _error_response("GIF_BAD_REQUEST", "Missing output_format")
+        return tool.convert_animation(input_path, output_path, output_format, quality, loop)
 
     return _error_response("GIF_UNSUPPORTED_ACTION", f"Unsupported action: {action}")
 
