@@ -181,3 +181,35 @@ func TestSplitGIF_ResizePassesDimensions(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 }
+
+func TestSplitGIF_PreservesErrorCodeFromPython(t *testing.T) {
+	logger := newTestLogger(t)
+	defer logger.Close()
+
+	runner := &mockPythonRunner{
+		executeAndParseFn: func(scriptName string, input interface{}, result interface{}) error {
+			res := result.(*models.GIFSplitResult)
+			*res = models.GIFSplitResult{
+				Success:     false,
+				Error:       "missing input_path",
+				ErrorCode:   "GIF_BAD_REQUEST",
+				ErrorDetail: "input_path is required",
+			}
+			return nil
+		},
+	}
+
+	service := NewGIFSplitterService(runner, logger)
+	res, err := service.SplitGIF(models.GIFSplitRequest{
+		Action: "resize",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if res.ErrorCode != "GIF_BAD_REQUEST" {
+		t.Fatalf("expected error code GIF_BAD_REQUEST, got %s", res.ErrorCode)
+	}
+	if res.ErrorDetail != "input_path is required" {
+		t.Fatalf("expected error detail to be preserved, got %s", res.ErrorDetail)
+	}
+}

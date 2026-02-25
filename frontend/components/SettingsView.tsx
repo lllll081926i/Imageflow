@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Icon from './Icon';
 import { Switch } from './Controls';
+import { getAppBindings } from '../types/wails-api';
 
 type AppSettings = {
     max_concurrency: number;
@@ -30,7 +31,7 @@ const SettingsView: React.FC = () => {
     useEffect(() => {
         const run = async () => {
             setLoading(true);
-            const app = window.go?.main?.App;
+            const app = getAppBindings();
             if (!app?.GetSettings) {
                 setMessage('未检测到 Wails 运行环境');
                 setLoading(false);
@@ -62,14 +63,15 @@ const SettingsView: React.FC = () => {
     }, []);
 
     const save = async (next: AppSettings) => {
-        if (!window.go?.main?.App?.SaveSettings) {
+        const app = getAppBindings();
+        if (!app?.SaveSettings) {
             setMessage('未检测到 Wails 运行环境');
             return;
         }
         setSaving(true);
         setMessage('');
         try {
-            const saved = await window.go.main.App.SaveSettings(next);
+            const saved = await app.SaveSettings(next);
             if (saved && typeof saved.max_concurrency === 'number') {
                 setSettings({
                     max_concurrency: clamp(Number(saved.max_concurrency || defaultSettings.max_concurrency), 1, 32),

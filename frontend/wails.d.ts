@@ -1,9 +1,15 @@
+import type { AppBindings } from './types/wails-api';
+
 export {};
 
 declare global {
   interface Window {
-    runtime?: any;
-    go?: any;
+    runtime?: unknown;
+    go?: {
+      main?: {
+        App?: Partial<AppBindings>;
+      };
+    };
   }
 }
 

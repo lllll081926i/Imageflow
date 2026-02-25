@@ -5,6 +5,10 @@ import { FEATURES } from '../constants';
 import { ViewState } from '../types';
 import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone, ProgressBar } from './Controls';
 import { buildGifProcessSuffix, resolveGifAction } from './gifHelpers';
+import { resolveGifErrorMessage } from './gifErrors';
+import GifSettingsPanel from './GifSettingsPanel';
+import { useGifResizeState } from './hooks/useGifResizeState';
+import { getAppBindings } from '../types/wails-api';
 
 interface DetailViewProps {
     id: ViewState;
@@ -974,183 +978,6 @@ const PdfSettings = memo(({
     );
 });
 
-type GifSettingsProps = {
-    mode: string;
-    setMode: (v: string) => void;
-    exportFormat: string;
-    setExportFormat: (v: string) => void;
-    speedPercent: number;
-    setSpeedPercent: (v: number) => void;
-    compressQuality: number;
-    setCompressQuality: (v: number) => void;
-    sourceType: 'gif' | 'images' | 'mixed' | 'empty';
-    buildFps: number;
-    setBuildFps: (v: number) => void;
-    resizeWidth: number;
-    resizeHeight: number;
-    onResizeWidthChange: (v: number) => void;
-    onResizeHeightChange: (v: number) => void;
-    resizeMaintainAR: boolean;
-    setResizeMaintainAR: (v: boolean) => void;
-    originalWidth: number;
-    originalHeight: number;
-};
-
-const GifSettings = memo(({
-    mode,
-    setMode,
-    exportFormat,
-    setExportFormat,
-    speedPercent,
-    setSpeedPercent,
-    compressQuality,
-    setCompressQuality,
-    sourceType,
-    buildFps,
-    setBuildFps,
-    resizeWidth,
-    resizeHeight,
-    onResizeWidthChange,
-    onResizeHeightChange,
-    resizeMaintainAR,
-    setResizeMaintainAR,
-    originalWidth,
-    originalHeight,
-}: GifSettingsProps) => {
-    if (sourceType === 'images') {
-        return (
-            <div className="space-y-6">
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">合成 GIF</label>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        所有输入都会按 PNG 流程处理，非 PNG 会先转换后再合成 GIF。
-                    </div>
-                </div>
-                <div className="space-y-3 animate-enter">
-                    <StyledSlider
-                        label="合成帧率 (FPS)"
-                        value={buildFps}
-                        min={1}
-                        max={60}
-                        onChange={setBuildFps}
-                    />
-                </div>
-                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-xs text-purple-700 dark:text-purple-400 mt-2 border border-purple-100 dark:border-purple-500/10">
-                    当前为图片序列模式，将输出合成 GIF。
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div className="space-y-6">
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
-                <SegmentedControl
-                    options={['导出', '倒放', '修改帧率', '压缩', '缩放']}
-                    value={mode}
-                    onChange={setMode}
-                />
-            </div>
-
-            {mode === '导出' && (
-                <div className="space-y-3 animate-enter">
-                    <CustomSelect
-                        label="导出帧格式"
-                        options={['PNG']}
-                        value={exportFormat}
-                        onChange={setExportFormat}
-                    />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        GIF 输入导出帧，图片输入合成 GIF（统一按 PNG 流程处理）。
-                    </div>
-                </div>
-            )}
-
-            {mode === '修改帧率' && (
-                <div className="animate-enter space-y-3">
-                    <StyledSlider
-                        label="帧率倍数 (10%-200%)"
-                        value={speedPercent}
-                        min={10}
-                        max={200}
-                        onChange={setSpeedPercent}
-                    />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        10% 表示 10 倍慢，200% 表示 2 倍快。
-                    </div>
-                </div>
-            )}
-
-            {mode === '压缩' && (
-                <div className="animate-enter space-y-3">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">保留质量</label>
-                    <div className="flex items-center gap-3">
-                        <input
-                            type="range"
-                            min={1}
-                            max={100}
-                            step={1}
-                            value={compressQuality}
-                            onChange={(e) => setCompressQuality(Number(e.target.value))}
-                            className="w-full accent-[#007AFF]"
-                        />
-                        <div className="w-16 shrink-0 text-center font-mono text-sm text-[#007AFF] bg-[#007AFF]/10 border border-[#007AFF]/20 rounded-lg py-1.5">
-                            {compressQuality}%
-                        </div>
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        质量越高细节保留越多，文件体积通常也会更大。
-                    </div>
-                </div>
-            )}
-
-            {mode === '缩放' && (
-                <div className="animate-enter space-y-3">
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        原始尺寸：{originalWidth > 0 && originalHeight > 0 ? `${originalWidth} x ${originalHeight} px` : '未读取到 GIF 尺寸'}
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                            <label className="text-xs text-gray-500">宽度 (px)</label>
-                            <input
-                                type="number"
-                                min={1}
-                                value={resizeWidth || ''}
-                                onChange={(e) => onResizeWidthChange(Number(e.target.value || 0))}
-                                className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
-                                placeholder="自动"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs text-gray-500">高度 (px)</label>
-                            <input
-                                type="number"
-                                min={1}
-                                value={resizeHeight || ''}
-                                onChange={(e) => onResizeHeightChange(Number(e.target.value || 0))}
-                                className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
-                                placeholder="自动"
-                            />
-                        </div>
-                    </div>
-                    <Switch label="保持纵横比" checked={resizeMaintainAR} onChange={setResizeMaintainAR} />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        只填一个边会自动按原比例计算另一边；同时填写宽高时会按比例适配到目标范围内。
-                    </div>
-                </div>
-            )}
-
-            {sourceType === 'mixed' && (
-                <div className="text-xs text-red-500">
-                    请只选择 GIF 或图片序列，混合输入会导致操作失败。
-                </div>
-            )}
-
-        </div>
-    );
-});
-
 type InfoSettingsProps = {
     filePath: string;
     info: any | null;
@@ -1620,10 +1447,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
     const [gifCompressQuality, setGifCompressQuality] = useState(90);
     const [gifBuildFps, setGifBuildFps] = useState(10);
-    const [gifResizeWidth, setGifResizeWidth] = useState(0);
-    const [gifResizeHeight, setGifResizeHeight] = useState(0);
-    const [gifResizeMaintainAR, setGifResizeMaintainAR] = useState(true);
-    const [gifOriginalSize, setGifOriginalSize] = useState({ width: 0, height: 0 });
     const [infoFilePath, setInfoFilePath] = useState('');
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
@@ -1673,7 +1496,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
 
     const loadOutputSettings = async () => {
-        const appAny = window.go?.main?.App as any;
+        const appAny = getAppBindings();
         if (!appAny?.GetSettings) {
             return defaultOutputSettings;
         }
@@ -1711,33 +1534,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         if (!hasGif && hasOther) return 'images' as const;
         return 'mixed' as const;
     }, [dropResult]);
-    const gifReferencePath = useMemo(() => {
-        if (id !== 'gif') return '';
-        const list = dropResult?.files || [];
-        const firstGif = list.find((f) => isGifPath(f.input_path));
-        return firstGif ? normalizePath(firstGif.input_path) : '';
-    }, [dropResult, id]);
-    const gifAspectRatio = useMemo(() => {
-        if (gifOriginalSize.width > 0 && gifOriginalSize.height > 0) {
-            return gifOriginalSize.width / gifOriginalSize.height;
-        }
-        if (gifResizeWidth > 0 && gifResizeHeight > 0) {
-            return gifResizeWidth / gifResizeHeight;
-        }
-        return 0;
-    }, [gifOriginalSize.height, gifOriginalSize.width, gifResizeHeight, gifResizeWidth]);
-    const handleGifResizeWidthChange = useCallback((value: number) => {
-        const nextWidth = Math.max(0, Math.round(Number(value) || 0));
-        setGifResizeWidth(nextWidth);
-        if (!gifResizeMaintainAR || nextWidth <= 0 || gifAspectRatio <= 0) return;
-        setGifResizeHeight(Math.max(1, Math.round(nextWidth / gifAspectRatio)));
-    }, [gifAspectRatio, gifResizeMaintainAR]);
-    const handleGifResizeHeightChange = useCallback((value: number) => {
-        const nextHeight = Math.max(0, Math.round(Number(value) || 0));
-        setGifResizeHeight(nextHeight);
-        if (!gifResizeMaintainAR || nextHeight <= 0 || gifAspectRatio <= 0) return;
-        setGifResizeWidth(Math.max(1, Math.round(nextHeight * gifAspectRatio)));
-    }, [gifAspectRatio, gifResizeMaintainAR]);
+    const {
+        gifResizeWidth,
+        gifResizeHeight,
+        gifResizeMaintainAR,
+        setGifResizeMaintainAR,
+        gifOriginalSize,
+        onResizeWidthChange: handleGifResizeWidthChange,
+        onResizeHeightChange: handleGifResizeHeightChange,
+    } = useGifResizeState({
+        featureId: id,
+        files: dropResult?.files || [],
+        isGifPath,
+        normalizePath,
+    });
 
     const previewSrc = useMemo(() => {
         if (!previewPath) return '';
@@ -1775,7 +1585,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     useEffect(() => {
         if (!useSystemFonts) return;
         if (systemFonts.length > 0) return;
-        const appAny = window.go?.main?.App as any;
+        const appAny = getAppBindings();
         if (!appAny?.ListSystemFonts) return;
         let active = true;
         setIsSystemFontsLoading(true);
@@ -2227,62 +2037,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     }, [id]);
 
     useEffect(() => {
-        if (!gifReferencePath) {
-            setGifOriginalSize({ width: 0, height: 0 });
-            setGifResizeWidth(0);
-            setGifResizeHeight(0);
-            return;
-        }
-        const appAny = window.go?.main?.App as any;
-        if (!appAny?.GetInfo) {
-            setGifOriginalSize({ width: 0, height: 0 });
-            setGifResizeWidth(0);
-            setGifResizeHeight(0);
-            return;
-        }
-        let active = true;
-        (async () => {
-            try {
-                const info = await appAny.GetInfo({ input_path: gifReferencePath });
-                if (!active) return;
-                if (info?.success && Number(info.width) > 0 && Number(info.height) > 0) {
-                    const width = Math.round(Number(info.width));
-                    const height = Math.round(Number(info.height));
-                    setGifOriginalSize({ width, height });
-                    setGifResizeWidth(width);
-                    setGifResizeHeight(height);
-                    return;
-                }
-                setGifOriginalSize({ width: 0, height: 0 });
-                setGifResizeWidth(0);
-                setGifResizeHeight(0);
-            } catch (err) {
-                if (!active) return;
-                console.error('Failed to read GIF size:', err);
-                setGifOriginalSize({ width: 0, height: 0 });
-                setGifResizeWidth(0);
-                setGifResizeHeight(0);
-            }
-        })();
-        return () => {
-            active = false;
-        };
-    }, [gifReferencePath]);
-
-    useEffect(() => {
-        if (!gifResizeMaintainAR || gifAspectRatio <= 0) return;
-        if (gifResizeWidth > 0) {
-            const matchedHeight = Math.max(1, Math.round(gifResizeWidth / gifAspectRatio));
-            setGifResizeHeight((prev) => (prev === matchedHeight ? prev : matchedHeight));
-            return;
-        }
-        if (gifResizeHeight > 0) {
-            const matchedWidth = Math.max(1, Math.round(gifResizeHeight * gifAspectRatio));
-            setGifResizeWidth((prev) => (prev === matchedWidth ? prev : matchedWidth));
-        }
-    }, [gifAspectRatio, gifResizeHeight, gifResizeMaintainAR, gifResizeWidth]);
-
-    useEffect(() => {
         if (gifInputType === 'images' && gifMode !== '导出') {
             setGifMode('导出');
         }
@@ -2426,7 +2180,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 );
             case 'gif':
                 return (
-                    <GifSettings
+                    <GifSettingsPanel
                         mode={gifMode}
                         setMode={setGifMode}
                         exportFormat={gifExportFormat}
@@ -2483,7 +2237,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             date: new Date(),
                         });
                         const rawPath = (dir ? `${dir}/` : '') + (ext ? `${outputName}.${ext}` : outputName);
-                        const appAny = (window.go?.main?.App as any);
+                        const appAny = getAppBindings();
 
                         if (!appAny?.StripMetadata) {
                             setLastMessage('后端未接入隐私清理接口');
@@ -2508,9 +2262,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         const res = await appAny.StripMetadata({ input_path: infoFilePath, output_path: resolvedPath, overwrite: false });
                         if (res?.success) {
                             setLastMessage(`隐私清理完成：${res.output_path || resolvedPath}`);
-                            const refreshed = await window.go.main.App.GetInfo({ input_path: res.output_path || resolvedPath });
+                            const refreshed = await appAny.GetInfo?.({ input_path: res.output_path || resolvedPath });
                             setInfoFilePath(res.output_path || resolvedPath);
-                            setInfoPreview(refreshed);
+                            setInfoPreview(refreshed || null);
                         } else {
                             setLastMessage(res?.error || '隐私清理失败');
                         }
@@ -2522,7 +2276,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
 
                 const onEditMetadata = async (key: string, value: any) => {
                     if (!infoFilePath) return;
-                    const appAny = (window.go?.main?.App as any);
+                    const appAny = getAppBindings();
                     if (!appAny?.EditMetadata) {
                         setLastMessage('后端未接入元数据编辑接口');
                         return;
@@ -2537,8 +2291,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         });
                         if (res?.success) {
                             setLastMessage('元数据已更新');
-                            const refreshed = await window.go.main.App.GetInfo({ input_path: infoFilePath });
-                            setInfoPreview(refreshed);
+                            const refreshed = await appAny.GetInfo?.({ input_path: infoFilePath });
+                            setInfoPreview(refreshed || null);
                         } else {
                             setLastMessage(res?.error || '元数据编辑失败');
                         }
@@ -2574,8 +2328,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const handleSelectOutputDir = async () => {
         setLastMessage('');
         try {
-            if (window.go?.main?.App?.SelectOutputDirectory) {
-                const dir = await window.go.main.App.SelectOutputDirectory();
+            const appAny = getAppBindings();
+            if (appAny?.SelectOutputDirectory) {
+                const dir = await appAny.SelectOutputDirectory();
                 if (typeof dir === 'string' && dir.trim()) {
                     setOutputDir(dir);
                 }
@@ -3028,7 +2783,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             return;
         }
         let cancelled = false;
-        const appAny = window.go?.main?.App as any;
+        const appAny = getAppBindings();
         if (!appAny?.GetImagePreview) {
             setPreviewDataUrl('');
             setPreviewLoadError('当前环境不支持预览生成');
@@ -3064,7 +2819,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     }, [previewPath, isPreviewFeature]);
 
     const loadInfoForPath = async (p: string) => {
-        if (!window.go?.main?.App?.GetInfo) {
+        const appAny = getAppBindings();
+        if (!appAny?.GetInfo) {
             setLastMessage('未检测到 Wails 运行环境');
             return;
         }
@@ -3075,7 +2831,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         setInfoFilePath(normalized);
         setInfoPreview(null);
         try {
-            const info = await window.go.main.App.GetInfo({ input_path: normalized });
+            const info = await appAny.GetInfo({ input_path: normalized });
             setInfoPreview(info);
             if (info?.success) {
                 setLastMessage(`信息读取完成：${basename(normalized)}`);
@@ -3099,7 +2855,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         setCancelRequested(true);
         setLastMessage('正在停止处理，请稍候...');
         try {
-            const appAny = window.go?.main?.App as any;
+            const appAny = getAppBindings();
             if (appAny?.CancelProcessing) {
                 await appAny.CancelProcessing();
             }
@@ -3118,7 +2874,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             setLastMessage('请先拖入文件或文件夹');
             return;
         }
-        if (!window.go?.main?.App) {
+        const appAny = getAppBindings();
+        if (!appAny) {
             setLastMessage('未检测到 Wails 运行环境');
             return;
         }
@@ -3145,7 +2902,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 reservedPaths.add(normalized);
                 return normalized;
             }
-            const appAny = window.go?.main?.App as any;
             if (!appAny?.ResolveOutputPath) {
                 reservedPaths.add(normalized);
                 return normalized;
@@ -3173,6 +2929,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             let completed = 0;
 
             if (id === 'converter') {
+                if (!appAny.Convert || !appAny.ConvertBatch) {
+                    setLastMessage('后端未接入格式转换接口');
+                    return;
+                }
                 const format = convFormat.toLowerCase();
                 const isIcoFormat = format === 'ico';
                 const quality = convQuality;
@@ -3265,18 +3025,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     }
                     try {
                         if (chunk.length === 1) {
-                            const res = await window.go.main.App.Convert(chunk[0]);
-                            if (!(res as any)?.success) {
-                                if (isCancellationError((res as any)?.error)) {
+                            const res = await appAny.Convert(chunk[0]);
+                            if (!res?.success) {
+                                if (isCancellationError(res?.error)) {
                                     cancelRequestedRef.current = true;
                                     setCancelRequested(true);
                                     break;
                                 }
                                 failed += 1;
-                                reportTaskFailure('格式转换', chunk[0].input_path, (res as any)?.error, '转换失败');
+                                reportTaskFailure('格式转换', chunk[0].input_path, res?.error, '转换失败');
                             }
                         } else {
-                            const res = await window.go.main.App.ConvertBatch(chunk);
+                            const res = await appAny.ConvertBatch(chunk);
                             if (Array.isArray(res)) {
                                 let cancelledInBatch = false;
                                 res.forEach((item: any, idx: number) => {
@@ -3320,6 +3080,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
 
             if (id === 'compressor') {
+                if (!appAny.Compress || !appAny.CompressBatch) {
+                    setLastMessage('后端未接入压缩接口');
+                    return;
+                }
                 const levelMap: Record<string, number> = {
                     '无损': 1,
                     '轻度': 2,
@@ -3377,22 +3141,22 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     }
                     try {
                         if (chunk.length === 1) {
-                            const res = await window.go.main.App.Compress(chunk[0]);
-                            if ((res as any)?.warning) warned++;
-                            if (!(res as any)?.success) {
-                                if (isCancellationError((res as any)?.error)) {
+                            const res = await appAny.Compress(chunk[0]);
+                            if (res?.warning) warned++;
+                            if (!res?.success) {
+                                if (isCancellationError(res?.error)) {
                                     cancelRequestedRef.current = true;
                                     setCancelRequested(true);
                                     break;
                                 }
                                 failed += 1;
-                                reportTaskFailure('图片压缩', chunk[0].input_path, (res as any)?.error, '压缩失败');
+                                reportTaskFailure('图片压缩', chunk[0].input_path, res?.error, '压缩失败');
                             }
                         } else {
-                            const res = await window.go.main.App.CompressBatch(chunk);
-                            warned += (res as any[]).filter(r => r?.warning).length;
+                            const res = await appAny.CompressBatch(chunk);
+                            warned += (res || []).filter(r => r?.warning).length;
                             let cancelledInBatch = false;
-                            (res as any[]).forEach((item: any, idx: number) => {
+                            (res || []).forEach((item: any, idx: number) => {
                                 if (!item?.success) {
                                     if (isCancellationError(item?.error)) {
                                         cancelledInBatch = true;
@@ -3432,6 +3196,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
 
             if (id === 'watermark') {
+                if (!appAny.AddWatermark) {
+                    setLastMessage('后端未接入水印接口');
+                    return;
+                }
                 const isText = watermarkType === '文字';
                 if (!isText && !watermarkImagePath) {
                     setLastMessage('请先选择水印图片');
@@ -3496,15 +3264,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
                     };
                     try {
-                        const res = await window.go.main.App.AddWatermark(req);
-                        if (!(res as any)?.success) {
-                            if (isCancellationError((res as any)?.error)) {
+                        const res = await appAny.AddWatermark(req);
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
                             failed += 1;
-                            reportTaskFailure('图片水印', f.input_path, (res as any)?.error, '水印失败');
+                            reportTaskFailure('图片水印', f.input_path, res?.error, '水印失败');
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3530,6 +3298,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
 
             if (id === 'adjust') {
+                if (!appAny.Adjust) {
+                    setLastMessage('后端未接入调整接口');
+                    return;
+                }
                 let seq = 1;
                 let failed = 0;
                 for (const f of files) {
@@ -3562,15 +3334,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         crop_mode: cropMode,
                     };
                     try {
-                        const res = await window.go.main.App.Adjust(req);
-                        if (!(res as any)?.success) {
-                            if (isCancellationError((res as any)?.error)) {
+                        const res = await appAny.Adjust(req);
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
                             failed += 1;
-                            reportTaskFailure('图片调整', f.input_path, (res as any)?.error, '调整失败');
+                            reportTaskFailure('图片调整', f.input_path, res?.error, '调整失败');
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3596,6 +3368,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
 
             if (id === 'filter') {
+                if (!appAny.ApplyFilter) {
+                    setLastMessage('后端未接入滤镜接口');
+                    return;
+                }
                 const filterPreset = FILTER_PRESETS[filterSelected] || 'none';
                 const intensity = clampNumber(filterIntensity / 100, 0, 1);
                 const grain = clampNumber(filterGrain / 100, 0, 1);
@@ -3622,15 +3398,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         vignette,
                     };
                     try {
-                        const res = await window.go.main.App.ApplyFilter(req);
-                        if (!(res as any)?.success) {
-                            if (isCancellationError((res as any)?.error)) {
+                        const res = await appAny.ApplyFilter(req);
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
                             failed += 1;
-                            reportTaskFailure('图片滤镜', f.input_path, (res as any)?.error, '滤镜失败');
+                            reportTaskFailure('图片滤镜', f.input_path, res?.error, '滤镜失败');
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3656,6 +3432,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
 
             if (id === 'pdf') {
+                if (!appAny.GeneratePDF) {
+                    setLastMessage('后端未接入 PDF 接口');
+                    return;
+                }
                 const sizeMap: Record<string, string> = {
                     'A0 (841 x 1189 mm)': 'A0',
                     'A1 (594 x 841 mm)': 'A1',
@@ -3703,25 +3483,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     title: pdfTitle.trim(),
                     author: pdfAuthor.trim(),
                 };
-                const res = await window.go.main.App.GeneratePDF(req);
+                const res = await appAny.GeneratePDF(req);
                 setProgress(100);
-                if ((res as any)?.success) {
+                if (res?.success) {
                     setLastMessage(`PDF 已生成：${req.output_path}`);
                 } else {
-                    if (isCancellationError((res as any)?.error)) {
+                    if (isCancellationError(res?.error)) {
                         cancelRequestedRef.current = true;
                         setCancelRequested(true);
                         setLastMessage('PDF 处理已取消');
                         return;
                     }
-                    reportTaskFailure('转 PDF', files[0]?.input_path || '', (res as any)?.error, 'PDF 生成失败');
-                    setLastMessage((res as any)?.error || 'PDF 生成失败');
+                    reportTaskFailure('转 PDF', files[0]?.input_path || '', res?.error, 'PDF 生成失败');
+                    setLastMessage(res?.error || 'PDF 生成失败');
                 }
                 return;
             }
 
             if (id === 'gif') {
-                const appAny = window.go?.main?.App as any;
+                const appAny = getAppBindings();
                 if (!appAny?.SplitGIF) {
                     setLastMessage('后端未接入 GIF 接口');
                     return;
@@ -3764,13 +3544,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             try {
                                 const res = await appAny.SplitGIF(req);
                                 if (!res?.success) {
+                                    const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                                     if (isCancellationError(res?.error)) {
                                         cancelRequestedRef.current = true;
                                         setCancelRequested(true);
                                         break;
                                     }
                                     failed++;
-                                    reportTaskFailure('GIF 导出', f.input_path, res?.error, '导出失败');
+                                    reportTaskFailure('GIF 导出', f.input_path, normalizedError, '导出失败');
                                 }
                             } catch (err) {
                                 if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3818,14 +3599,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             if (res?.success) {
                                 setLastMessage(`合成完成：${res.output_path || outputPath}`);
                             } else {
+                                const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                                 if (isCancellationError(res?.error)) {
                                     cancelRequestedRef.current = true;
                                     setCancelRequested(true);
                                     setLastMessage('GIF 合成已取消');
                                     return;
                                 }
-                                reportTaskFailure('GIF 合成', files[0]?.input_path || '', res?.error, '合成失败');
-                                setLastMessage(res?.error || '合成失败');
+                                reportTaskFailure('GIF 合成', files[0]?.input_path || '', normalizedError, '合成失败');
+                                setLastMessage(normalizedError);
                             }
                         } catch (err) {
                             if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3898,13 +3680,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         const res = await appAny.SplitGIF(req);
                         if (!res?.success) {
+                            const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                             if (isCancellationError(res?.error)) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
                             failed++;
-                            reportTaskFailure(`GIF ${gifMode}`, f.input_path, res?.error, '处理失败');
+                            reportTaskFailure(`GIF ${gifMode}`, f.input_path, normalizedError, '处理失败');
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {

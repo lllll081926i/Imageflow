@@ -34,6 +34,14 @@ MAX_SPEED_FACTOR = 2.0
 MIN_QUALITY = 1
 MAX_QUALITY = 100
 FRAME_OUTPUT_FORMATS = {"png", "bmp"}
+MAX_FRAME_PIXEL_BUDGET = 120_000_000
+
+
+def _error_response(code, message, detail=None):
+    payload = {"success": False, "error": message, "error_code": code}
+    if detail:
+        payload["error_detail"] = str(detail)
+    return payload
 
 
 class GIFTool:
@@ -46,7 +54,7 @@ class GIFTool:
         try:
             output_format = (output_format or "png").lower()
             if output_format not in FRAME_OUTPUT_FORMATS:
-                return {"success": False, "error": f"Unsupported output format: {output_format}"}
+                return _error_response("GIF_EXPORT_UNSUPPORTED_FORMAT", f"Unsupported output format: {output_format}")
 
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
@@ -56,7 +64,7 @@ class GIFTool:
                 frame_indices = self._parse_frame_range(frame_range, frame_count)
                 frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
                 if not frame_indices:
-                    return {"success": False, "error": "No frames selected for export"}
+                    return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
 
                 os.makedirs(output_dir, exist_ok=True)
                 base_name = Path(input_path).stem
@@ -83,12 +91,12 @@ class GIFTool:
                 }
 
         except FileNotFoundError:
-            return {"success": False, "error": f"Input file not found: {input_path}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
-            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
         except Exception as exc:
             logger.error("GIF export failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_EXPORT_FAILED", str(exc))
 
     def reverse_gif(self, input_path, output_path, loop=None):
         try:
@@ -110,12 +118,12 @@ class GIFTool:
                 "frame_count": len(frames),
             }
         except FileNotFoundError:
-            return {"success": False, "error": f"Input file not found: {input_path}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
-            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
         except Exception as exc:
             logger.error("GIF reverse failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_REVERSE_FAILED", str(exc))
 
     def change_speed(self, input_path, output_path, speed_factor, loop=None):
         try:
@@ -138,12 +146,12 @@ class GIFTool:
                 "speed_factor": factor,
             }
         except FileNotFoundError:
-            return {"success": False, "error": f"Input file not found: {input_path}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
-            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
         except Exception as exc:
             logger.error("GIF speed change failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_SPEED_CHANGE_FAILED", str(exc))
 
     def compress_gif(self, input_path, output_path, quality=90, loop=None):
         try:
@@ -151,17 +159,17 @@ class GIFTool:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
                 frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
+                self._assert_frame_pixel_budget(len(frames), gif.size, "compress")
 
             quality_value = self._sanitize_quality(quality)
             palette_size = self._quality_to_palette_size(quality_value)
-            compressed_frames = []
-            for frame in frames:
-                compressed_frames.append(self._quantize_rgba_frame(frame, palette_size))
+            for idx, frame in enumerate(frames):
+                frames[idx] = self._quantize_rgba_frame(frame, palette_size)
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
             self._save_gif(
-                compressed_frames,
+                frames,
                 output_path,
                 durations,
                 loop_value,
@@ -176,24 +184,26 @@ class GIFTool:
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(compressed_frames),
+                "frame_count": len(frames),
                 "quality": quality_value,
                 "input_size": in_size,
                 "output_size": out_size,
             }
         except FileNotFoundError:
-            return {"success": False, "error": f"Input file not found: {input_path}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
-            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
+        except MemoryError as exc:
+            return _error_response("GIF_MEMORY_LIMIT", "GIF is too large to process safely", exc)
         except Exception as exc:
             logger.error("GIF compression failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_COMPRESS_FAILED", str(exc))
 
     def build_gif(self, input_paths, output_path, fps=None, loop=0):
         try:
             paths = [p for p in (input_paths or []) if p]
             if not paths:
-                return {"success": False, "error": "No input images provided"}
+                return _error_response("GIF_BUILD_NO_INPUT", "No input images provided")
 
             fps_value = self._sanitize_fps(fps)
             duration_ms = max(1, int(1000 / fps_value))
@@ -225,12 +235,12 @@ class GIFTool:
                 "fps": fps_value,
             }
         except FileNotFoundError as exc:
-            return {"success": False, "error": f"Input file not found: {exc.filename}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {exc.filename}")
         except UnidentifiedImageError as exc:
-            return {"success": False, "error": f"Unsupported image format: {exc}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {exc}")
         except Exception as exc:
             logger.error("GIF build failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_BUILD_FAILED", str(exc))
 
     def resize_gif(self, input_path, output_path, width=None, height=None, maintain_aspect=True, loop=None):
         try:
@@ -244,7 +254,7 @@ class GIFTool:
             target_height = self._sanitize_dimension(height)
             keep_aspect = self._coerce_bool(maintain_aspect, default=True)
             if target_width <= 0 and target_height <= 0:
-                return {"success": False, "error": "Missing width or height for resize"}
+                return _error_response("GIF_RESIZE_INVALID_SIZE", "Missing width or height for resize")
 
             resized_size = self._resolve_resize_size(
                 (original_width, original_height),
@@ -252,16 +262,20 @@ class GIFTool:
                 target_height,
                 keep_aspect,
             )
+            self._assert_frame_pixel_budget(
+                len(frames),
+                (max(original_width, resized_size[0]), max(original_height, resized_size[1])),
+                "resize",
+            )
             resample = self._get_resample_filter()
-            resized_frames = []
-            for frame in frames:
+            for idx, frame in enumerate(frames):
                 resized = frame.resize(resized_size, resample=resample)
-                resized_frames.append(self._quantize_rgba_frame(resized, 255))
+                frames[idx] = self._quantize_rgba_frame(resized, 255)
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
             self._save_gif(
-                resized_frames,
+                frames,
                 output_path,
                 durations,
                 loop_value,
@@ -273,7 +287,7 @@ class GIFTool:
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(resized_frames),
+                "frame_count": len(frames),
                 "width": resized_size[0],
                 "height": resized_size[1],
                 "original_width": original_width,
@@ -281,12 +295,14 @@ class GIFTool:
                 "maintain_aspect": keep_aspect,
             }
         except FileNotFoundError:
-            return {"success": False, "error": f"Input file not found: {input_path}"}
+            return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
-            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+            return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
+        except MemoryError as exc:
+            return _error_response("GIF_MEMORY_LIMIT", "GIF is too large to process safely", exc)
         except Exception as exc:
             logger.error("GIF resize failed: %s", exc, exc_info=True)
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_RESIZE_FAILED", str(exc))
 
     def _open_gif(self, input_path):
         gif = Image.open(input_path)
@@ -464,6 +480,18 @@ class GIFTool:
             return resampling.LANCZOS
         return Image.LANCZOS
 
+    def _assert_frame_pixel_budget(self, frame_count, size, operation):
+        if frame_count <= 0:
+            return
+        width, height = size
+        if width <= 0 or height <= 0:
+            raise ValueError("Invalid frame size")
+        total_pixels = int(frame_count) * int(width) * int(height)
+        if total_pixels > MAX_FRAME_PIXEL_BUDGET:
+            raise MemoryError(
+                f"{operation} requires {total_pixels} frame-pixels, exceeds budget {MAX_FRAME_PIXEL_BUDGET}"
+            )
+
     def _quality_to_palette_size(self, quality):
         # Keep one palette index reserved for transparency.
         return max(16, min(255, int(round((quality / 100.0) * 255))))
@@ -547,7 +575,7 @@ def handle_request(input_data):
     if action == "get_frame_count":
         input_path = input_data.get("input_path")
         if not input_path:
-            return {"success": False, "error": "Missing input_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path")
         try:
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
@@ -558,13 +586,13 @@ def handle_request(input_data):
                     "frame_count": tool._get_frame_count(gif),
                 }
         except Exception as exc:
-            return {"success": False, "error": str(exc)}
+            return _error_response("GIF_GET_FRAME_COUNT_FAILED", str(exc))
 
     if action == "export_frames":
         input_path = input_data.get("input_path")
         output_dir = input_data.get("output_dir")
         if not input_path or not output_dir:
-            return {"success": False, "error": "Missing input_path or output_dir"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_dir")
         output_format = input_data.get("output_format") or input_data.get("format") or "png"
         frame_range = _build_frame_range_from_request(input_data)
         return tool.export_frames(input_path, output_dir, output_format, frame_range)
@@ -574,7 +602,7 @@ def handle_request(input_data):
         output_path = input_data.get("output_path")
         loop = input_data.get("loop")
         if not input_path or not output_path:
-            return {"success": False, "error": "Missing input_path or output_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
         return tool.reverse_gif(input_path, output_path, loop)
 
     if action == "change_speed":
@@ -583,7 +611,7 @@ def handle_request(input_data):
         speed_factor = input_data.get("speed_factor")
         loop = input_data.get("loop")
         if not input_path or not output_path:
-            return {"success": False, "error": "Missing input_path or output_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
         return tool.change_speed(input_path, output_path, speed_factor, loop)
 
     if action == "compress":
@@ -592,7 +620,7 @@ def handle_request(input_data):
         quality = input_data.get("quality", 90)
         loop = input_data.get("loop")
         if not input_path or not output_path:
-            return {"success": False, "error": "Missing input_path or output_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
         return tool.compress_gif(input_path, output_path, quality, loop)
 
     if action == "resize":
@@ -603,7 +631,7 @@ def handle_request(input_data):
         maintain_aspect = input_data.get("maintain_aspect", True)
         loop = input_data.get("loop")
         if not input_path or not output_path:
-            return {"success": False, "error": "Missing input_path or output_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
         return tool.resize_gif(input_path, output_path, width, height, maintain_aspect, loop)
 
     if action == "build_gif":
@@ -612,10 +640,10 @@ def handle_request(input_data):
         loop = input_data.get("loop", 0)
         input_paths = _coerce_input_paths(input_data)
         if not output_path:
-            return {"success": False, "error": "Missing output_path"}
+            return _error_response("GIF_BAD_REQUEST", "Missing output_path")
         return tool.build_gif(input_paths, output_path, fps, loop)
 
-    return {"success": False, "error": f"Unsupported action: {action}"}
+    return _error_response("GIF_UNSUPPORTED_ACTION", f"Unsupported action: {action}")
 
 
 def process(input_data):
@@ -623,7 +651,7 @@ def process(input_data):
         return handle_request(input_data)
     except Exception as exc:
         logger.error("Process function error: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return _error_response("GIF_INTERNAL_ERROR", str(exc))
 
 
 def main():
@@ -635,11 +663,14 @@ def main():
         json.dump(result, sys.stdout)
     except json.JSONDecodeError as exc:
         logger.error("Invalid JSON input: %s", exc)
-        json.dump({"success": False, "error": f"Invalid JSON input: {str(exc)}"}, sys.stdout)
+        json.dump(_error_response("GIF_INVALID_JSON", f"Invalid JSON input: {str(exc)}"), sys.stdout)
     except Exception as exc:
         logger.error("Unexpected error: %s", exc, exc_info=True)
-        json.dump({"success": False, "error": str(exc)}, sys.stdout)
+        json.dump(_error_response("GIF_INTERNAL_ERROR", str(exc)), sys.stdout)
 
 
 if __name__ == "__main__":
     main()
+
+
+

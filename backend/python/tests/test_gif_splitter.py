@@ -7,7 +7,9 @@ from PIL import Image, ImageSequence
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from gif_splitter import handle_request
+import gif_splitter
+
+handle_request = gif_splitter.handle_request
 
 
 class GifSplitterTests(unittest.TestCase):
@@ -110,6 +112,7 @@ class GifSplitterTests(unittest.TestCase):
         )
         self.assertFalse(result.get("success"))
         self.assertIn("Unsupported output format: jpg", result.get("error", ""))
+        self.assertEqual(result.get("error_code"), "GIF_EXPORT_UNSUPPORTED_FORMAT")
 
     def test_get_frame_count_success(self):
         gif_path = self._make_gif()
@@ -281,6 +284,31 @@ class GifSplitterTests(unittest.TestCase):
         )
         self.assertFalse(result.get("success"))
         self.assertIn("Missing width or height", result.get("error", ""))
+        self.assertEqual(result.get("error_code"), "GIF_RESIZE_INVALID_SIZE")
+
+    def test_resize_gif_returns_memory_limit_error_code(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_oom.gif")
+        original_budget = gif_splitter.MAX_FRAME_PIXEL_BUDGET
+        gif_splitter.MAX_FRAME_PIXEL_BUDGET = 10
+        try:
+            result = handle_request(
+                {
+                    "action": "resize",
+                    "input_path": gif_path,
+                    "output_path": output_path,
+                    "width": 20,
+                }
+            )
+        finally:
+            gif_splitter.MAX_FRAME_PIXEL_BUDGET = original_budget
+        self.assertFalse(result.get("success"))
+        self.assertEqual(result.get("error_code"), "GIF_MEMORY_LIMIT")
+
+    def test_unsupported_action_returns_error_code(self):
+        result = handle_request({"action": "unknown_action"})
+        self.assertFalse(result.get("success"))
+        self.assertEqual(result.get("error_code"), "GIF_UNSUPPORTED_ACTION")
 
 
 if __name__ == "__main__":

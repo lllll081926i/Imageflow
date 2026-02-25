@@ -109,6 +109,8 @@ type GIFSplitResult struct {
 	Height         int      `json:"height,omitempty"`
 	OriginalWidth  int      `json:"original_width,omitempty"`
 	OriginalHeight int      `json:"original_height,omitempty"`
+	ErrorCode      string   `json:"error_code,omitempty"`
+	ErrorDetail    string   `json:"error_detail,omitempty"`
 	Warning        string   `json:"warning,omitempty"`
 	Error          string   `json:"error,omitempty"`
 }

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
+import { getAppBindings } from '../types/wails-api';
 
 // --- Reusable UI Components ---
 
@@ -555,11 +556,12 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         return direct;
     };
     const expandPathsFromFiles = async (files: File[]) => {
-        if (!window.go?.main?.App?.ExpandDroppedPaths) return null;
+        const app = getAppBindings();
+        if (!app?.ExpandDroppedPaths) return null;
         const paths = resolveFilePaths(files);
         if (!paths.length) return null;
         try {
-            const result = await window.go.main.App.ExpandDroppedPaths(paths);
+            const result = await app.ExpandDroppedPaths(paths);
             return result as ExpandDroppedPathsResult;
         } catch (e) {
             console.error(e);
@@ -600,10 +602,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
         window.runtime.OnFileDrop(async (_x: number, _y: number, paths: string[]) => {
             if (!paths || paths.length === 0) return;
-            if (!window.go?.main?.App?.ExpandDroppedPaths) return;
+            const app = getAppBindings();
+            if (!app?.ExpandDroppedPaths) return;
 
             try {
-                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                const result = await app.ExpandDroppedPaths(paths);
                 mergeAndPublishResult(result as ExpandDroppedPathsResult);
             } catch (e) {
                 console.error(e);
@@ -639,16 +642,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
     const handleClick = async () => {
         try {
-            if (window.go?.main?.App?.SelectInputFiles) {
-                const res = await window.go.main.App.SelectInputFiles();
+            const app = getAppBindings();
+            if (app?.SelectInputFiles) {
+                const res = await app.SelectInputFiles();
                 const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
                 if (paths.length === 0) return;
-                if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                if (!app?.ExpandDroppedPaths) {
                     inputRef.current?.click();
                     return;
                 }
 
-                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                const result = await app.ExpandDroppedPaths(paths);
                 mergeAndPublishResult(result as ExpandDroppedPathsResult);
                 return;
             }
@@ -670,12 +674,12 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 }
                 const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
                 if (paths.length === 0) return;
-                if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                if (!app?.ExpandDroppedPaths) {
                     inputRef.current?.click();
                     return;
                 }
 
-                const result = await window.go.main.App.ExpandDroppedPaths(paths);
+                const result = await app.ExpandDroppedPaths(paths);
                 mergeAndPublishResult(result as ExpandDroppedPathsResult);
                 return;
             }
@@ -695,14 +699,15 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         e?.stopPropagation();
         void (async () => {
             try {
-                if (window.go?.main?.App?.SelectInputDirectory) {
-                    const dir = await window.go.main.App.SelectInputDirectory();
+                const app = getAppBindings();
+                if (app?.SelectInputDirectory) {
+                    const dir = await app.SelectInputDirectory();
                     if (!dir || !dir.trim()) return;
-                    if (!window.go?.main?.App?.ExpandDroppedPaths) {
+                    if (!app?.ExpandDroppedPaths) {
                         directoryInputRef.current?.click();
                         return;
                     }
-                    const result = await window.go.main.App.ExpandDroppedPaths([dir]);
+                    const result = await app.ExpandDroppedPaths([dir]);
                     mergeAndPublishResult(result as ExpandDroppedPathsResult);
                     return;
                 }
