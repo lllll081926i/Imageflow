@@ -36,12 +36,59 @@ type OutputSettings = {
     conflict_strategy: string;
 };
 
+type FeaturePreset = {
+    id: string;
+    name: string;
+    feature_id: string;
+    created_at: number;
+    updated_at: number;
+    payload: Record<string, any>;
+};
+
+type FeaturePresetStore = Record<string, FeaturePreset[]>;
+
 const defaultOutputSettings: OutputSettings = {
     output_prefix: 'IF',
     output_template: '{prefix}{basename}',
     preserve_folder_structure: true,
     conflict_strategy: 'rename',
 };
+
+const FEATURE_PRESETS_STORAGE_KEY = 'imageflow:feature-presets:v1';
+
+function loadFeaturePresetStore(): FeaturePresetStore {
+    try {
+        const raw = window.localStorage?.getItem(FEATURE_PRESETS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return {};
+        const store: FeaturePresetStore = {};
+        Object.keys(parsed).forEach((featureId) => {
+            const items = Array.isArray((parsed as any)[featureId]) ? (parsed as any)[featureId] : [];
+            store[featureId] = items
+                .map((item: any) => ({
+                    id: typeof item?.id === 'string' ? item.id : `${featureId}-${Date.now()}`,
+                    name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : '未命名预设',
+                    feature_id: featureId,
+                    created_at: Number(item?.created_at) || Date.now(),
+                    updated_at: Number(item?.updated_at) || Date.now(),
+                    payload: item?.payload && typeof item.payload === 'object' ? item.payload : {},
+                }))
+                .sort((a, b) => b.updated_at - a.updated_at);
+        });
+        return store;
+    } catch {
+        return {};
+    }
+}
+
+function saveFeaturePresetStore(store: FeaturePresetStore) {
+    try {
+        window.localStorage?.setItem(FEATURE_PRESETS_STORAGE_KEY, JSON.stringify(store));
+    } catch {
+        // ignore storage failures
+    }
+}
 
 // --- Feature Settings Panels (Memoized) ---
 
@@ -1401,6 +1448,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
+    const [featurePresets, setFeaturePresets] = useState<FeaturePresetStore>(() => loadFeaturePresetStore());
+    const [presetNameDraft, setPresetNameDraft] = useState('');
+    const [selectedPresetId, setSelectedPresetId] = useState('');
+    const [failedRecords, setFailedRecords] = useState<DroppedFile[]>([]);
+    const [retryFailedOnly, setRetryFailedOnly] = useState(false);
+    const currentRunFailedPathsRef = useRef<Set<string> | null>(null);
 
     const [convFormat, setConvFormat] = useState('JPG');
     const [convQuality, setConvQuality] = useState(80);
@@ -1548,6 +1601,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         isGifPath,
         normalizePath,
     });
+    const currentFeaturePresets = useMemo(() => {
+        return (featurePresets[id] || []).slice().sort((a, b) => b.updated_at - a.updated_at);
+    }, [featurePresets, id]);
+
+    useEffect(() => {
+        if (currentFeaturePresets.length === 0) {
+            setSelectedPresetId('');
+            return;
+        }
+        if (!selectedPresetId || !currentFeaturePresets.some((p) => p.id === selectedPresetId)) {
+            setSelectedPresetId(currentFeaturePresets[0].id);
+        }
+    }, [currentFeaturePresets, selectedPresetId]);
 
     const previewSrc = useMemo(() => {
         if (!previewPath) return '';
@@ -2546,6 +2612,252 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
         return normalizePdfFileName(name);
     };
+    const buildCurrentPresetPayload = (): Record<string, any> => {
+        const shared = {
+            output_settings: outputSettings,
+            output_dir: outputDir,
+        };
+        if (id === 'converter') {
+            return {
+                ...shared,
+                convFormat,
+                convQuality,
+                convCompressLevel,
+                convIcoSizes,
+                convResizeMode,
+                convScalePercent,
+                convFixedWidth,
+                convFixedHeight,
+                convLongEdge,
+                convKeepMetadata,
+                convMaintainAR,
+                convOverwriteSource,
+            };
+        }
+        if (id === 'compressor') {
+            return {
+                ...shared,
+                compMode,
+                compTargetSize,
+                compTargetSizeKB,
+                compEngine,
+                compOverwriteSource,
+            };
+        }
+        if (id === 'pdf') {
+            return {
+                ...shared,
+                pdfSize,
+                pdfLayout,
+                pdfFit,
+                pdfMarginMm,
+                pdfCompression,
+                pdfFileName,
+                pdfTitle,
+                pdfAuthor,
+            };
+        }
+        if (id === 'gif') {
+            return {
+                ...shared,
+                gifMode,
+                gifExportFormat,
+                gifSpeedPercent,
+                gifCompressQuality,
+                gifBuildFps,
+                gifResizeWidth,
+                gifResizeHeight,
+                gifResizeMaintainAR,
+            };
+        }
+        if (id === 'watermark') {
+            return {
+                ...shared,
+                watermarkType,
+                watermarkText,
+                watermarkImagePath,
+                watermarkPosition,
+                watermarkOpacity,
+                watermarkRotate,
+                watermarkSize,
+                watermarkTiled,
+                watermarkBlendMode,
+                watermarkShadow,
+                watermarkMargin,
+                watermarkFont,
+                watermarkColor,
+            };
+        }
+        if (id === 'adjust') {
+            return {
+                ...shared,
+                adjustExposure,
+                adjustContrast,
+                adjustSaturation,
+                adjustSharpness,
+                adjustVibrance,
+                adjustHue,
+                adjustRotate,
+                adjustFlipH,
+                adjustFlipV,
+                adjustCropRatio,
+            };
+        }
+        if (id === 'filter') {
+            return {
+                ...shared,
+                filterIntensity,
+                filterGrain,
+                filterVignette,
+                filterSelected,
+            };
+        }
+        return shared;
+    };
+    const applyPresetPayload = (payload: Record<string, any>) => {
+        if (!payload || typeof payload !== 'object') return;
+        if (payload.output_settings && typeof payload.output_settings === 'object') {
+            setOutputSettings(normalizeOutputSettings(payload.output_settings));
+        }
+        if (typeof payload.output_dir === 'string') {
+            setOutputDir(payload.output_dir);
+        }
+        if (id === 'converter') {
+            if (typeof payload.convFormat === 'string') setConvFormat(payload.convFormat);
+            if (typeof payload.convQuality === 'number') setConvQuality(payload.convQuality);
+            if (typeof payload.convCompressLevel === 'number') setConvCompressLevel(payload.convCompressLevel);
+            if (Array.isArray(payload.convIcoSizes)) setConvIcoSizes(payload.convIcoSizes.filter((n: unknown) => typeof n === 'number'));
+            if (typeof payload.convResizeMode === 'string') setConvResizeMode(payload.convResizeMode);
+            if (typeof payload.convScalePercent === 'number') setConvScalePercent(payload.convScalePercent);
+            if (typeof payload.convFixedWidth === 'number') setConvFixedWidth(payload.convFixedWidth);
+            if (typeof payload.convFixedHeight === 'number') setConvFixedHeight(payload.convFixedHeight);
+            if (typeof payload.convLongEdge === 'number') setConvLongEdge(payload.convLongEdge);
+            if (typeof payload.convKeepMetadata === 'boolean') setConvKeepMetadata(payload.convKeepMetadata);
+            if (typeof payload.convMaintainAR === 'boolean') setConvMaintainAR(payload.convMaintainAR);
+            if (typeof payload.convOverwriteSource === 'boolean') setConvOverwriteSource(payload.convOverwriteSource);
+        } else if (id === 'compressor') {
+            if (typeof payload.compMode === 'string') setCompMode(payload.compMode);
+            if (typeof payload.compTargetSize === 'boolean') setCompTargetSize(payload.compTargetSize);
+            if (typeof payload.compTargetSizeKB === 'number') setCompTargetSizeKB(payload.compTargetSizeKB);
+            if (typeof payload.compEngine === 'string') setCompEngine(payload.compEngine);
+            if (typeof payload.compOverwriteSource === 'boolean') setCompOverwriteSource(payload.compOverwriteSource);
+        } else if (id === 'pdf') {
+            if (typeof payload.pdfSize === 'string') setPdfSize(payload.pdfSize);
+            if (typeof payload.pdfLayout === 'string') setPdfLayout(payload.pdfLayout);
+            if (typeof payload.pdfFit === 'string') setPdfFit(payload.pdfFit);
+            if (typeof payload.pdfMarginMm === 'number') setPdfMarginMm(payload.pdfMarginMm);
+            if (typeof payload.pdfCompression === 'string') setPdfCompression(payload.pdfCompression);
+            if (typeof payload.pdfFileName === 'string') setPdfFileName(payload.pdfFileName);
+            if (typeof payload.pdfTitle === 'string') setPdfTitle(payload.pdfTitle);
+            if (typeof payload.pdfAuthor === 'string') setPdfAuthor(payload.pdfAuthor);
+        } else if (id === 'gif') {
+            if (typeof payload.gifMode === 'string') setGifMode(payload.gifMode);
+            if (typeof payload.gifExportFormat === 'string') setGifExportFormat(payload.gifExportFormat);
+            if (typeof payload.gifSpeedPercent === 'number') setGifSpeedPercent(payload.gifSpeedPercent);
+            if (typeof payload.gifCompressQuality === 'number') setGifCompressQuality(payload.gifCompressQuality);
+            if (typeof payload.gifBuildFps === 'number') setGifBuildFps(payload.gifBuildFps);
+            if (typeof payload.gifResizeWidth === 'number') handleGifResizeWidthChange(payload.gifResizeWidth);
+            if (typeof payload.gifResizeHeight === 'number') handleGifResizeHeightChange(payload.gifResizeHeight);
+            if (typeof payload.gifResizeMaintainAR === 'boolean') setGifResizeMaintainAR(payload.gifResizeMaintainAR);
+        } else if (id === 'watermark') {
+            if (typeof payload.watermarkType === 'string') setWatermarkType(payload.watermarkType);
+            if (typeof payload.watermarkText === 'string') setWatermarkText(payload.watermarkText);
+            if (typeof payload.watermarkImagePath === 'string') setWatermarkImagePath(payload.watermarkImagePath);
+            if (typeof payload.watermarkPosition === 'string') setWatermarkPosition(payload.watermarkPosition);
+            if (typeof payload.watermarkOpacity === 'number') setWatermarkOpacity(payload.watermarkOpacity);
+            if (typeof payload.watermarkRotate === 'number') setWatermarkRotate(payload.watermarkRotate);
+            if (typeof payload.watermarkSize === 'number') setWatermarkSize(payload.watermarkSize);
+            if (typeof payload.watermarkTiled === 'boolean') setWatermarkTiled(payload.watermarkTiled);
+            if (typeof payload.watermarkBlendMode === 'string') setWatermarkBlendMode(payload.watermarkBlendMode);
+            if (typeof payload.watermarkShadow === 'boolean') setWatermarkShadow(payload.watermarkShadow);
+            if (payload.watermarkMargin && typeof payload.watermarkMargin === 'object') {
+                setWatermarkMargin({
+                    x: Number(payload.watermarkMargin.x) || 0,
+                    y: Number(payload.watermarkMargin.y) || 0,
+                });
+            }
+            if (typeof payload.watermarkFont === 'string') setWatermarkFont(payload.watermarkFont);
+            if (typeof payload.watermarkColor === 'string') setWatermarkColor(payload.watermarkColor);
+        } else if (id === 'adjust') {
+            if (typeof payload.adjustExposure === 'number') setAdjustExposure(payload.adjustExposure);
+            if (typeof payload.adjustContrast === 'number') setAdjustContrast(payload.adjustContrast);
+            if (typeof payload.adjustSaturation === 'number') setAdjustSaturation(payload.adjustSaturation);
+            if (typeof payload.adjustSharpness === 'number') setAdjustSharpness(payload.adjustSharpness);
+            if (typeof payload.adjustVibrance === 'number') setAdjustVibrance(payload.adjustVibrance);
+            if (typeof payload.adjustHue === 'number') setAdjustHue(payload.adjustHue);
+            if (typeof payload.adjustRotate === 'number') setAdjustRotate(payload.adjustRotate);
+            if (typeof payload.adjustFlipH === 'boolean') setAdjustFlipH(payload.adjustFlipH);
+            if (typeof payload.adjustFlipV === 'boolean') setAdjustFlipV(payload.adjustFlipV);
+            if (typeof payload.adjustCropRatio === 'string') setAdjustCropRatio(payload.adjustCropRatio);
+        } else if (id === 'filter') {
+            if (typeof payload.filterIntensity === 'number') setFilterIntensity(payload.filterIntensity);
+            if (typeof payload.filterGrain === 'number') setFilterGrain(payload.filterGrain);
+            if (typeof payload.filterVignette === 'number') setFilterVignette(payload.filterVignette);
+            if (typeof payload.filterSelected === 'number') setFilterSelected(payload.filterSelected);
+        }
+    };
+    const saveCurrentPreset = () => {
+        if (id === 'info') return;
+        const name = presetNameDraft.trim() || `${feature.title}预设 ${new Date().toLocaleString()}`;
+        const now = Date.now();
+        const preset: FeaturePreset = {
+            id: `${id}-${now}`,
+            name,
+            feature_id: id,
+            created_at: now,
+            updated_at: now,
+            payload: buildCurrentPresetPayload(),
+        };
+        setFeaturePresets((prev) => {
+            const next: FeaturePresetStore = {
+                ...prev,
+                [id]: [preset, ...(prev[id] || [])],
+            };
+            saveFeaturePresetStore(next);
+            return next;
+        });
+        setSelectedPresetId(preset.id);
+        setPresetNameDraft('');
+        setLastMessage(`预设已保存：${name}`);
+    };
+    const applySelectedPreset = () => {
+        const target = currentFeaturePresets.find((p) => p.id === selectedPresetId);
+        if (!target) return;
+        applyPresetPayload(target.payload || {});
+        setLastMessage(`已应用预设：${target.name}`);
+    };
+    const deleteSelectedPreset = () => {
+        if (!selectedPresetId) return;
+        const target = currentFeaturePresets.find((p) => p.id === selectedPresetId);
+        setFeaturePresets((prev) => {
+            const nextList = (prev[id] || []).filter((p) => p.id !== selectedPresetId);
+            const next: FeaturePresetStore = {
+                ...prev,
+                [id]: nextList,
+            };
+            saveFeaturePresetStore(next);
+            return next;
+        });
+        setSelectedPresetId('');
+        if (target) {
+            setLastMessage(`预设已删除：${target.name}`);
+        }
+    };
+    const updateFailedRecordsByPath = (filePath: string) => {
+        const normalized = normalizePath(filePath);
+        if (!normalized) return;
+        if (currentRunFailedPathsRef.current) {
+            currentRunFailedPathsRef.current.add(normalized);
+        }
+        const candidates = [...(dropResult?.files || []), ...failedRecords];
+        const matched = candidates.find((f) => normalizePath(f.input_path) === normalized);
+        if (!matched) return;
+        setFailedRecords((prev) => {
+            const exists = prev.some((f) => normalizePath(f.input_path) === normalized);
+            if (exists) return prev;
+            return [...prev, matched];
+        });
+    };
     const normalizeBackendError = (raw: string) => {
         const text = raw.trim();
         if (!text) return text;
@@ -2588,8 +2900,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         return fallback;
     };
     const reportTaskFailure = (taskName: string, filePath: string, reason: unknown, fallback = '处理失败') => {
-        if (!onTaskFailure) return;
         if (isCancellationError(reason)) return;
+        updateFailedRecordsByPath(filePath);
+        if (!onTaskFailure) return;
         onTaskFailure({
             taskName,
             imageName: basename(filePath),
@@ -2597,8 +2910,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         });
     };
     const reportBatchTaskFailure = (taskName: string, files: DroppedFile[], reason: unknown, fallback = '处理失败') => {
-        if (!onTaskFailure) return;
         if (isCancellationError(reason)) return;
+        files.forEach((f) => updateFailedRecordsByPath(f.input_path));
+        if (!onTaskFailure) return;
         const firstPath = files[0]?.input_path || '';
         const firstName = firstPath ? basename(firstPath) : '批量输入';
         const imageName = files.length > 1 ? `${firstName} 等` : firstName;
@@ -2879,6 +3193,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             setLastMessage('未检测到 Wails 运行环境');
             return;
         }
+        if (retryFailedOnly && failedRecords.length === 0) {
+            setLastMessage('失败列表为空，无法仅重试失败项');
+            return;
+        }
 
         const outDir = effectiveOutputDir;
         const requiresOutputDir =
@@ -2896,6 +3214,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const conflictStrategy = outputSettingsSnapshot.conflict_strategy || defaultOutputSettings.conflict_strategy;
         const reservedPaths = new Set<string>();
         const batchTime = new Date();
+        let currentRunFiles: DroppedFile[] = [];
         const resolveUniquePath = async (candidate: string) => {
             const normalized = normalizePath(candidate);
             if (conflictStrategy !== 'rename') {
@@ -2922,9 +3241,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             }
         };
 
+        currentRunFailedPathsRef.current = new Set<string>();
         setIsProcessing(true);
         try {
-            const files = dropResult.files;
+            const files = retryFailedOnly ? failedRecords : dropResult.files;
+            currentRunFiles = files;
             const total = files.length;
             let completed = 0;
 
@@ -3728,6 +4049,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
             }
         } finally {
+            const failedSet = currentRunFailedPathsRef.current;
+            if (failedSet && currentRunFiles.length > 0) {
+                const nextFailed = currentRunFiles.filter((f) => failedSet.has(normalizePath(f.input_path)));
+                setFailedRecords(nextFailed);
+                if (nextFailed.length === 0) {
+                    setRetryFailedOnly(false);
+                }
+            }
+            currentRunFailedPathsRef.current = null;
             cancelRequestedRef.current = false;
             setCancelRequested(false);
             setIsProcessing(false);
@@ -3736,6 +4066,151 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
 
     const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
     const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
+    const outputNamePreview = useMemo(() => {
+        const list = dropResult?.files || [];
+        if (list.length === 0) return [] as string[];
+        const template = outputSettings.output_template || defaultOutputSettings.output_template;
+        const prefix = outputSettings.output_prefix || defaultOutputSettings.output_prefix;
+        const preserveStructure = Boolean(outputSettings.preserve_folder_structure);
+        const now = new Date();
+        const sample = list.slice(0, 3);
+
+        if (id === 'pdf') {
+            const pdfBase = normalizePdfFileName(pdfFileName) || 'output';
+            const name = buildOutputName(pdfBase, {
+                template,
+                prefix,
+                seq: 1,
+                op: 'pdf',
+                date: now,
+            });
+            return [`${name}.pdf`];
+        }
+
+        if (id === 'gif' && gifMode === '导出') {
+            if (sample.every((f) => isGifPath(f.input_path))) {
+                return sample.map((f, idx) => {
+                    const name = basename(f.input_path).replace(/\.[^.]+$/, '');
+                    const rel = getRelPath(f, preserveStructure);
+                    const relDir = getRelDir(rel);
+                    const folderName = buildOutputName(`${name}_frames`, {
+                        template,
+                        prefix,
+                        seq: idx + 1,
+                        op: 'gif_frames',
+                        date: now,
+                    });
+                    const folder = relDir ? `${relDir}/${folderName}` : folderName;
+                    return `${folder}/[frame].${gifExportFormat.toLowerCase()}`;
+                });
+            }
+            const combined = buildOutputName('output_combined', {
+                template,
+                prefix,
+                seq: 1,
+                op: 'gif_build',
+                date: now,
+            });
+            return [`${combined}.gif`];
+        }
+
+        return sample.map((f, idx) => {
+            const seq = idx + 1;
+            if (id === 'converter') {
+                return buildOutputRelPath(f, {
+                    ext: convFormat.toLowerCase(),
+                    seq,
+                    op: 'converter',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            if (id === 'compressor') {
+                return buildOutputRelPath(f, {
+                    seq,
+                    op: 'compressor',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            if (id === 'watermark') {
+                return buildOutputRelPath(f, {
+                    suffix: '_watermark',
+                    seq,
+                    op: 'watermark',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            if (id === 'adjust') {
+                return buildOutputRelPath(f, {
+                    suffix: '_adjusted',
+                    seq,
+                    op: 'adjust',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            if (id === 'filter') {
+                return buildOutputRelPath(f, {
+                    suffix: '_filtered',
+                    seq,
+                    op: 'filter',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            if (id === 'gif') {
+                const action = resolveGifAction(gifMode);
+                const suffix = buildGifProcessSuffix(
+                    action,
+                    gifSpeedPercent,
+                    gifCompressQuality,
+                    gifResizeWidth,
+                    gifResizeHeight,
+                );
+                return buildOutputRelPath(f, {
+                    suffix,
+                    seq,
+                    op: 'gif',
+                    template,
+                    prefix,
+                    preserveStructure,
+                    date: now,
+                });
+            }
+            return buildOutputRelPath(f, {
+                seq,
+                op: id,
+                template,
+                prefix,
+                preserveStructure,
+                date: now,
+            });
+        });
+    }, [
+        convFormat,
+        dropResult,
+        gifCompressQuality,
+        gifExportFormat,
+        gifMode,
+        gifResizeHeight,
+        gifResizeWidth,
+        gifSpeedPercent,
+        id,
+        outputSettings,
+        pdfFileName,
+    ]);
     const dropZone = (
         <FileDropZone 
             isActive={isActive}
@@ -3803,6 +4278,62 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     {effectiveOutputDir}
                 </div>
             )}
+            {id !== 'info' && (
+                <div className="space-y-2">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">批处理预设</div>
+                    <div className="flex gap-2">
+                        <input
+                            value={presetNameDraft}
+                            onChange={(e) => setPresetNameDraft(e.target.value)}
+                            placeholder="输入预设名称"
+                            className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs outline-none dark:text-white"
+                        />
+                        <button
+                            onClick={saveCurrentPreset}
+                            className="px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5"
+                        >
+                            保存
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <select
+                            value={selectedPresetId}
+                            onChange={(e) => setSelectedPresetId(e.target.value)}
+                            className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs outline-none dark:text-white"
+                        >
+                            <option value="">选择预设</option>
+                            {currentFeaturePresets.map((preset) => (
+                                <option key={preset.id} value={preset.id}>{preset.name}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={applySelectedPreset}
+                            disabled={!selectedPresetId}
+                            className="px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            应用
+                        </button>
+                        <button
+                            onClick={deleteSelectedPreset}
+                            disabled={!selectedPresetId}
+                            className="px-3 py-2 rounded-xl border border-red-200 dark:border-red-500/30 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            删除
+                        </button>
+                    </div>
+                </div>
+            )}
+            {id !== 'info' && outputNamePreview.length > 0 && (
+                <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 space-y-1">
+                    <div className="text-gray-500 dark:text-gray-400">输出命名预览</div>
+                    {outputNamePreview.map((name, idx) => (
+                        <div key={`${name}-${idx}`} className="font-mono break-all">{name}</div>
+                    ))}
+                    {(dropResult?.files?.length || 0) > outputNamePreview.length && (
+                        <div className="text-gray-400">... 共 {dropResult?.files?.length} 项</div>
+                    )}
+                </div>
+            )}
             {lastMessage && (
                 <div
                     className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
@@ -3831,6 +4362,28 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
 
     const renderActionSection = (compact = false) => (
         <div className={`${compact ? 'pt-3' : 'pt-4'} border-t border-gray-100 dark:border-white/5 mt-auto shrink-0 space-y-3`}>
+            {failedRecords.length > 0 && (
+                <div className="text-xs bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl px-3 py-2 text-amber-700 dark:text-amber-300 space-y-2">
+                    <div>失败项：{failedRecords.length}，可仅重试失败文件。</div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setRetryFailedOnly((v) => !v)}
+                            className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium ${retryFailedOnly ? 'border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-100/60 dark:bg-amber-500/20' : 'border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-300'}`}
+                        >
+                            {retryFailedOnly ? '仅重试失败项：开启' : '仅重试失败项：关闭'}
+                        </button>
+                        <button
+                            onClick={() => {
+                                setFailedRecords([]);
+                                setRetryFailedOnly(false);
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg border border-amber-200 dark:border-amber-500/20 text-xs font-medium text-amber-700 dark:text-amber-300"
+                        >
+                            清空失败列表
+                        </button>
+                    </div>
+                </div>
+            )}
             {renderActionContent(compact)}
         </div>
     );
