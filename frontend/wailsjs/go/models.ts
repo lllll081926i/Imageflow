@@ -290,6 +290,9 @@ export namespace models {
 	    speed_factor?: number;
 	    fps?: number;
 	    quality?: number;
+	    width?: number;
+	    height?: number;
+	    maintain_aspect: boolean;
 	    loop?: number;
 	
 	    static createFrom(source: any = {}) {
@@ -311,6 +314,9 @@ export namespace models {
 	        this.speed_factor = source["speed_factor"];
 	        this.fps = source["fps"];
 	        this.quality = source["quality"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.maintain_aspect = source["maintain_aspect"];
 	        this.loop = source["loop"];
 	    }
 	}
@@ -326,6 +332,12 @@ export namespace models {
 	    speed_factor?: number;
 	    fps?: number;
 	    quality?: number;
+	    width?: number;
+	    height?: number;
+	    original_width?: number;
+	    original_height?: number;
+	    error_code?: string;
+	    error_detail?: string;
 	    warning?: string;
 	    error?: string;
 	
@@ -346,6 +358,12 @@ export namespace models {
 	        this.speed_factor = source["speed_factor"];
 	        this.fps = source["fps"];
 	        this.quality = source["quality"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.original_width = source["original_width"];
+	        this.original_height = source["original_height"];
+	        this.error_code = source["error_code"];
+	        this.error_detail = source["error_detail"];
 	        this.warning = source["warning"];
 	        this.error = source["error"];
 	    }

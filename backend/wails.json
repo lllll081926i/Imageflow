@@ -6,7 +6,9 @@
     "name": "lllll081926"
   },
   "info": {
-    "companyName": "lllll081926"
+    "companyName": "lllll081926",
+    "productName": "ImageFlow",
+    "productVersion": "1.0.6"
   },
   "frontend:dir": "../frontend",
   "frontend:install": "npm install",
