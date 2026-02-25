@@ -14,6 +14,10 @@ describe('resolveGifAction', () => {
         expect(resolveGifAction('压缩')).toBe('compress');
     });
 
+    it('maps 缩放 to resize', () => {
+        expect(resolveGifAction('缩放')).toBe('resize');
+    });
+
     it('falls back to change_speed for unknown mode', () => {
         expect(resolveGifAction('未知模式')).toBe('change_speed');
     });
@@ -31,5 +35,8 @@ describe('buildGifProcessSuffix', () => {
     it('returns compress suffix', () => {
         expect(buildGifProcessSuffix('compress', 100, 77)).toBe('_compress_q77');
     });
-});
 
+    it('returns resize suffix', () => {
+        expect(buildGifProcessSuffix('resize', 100, 77, 320, 180)).toBe('_resize_320x180');
+    });
+});

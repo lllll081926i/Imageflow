@@ -1,4 +1,4 @@
-export type GifProcessAction = 'reverse' | 'change_speed' | 'compress';
+export type GifProcessAction = 'reverse' | 'change_speed' | 'compress' | 'resize';
 
 export function resolveGifAction(mode: string): GifProcessAction {
     if (mode === '倒放') {
@@ -10,6 +10,9 @@ export function resolveGifAction(mode: string): GifProcessAction {
     if (mode === '压缩') {
         return 'compress';
     }
+    if (mode === '缩放') {
+        return 'resize';
+    }
     return 'change_speed';
 }
 
@@ -17,6 +20,8 @@ export function buildGifProcessSuffix(
     action: GifProcessAction,
     speedPercent: number,
     compressQuality: number,
+    resizeWidth = 0,
+    resizeHeight = 0,
 ): string {
     if (action === 'reverse') {
         return '_reverse';
@@ -24,6 +29,10 @@ export function buildGifProcessSuffix(
     if (action === 'change_speed') {
         return `_speed_${speedPercent}`;
     }
+    if (action === 'resize') {
+        const width = Math.max(0, Math.round(Number(resizeWidth) || 0));
+        const height = Math.max(0, Math.round(Number(resizeHeight) || 0));
+        return `_resize_${width}x${height}`;
+    }
     return `_compress_q${compressQuality}`;
 }
-

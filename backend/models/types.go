@@ -73,7 +73,7 @@ type PDFResult struct {
 
 // GIFSplitRequest represents a request to process GIF-related actions
 type GIFSplitRequest struct {
-	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif, compress
+	Action       string   `json:"action,omitempty"` // export_frames, reverse, change_speed, build_gif, compress, resize
 	InputPath    string   `json:"input_path,omitempty"`
 	InputPaths   []string `json:"input_paths,omitempty"`   // used for build_gif
 	OutputDir    string   `json:"output_dir,omitempty"`    // used for export_frames
@@ -86,24 +86,31 @@ type GIFSplitRequest struct {
 	SpeedFactor  float64  `json:"speed_factor,omitempty"`  // 0.1-2.0
 	FPS          float64  `json:"fps,omitempty"`           // used for build_gif
 	Quality      int      `json:"quality,omitempty"`       // used for compress (1-100)
+	Width        int      `json:"width,omitempty"`         // used for resize
+	Height       int      `json:"height,omitempty"`        // used for resize
+	MaintainAR   bool     `json:"maintain_aspect"`
 	Loop         int      `json:"loop,omitempty"`
 }
 
 // GIFSplitResult represents the result of GIF processing
 type GIFSplitResult struct {
-	Success     bool     `json:"success"`
-	InputPath   string   `json:"input_path,omitempty"`
-	InputPaths  []string `json:"input_paths,omitempty"`
-	OutputDir   string   `json:"output_dir,omitempty"`
-	OutputPath  string   `json:"output_path,omitempty"`
-	FrameCount  int      `json:"frame_count,omitempty"`
-	ExportCount int      `json:"export_count,omitempty"`
-	FramePaths  []string `json:"frame_paths,omitempty"`
-	SpeedFactor float64  `json:"speed_factor,omitempty"`
-	FPS         float64  `json:"fps,omitempty"`
-	Quality     int      `json:"quality,omitempty"`
-	Warning     string   `json:"warning,omitempty"`
-	Error       string   `json:"error,omitempty"`
+	Success        bool     `json:"success"`
+	InputPath      string   `json:"input_path,omitempty"`
+	InputPaths     []string `json:"input_paths,omitempty"`
+	OutputDir      string   `json:"output_dir,omitempty"`
+	OutputPath     string   `json:"output_path,omitempty"`
+	FrameCount     int      `json:"frame_count,omitempty"`
+	ExportCount    int      `json:"export_count,omitempty"`
+	FramePaths     []string `json:"frame_paths,omitempty"`
+	SpeedFactor    float64  `json:"speed_factor,omitempty"`
+	FPS            float64  `json:"fps,omitempty"`
+	Quality        int      `json:"quality,omitempty"`
+	Width          int      `json:"width,omitempty"`
+	Height         int      `json:"height,omitempty"`
+	OriginalWidth  int      `json:"original_width,omitempty"`
+	OriginalHeight int      `json:"original_height,omitempty"`
+	Warning        string   `json:"warning,omitempty"`
+	Error          string   `json:"error,omitempty"`
 }
 
 // InfoRequest represents a request to get image information

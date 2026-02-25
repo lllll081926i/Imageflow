@@ -133,3 +133,51 @@ func TestSplitGIF_ReturnsErrorWhenPythonResultFails(t *testing.T) {
 	}
 }
 
+func TestSplitGIF_ResizePassesDimensions(t *testing.T) {
+	logger := newTestLogger(t)
+	defer logger.Close()
+
+	runner := &mockPythonRunner{
+		executeAndParseFn: func(scriptName string, input interface{}, result interface{}) error {
+			if scriptName != "gif_splitter.py" {
+				t.Fatalf("expected script gif_splitter.py, got %s", scriptName)
+			}
+			payload, ok := input.(map[string]interface{})
+			if !ok {
+				t.Fatalf("expected payload map, got %T", input)
+			}
+			if payload["action"] != "resize" {
+				t.Fatalf("expected action resize, got %#v", payload["action"])
+			}
+			if payload["width"] != 320 {
+				t.Fatalf("expected width 320, got %#v", payload["width"])
+			}
+			if payload["height"] != 180 {
+				t.Fatalf("expected height 180, got %#v", payload["height"])
+			}
+			if payload["maintain_aspect"] != true {
+				t.Fatalf("expected maintain_aspect true, got %#v", payload["maintain_aspect"])
+			}
+
+			res := result.(*models.GIFSplitResult)
+			*res = models.GIFSplitResult{Success: true, Width: 320, Height: 180}
+			return nil
+		},
+	}
+
+	service := NewGIFSplitterService(runner, logger)
+	res, err := service.SplitGIF(models.GIFSplitRequest{
+		Action:     "resize",
+		InputPath:  "in.gif",
+		OutputPath: "out.gif",
+		Width:      320,
+		Height:     180,
+		MaintainAR: true,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !res.Success || res.Width != 320 || res.Height != 180 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}

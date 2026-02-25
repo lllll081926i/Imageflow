@@ -986,6 +986,14 @@ type GifSettingsProps = {
     sourceType: 'gif' | 'images' | 'mixed' | 'empty';
     buildFps: number;
     setBuildFps: (v: number) => void;
+    resizeWidth: number;
+    resizeHeight: number;
+    onResizeWidthChange: (v: number) => void;
+    onResizeHeightChange: (v: number) => void;
+    resizeMaintainAR: boolean;
+    setResizeMaintainAR: (v: boolean) => void;
+    originalWidth: number;
+    originalHeight: number;
 };
 
 const GifSettings = memo(({
@@ -1000,6 +1008,14 @@ const GifSettings = memo(({
     sourceType,
     buildFps,
     setBuildFps,
+    resizeWidth,
+    resizeHeight,
+    onResizeWidthChange,
+    onResizeHeightChange,
+    resizeMaintainAR,
+    setResizeMaintainAR,
+    originalWidth,
+    originalHeight,
 }: GifSettingsProps) => {
     if (sourceType === 'images') {
         return (
@@ -1031,7 +1047,7 @@ const GifSettings = memo(({
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
                 <SegmentedControl
-                    options={['导出', '倒放', '修改帧率', '压缩']}
+                    options={['导出', '倒放', '修改帧率', '压缩', '缩放']}
                     value={mode}
                     onChange={setMode}
                 />
@@ -1085,6 +1101,42 @@ const GifSettings = memo(({
                     </div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         质量越高细节保留越多，文件体积通常也会更大。
+                    </div>
+                </div>
+            )}
+
+            {mode === '缩放' && (
+                <div className="animate-enter space-y-3">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        原始尺寸：{originalWidth > 0 && originalHeight > 0 ? `${originalWidth} x ${originalHeight} px` : '未读取到 GIF 尺寸'}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                            <label className="text-xs text-gray-500">宽度 (px)</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={resizeWidth || ''}
+                                onChange={(e) => onResizeWidthChange(Number(e.target.value || 0))}
+                                className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
+                                placeholder="自动"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-gray-500">高度 (px)</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={resizeHeight || ''}
+                                onChange={(e) => onResizeHeightChange(Number(e.target.value || 0))}
+                                className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
+                                placeholder="自动"
+                            />
+                        </div>
+                    </div>
+                    <Switch label="保持纵横比" checked={resizeMaintainAR} onChange={setResizeMaintainAR} />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                        只填一个边会自动按原比例计算另一边；同时填写宽高时会按比例适配到目标范围内。
                     </div>
                 </div>
             )}
@@ -1568,6 +1620,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
     const [gifCompressQuality, setGifCompressQuality] = useState(90);
     const [gifBuildFps, setGifBuildFps] = useState(10);
+    const [gifResizeWidth, setGifResizeWidth] = useState(0);
+    const [gifResizeHeight, setGifResizeHeight] = useState(0);
+    const [gifResizeMaintainAR, setGifResizeMaintainAR] = useState(true);
+    const [gifOriginalSize, setGifOriginalSize] = useState({ width: 0, height: 0 });
     const [infoFilePath, setInfoFilePath] = useState('');
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
@@ -1655,6 +1711,33 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         if (!hasGif && hasOther) return 'images' as const;
         return 'mixed' as const;
     }, [dropResult]);
+    const gifReferencePath = useMemo(() => {
+        if (id !== 'gif') return '';
+        const list = dropResult?.files || [];
+        const firstGif = list.find((f) => isGifPath(f.input_path));
+        return firstGif ? normalizePath(firstGif.input_path) : '';
+    }, [dropResult, id]);
+    const gifAspectRatio = useMemo(() => {
+        if (gifOriginalSize.width > 0 && gifOriginalSize.height > 0) {
+            return gifOriginalSize.width / gifOriginalSize.height;
+        }
+        if (gifResizeWidth > 0 && gifResizeHeight > 0) {
+            return gifResizeWidth / gifResizeHeight;
+        }
+        return 0;
+    }, [gifOriginalSize.height, gifOriginalSize.width, gifResizeHeight, gifResizeWidth]);
+    const handleGifResizeWidthChange = useCallback((value: number) => {
+        const nextWidth = Math.max(0, Math.round(Number(value) || 0));
+        setGifResizeWidth(nextWidth);
+        if (!gifResizeMaintainAR || nextWidth <= 0 || gifAspectRatio <= 0) return;
+        setGifResizeHeight(Math.max(1, Math.round(nextWidth / gifAspectRatio)));
+    }, [gifAspectRatio, gifResizeMaintainAR]);
+    const handleGifResizeHeightChange = useCallback((value: number) => {
+        const nextHeight = Math.max(0, Math.round(Number(value) || 0));
+        setGifResizeHeight(nextHeight);
+        if (!gifResizeMaintainAR || nextHeight <= 0 || gifAspectRatio <= 0) return;
+        setGifResizeWidth(Math.max(1, Math.round(nextHeight * gifAspectRatio)));
+    }, [gifAspectRatio, gifResizeMaintainAR]);
 
     const previewSrc = useMemo(() => {
         if (!previewPath) return '';
@@ -2144,6 +2227,62 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     }, [id]);
 
     useEffect(() => {
+        if (!gifReferencePath) {
+            setGifOriginalSize({ width: 0, height: 0 });
+            setGifResizeWidth(0);
+            setGifResizeHeight(0);
+            return;
+        }
+        const appAny = window.go?.main?.App as any;
+        if (!appAny?.GetInfo) {
+            setGifOriginalSize({ width: 0, height: 0 });
+            setGifResizeWidth(0);
+            setGifResizeHeight(0);
+            return;
+        }
+        let active = true;
+        (async () => {
+            try {
+                const info = await appAny.GetInfo({ input_path: gifReferencePath });
+                if (!active) return;
+                if (info?.success && Number(info.width) > 0 && Number(info.height) > 0) {
+                    const width = Math.round(Number(info.width));
+                    const height = Math.round(Number(info.height));
+                    setGifOriginalSize({ width, height });
+                    setGifResizeWidth(width);
+                    setGifResizeHeight(height);
+                    return;
+                }
+                setGifOriginalSize({ width: 0, height: 0 });
+                setGifResizeWidth(0);
+                setGifResizeHeight(0);
+            } catch (err) {
+                if (!active) return;
+                console.error('Failed to read GIF size:', err);
+                setGifOriginalSize({ width: 0, height: 0 });
+                setGifResizeWidth(0);
+                setGifResizeHeight(0);
+            }
+        })();
+        return () => {
+            active = false;
+        };
+    }, [gifReferencePath]);
+
+    useEffect(() => {
+        if (!gifResizeMaintainAR || gifAspectRatio <= 0) return;
+        if (gifResizeWidth > 0) {
+            const matchedHeight = Math.max(1, Math.round(gifResizeWidth / gifAspectRatio));
+            setGifResizeHeight((prev) => (prev === matchedHeight ? prev : matchedHeight));
+            return;
+        }
+        if (gifResizeHeight > 0) {
+            const matchedWidth = Math.max(1, Math.round(gifResizeHeight * gifAspectRatio));
+            setGifResizeWidth((prev) => (prev === matchedWidth ? prev : matchedWidth));
+        }
+    }, [gifAspectRatio, gifResizeHeight, gifResizeMaintainAR, gifResizeWidth]);
+
+    useEffect(() => {
         if (gifInputType === 'images' && gifMode !== '导出') {
             setGifMode('导出');
         }
@@ -2299,6 +2438,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         sourceType={gifInputType}
                         buildFps={gifBuildFps}
                         setBuildFps={setGifBuildFps}
+                        resizeWidth={gifResizeWidth}
+                        resizeHeight={gifResizeHeight}
+                        onResizeWidthChange={handleGifResizeWidthChange}
+                        onResizeHeightChange={handleGifResizeHeightChange}
+                        resizeMaintainAR={gifResizeMaintainAR}
+                        setResizeMaintainAR={setGifResizeMaintainAR}
+                        originalWidth={gifOriginalSize.width}
+                        originalHeight={gifOriginalSize.height}
                     />
                 );
             case 'info': {
@@ -3701,17 +3848,29 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
                 if (otherFiles.length > 0) {
-                    setLastMessage('倒放、修改帧率和压缩只支持 GIF 输入');
+                    setLastMessage('倒放、修改帧率、压缩和缩放只支持 GIF 输入');
                     return;
                 }
 
                 const action = resolveGifAction(gifMode);
                 const speedFactor = gifSpeedPercent / 100;
+                const resizeWidth = Math.max(0, Math.round(Number(gifResizeWidth) || 0));
+                const resizeHeight = Math.max(0, Math.round(Number(gifResizeHeight) || 0));
+                if (action === 'resize' && resizeWidth <= 0 && resizeHeight <= 0) {
+                    setLastMessage('请至少填写宽度或高度');
+                    return;
+                }
                 let failed = 0;
                 let seq = 1;
                 for (const f of gifFiles) {
                     if (cancelRequestedRef.current) break;
-                    const suffix = buildGifProcessSuffix(action, gifSpeedPercent, gifCompressQuality);
+                    const suffix = buildGifProcessSuffix(
+                        action,
+                        gifSpeedPercent,
+                        gifCompressQuality,
+                        resizeWidth,
+                        resizeHeight,
+                    );
                     const outRel = buildOutputRelPath(f, {
                         suffix,
                         seq,
@@ -3731,6 +3890,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         req.speed_factor = speedFactor;
                     } else if (action === 'compress') {
                         req.quality = gifCompressQuality;
+                    } else if (action === 'resize') {
+                        req.width = resizeWidth;
+                        req.height = resizeHeight;
+                        req.maintain_aspect = gifResizeMaintainAR;
                     }
                     try {
                         const res = await appAny.SplitGIF(req);

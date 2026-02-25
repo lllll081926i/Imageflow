@@ -36,6 +36,22 @@ class GifSplitterTests(unittest.TestCase):
         )
         return path
 
+    def _make_rect_gif(self, size=(20, 10)):
+        path = self._path("sample_rect.gif")
+        frames = [
+            Image.new("RGB", size, (255, 0, 0)),
+            Image.new("RGB", size, (0, 255, 0)),
+        ]
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=100,
+            loop=0,
+        )
+        return path
+
     def _make_png(self, name, color):
         path = self._path(name)
         Image.new("RGB", (12, 12), color).save(path, format="PNG")
@@ -215,6 +231,56 @@ class GifSplitterTests(unittest.TestCase):
         with Image.open(output_path) as img:
             self.assertEqual(img.format, "GIF")
             self.assertEqual(getattr(img, "n_frames", 1), 2)
+
+    def test_resize_gif_keep_aspect_by_width(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_width.gif")
+        result = handle_request(
+            {
+                "action": "resize",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "width": 10,
+                "maintain_aspect": True,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("width"), 10)
+        self.assertEqual(result.get("height"), 5)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.size, (10, 5))
+
+    def test_resize_gif_keep_aspect_in_box(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_box.gif")
+        result = handle_request(
+            {
+                "action": "resize_gif",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "width": 16,
+                "height": 16,
+                "maintain_aspect": True,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("width"), 16)
+        self.assertEqual(result.get("height"), 8)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.size, (16, 8))
+
+    def test_resize_gif_requires_width_or_height(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_missing.gif")
+        result = handle_request(
+            {
+                "action": "resize",
+                "input_path": gif_path,
+                "output_path": output_path,
+            }
+        )
+        self.assertFalse(result.get("success"))
+        self.assertIn("Missing width or height", result.get("error", ""))
 
 
 if __name__ == "__main__":

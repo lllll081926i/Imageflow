@@ -8,6 +8,7 @@ This script handles GIF operations using the Pillow library:
 - change GIF playback speed
 - build a GIF from input images
 - compress a GIF with adjustable quality
+- resize a GIF while keeping aspect ratio
 
 Usage:
     python gif_splitter.py
@@ -231,6 +232,62 @@ class GIFTool:
             logger.error("GIF build failed: %s", exc, exc_info=True)
             return {"success": False, "error": str(exc)}
 
+    def resize_gif(self, input_path, output_path, width=None, height=None, maintain_aspect=True, loop=None):
+        try:
+            with Image.open(input_path) as gif:
+                if gif.format != "GIF":
+                    raise ValueError("Input file is not a GIF")
+                frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
+                original_width, original_height = gif.size
+
+            target_width = self._sanitize_dimension(width)
+            target_height = self._sanitize_dimension(height)
+            keep_aspect = self._coerce_bool(maintain_aspect, default=True)
+            if target_width <= 0 and target_height <= 0:
+                return {"success": False, "error": "Missing width or height for resize"}
+
+            resized_size = self._resolve_resize_size(
+                (original_width, original_height),
+                target_width,
+                target_height,
+                keep_aspect,
+            )
+            resample = self._get_resample_filter()
+            resized_frames = []
+            for frame in frames:
+                resized = frame.resize(resized_size, resample=resample)
+                resized_frames.append(self._quantize_rgba_frame(resized, 255))
+
+            loop_value = gif_loop if loop is None else loop
+            self._ensure_parent_dir(output_path)
+            self._save_gif(
+                resized_frames,
+                output_path,
+                durations,
+                loop_value,
+                disposal=disposals,
+                transparency=255,
+            )
+
+            return {
+                "success": True,
+                "input_path": input_path,
+                "output_path": output_path,
+                "frame_count": len(resized_frames),
+                "width": resized_size[0],
+                "height": resized_size[1],
+                "original_width": original_width,
+                "original_height": original_height,
+                "maintain_aspect": keep_aspect,
+            }
+        except FileNotFoundError:
+            return {"success": False, "error": f"Input file not found: {input_path}"}
+        except UnidentifiedImageError:
+            return {"success": False, "error": f"Unsupported image format: {input_path}"}
+        except Exception as exc:
+            logger.error("GIF resize failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
     def _open_gif(self, input_path):
         gif = Image.open(input_path)
         if gif.format != "GIF":
@@ -356,6 +413,57 @@ class GIFTool:
             quality = 90
         return max(MIN_QUALITY, min(MAX_QUALITY, quality))
 
+    def _sanitize_dimension(self, value):
+        try:
+            dim = int(round(float(value)))
+        except (TypeError, ValueError):
+            dim = 0
+        return max(0, dim)
+
+    def _coerce_bool(self, value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("1", "true", "yes", "on"):
+                return True
+            if lowered in ("0", "false", "no", "off"):
+                return False
+        return bool(value)
+
+    def _resolve_resize_size(self, source_size, target_width, target_height, keep_aspect):
+        src_width, src_height = source_size
+        if src_width <= 0 or src_height <= 0:
+            raise ValueError("Invalid source GIF size")
+
+        if not keep_aspect:
+            width = target_width if target_width > 0 else src_width
+            height = target_height if target_height > 0 else src_height
+            return max(1, width), max(1, height)
+
+        if target_width > 0 and target_height > 0:
+            scale = min(target_width / src_width, target_height / src_height)
+            if scale <= 0:
+                scale = 1.0
+            width = max(1, int(round(src_width * scale)))
+            height = max(1, int(round(src_height * scale)))
+            return width, height
+
+        if target_width > 0:
+            height = max(1, int(round(src_height * (target_width / src_width))))
+            return max(1, target_width), height
+
+        width = max(1, int(round(src_width * (target_height / src_height))))
+        return width, max(1, target_height)
+
+    def _get_resample_filter(self):
+        resampling = getattr(Image, "Resampling", None)
+        if resampling is not None:
+            return resampling.LANCZOS
+        return Image.LANCZOS
+
     def _quality_to_palette_size(self, quality):
         # Keep one palette index reserved for transparency.
         return max(16, min(255, int(round((quality / 100.0) * 255))))
@@ -413,6 +521,8 @@ def _normalize_action(value):
         return "change_speed"
     if action in ("compress", "compress_gif"):
         return "compress"
+    if action in ("resize", "resize_gif", "scale", "scale_gif"):
+        return "resize"
     if action in ("build", "compose", "combine", "build_gif", "make_gif"):
         return "build_gif"
     if action == "get_frame_count":
@@ -484,6 +594,17 @@ def handle_request(input_data):
         if not input_path or not output_path:
             return {"success": False, "error": "Missing input_path or output_path"}
         return tool.compress_gif(input_path, output_path, quality, loop)
+
+    if action == "resize":
+        input_path = input_data.get("input_path")
+        output_path = input_data.get("output_path")
+        width = input_data.get("width")
+        height = input_data.get("height")
+        maintain_aspect = input_data.get("maintain_aspect", True)
+        loop = input_data.get("loop")
+        if not input_path or not output_path:
+            return {"success": False, "error": "Missing input_path or output_path"}
+        return tool.resize_gif(input_path, output_path, width, height, maintain_aspect, loop)
 
     if action == "build_gif":
         output_path = input_data.get("output_path")
