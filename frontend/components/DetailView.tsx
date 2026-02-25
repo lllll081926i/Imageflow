@@ -1454,6 +1454,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [failedRecords, setFailedRecords] = useState<DroppedFile[]>([]);
     const [retryFailedOnly, setRetryFailedOnly] = useState(false);
     const currentRunFailedPathsRef = useRef<Set<string> | null>(null);
+    const [watchEnabled, setWatchEnabled] = useState(false);
+    const [watchDirectory, setWatchDirectory] = useState('');
+    const [watchIntervalSec, setWatchIntervalSec] = useState(5);
+    const watchedKnownPathsRef = useRef<Set<string>>(new Set());
+    const watchPollingRef = useRef(false);
+    const isProcessingRef = useRef(false);
+    const startProcessingRef = useRef<((overrideFiles?: DroppedFile[]) => Promise<void>) | null>(null);
 
     const [convFormat, setConvFormat] = useState('JPG');
     const [convQuality, setConvQuality] = useState(80);
@@ -2108,6 +2115,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     }, [gifInputType, gifMode]);
 
+    useEffect(() => {
+        isProcessingRef.current = isProcessing;
+    }, [isProcessing]);
+
     const renderSettings = () => {
         switch(id) {
             case 'converter':
@@ -2415,6 +2426,30 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
 
     const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+    const normalizeComparablePath = (p: string) => normalizePath(p).toLowerCase();
+    const isPathInside = (targetPath: string, basePath: string) => {
+        const target = normalizeComparablePath(targetPath);
+        const base = normalizeComparablePath(basePath);
+        if (!target || !base) return false;
+        return target === base || target.startsWith(`${base}/`);
+    };
+    const dedupeDroppedFiles = (files: DroppedFile[]) => {
+        const seen = new Set<string>();
+        const next: DroppedFile[] = [];
+        files.forEach((file) => {
+            const normalizedInput = normalizePath(file.input_path || '');
+            if (!normalizedInput) return;
+            if (seen.has(normalizedInput)) return;
+            seen.add(normalizedInput);
+            next.push({
+                ...file,
+                input_path: normalizedInput,
+                source_root: normalizePath(file.source_root || ''),
+                relative_path: (file.relative_path || '').replace(/\\/g, '/'),
+            });
+        });
+        return next;
+    };
     const joinPath = (base: string, rel: string) => `${normalizePath(base)}/${rel.replace(/^\/+/, '')}`;
     const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
     const replaceExt = (p: string, ext: string) => {
@@ -2448,6 +2483,32 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             return `_${cleaned}`;
         }
         return cleaned;
+    };
+    const handleSelectWatchDirectory = async () => {
+        setLastMessage('');
+        try {
+            const appAny = getAppBindings();
+            let dir = '';
+            if (appAny?.SelectInputDirectory) {
+                const picked = await appAny.SelectInputDirectory();
+                if (typeof picked === 'string' && picked.trim()) {
+                    dir = picked;
+                }
+            } else if (window.runtime?.OpenDirectoryDialog) {
+                const picked = await window.runtime.OpenDirectoryDialog({ title: '选择监听目录' });
+                if (typeof picked === 'string' && picked.trim()) {
+                    dir = picked;
+                }
+            }
+            if (!dir) return;
+            const normalized = normalizePath(dir);
+            setWatchDirectory(normalized);
+            watchedKnownPathsRef.current = new Set();
+            setLastMessage(`已设置监听目录：${normalized}`);
+        } catch (e) {
+            console.error(e);
+            setLastMessage('选择监听目录失败');
+        }
     };
     const formatDatePart = (date: Date, pattern: string) => {
         const yyyy = `${date.getFullYear()}`;
@@ -3178,14 +3239,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     }, [isProcessing]);
 
-    const handleStartProcessing = async () => {
+    const handleStartProcessing = async (overrideFiles?: DroppedFile[]) => {
         if (isProcessing) return;
         cancelRequestedRef.current = false;
         setCancelRequested(false);
         setLastMessage('');
         setProgress(0);
-        if (!dropResult || dropResult.files.length === 0) {
+        const useOverrideFiles = Array.isArray(overrideFiles);
+        const normalizedOverrideFiles = useOverrideFiles ? dedupeDroppedFiles(overrideFiles || []) : [];
+        if (!useOverrideFiles && (!dropResult || dropResult.files.length === 0)) {
             setLastMessage('请先拖入文件或文件夹');
+            return;
+        }
+        if (useOverrideFiles && normalizedOverrideFiles.length === 0) {
+            setLastMessage('监听目录中暂无可处理的新文件');
             return;
         }
         const appAny = getAppBindings();
@@ -3193,7 +3260,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             setLastMessage('未检测到 Wails 运行环境');
             return;
         }
-        if (retryFailedOnly && failedRecords.length === 0) {
+        const manualRetryOnly = !useOverrideFiles && retryFailedOnly;
+        if (manualRetryOnly && failedRecords.length === 0) {
             setLastMessage('失败列表为空，无法仅重试失败项');
             return;
         }
@@ -3215,6 +3283,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const reservedPaths = new Set<string>();
         const batchTime = new Date();
         let currentRunFiles: DroppedFile[] = [];
+        const activeHasDirectory = useOverrideFiles ? true : Boolean(dropResult?.has_directory);
         const resolveUniquePath = async (candidate: string) => {
             const normalized = normalizePath(candidate);
             if (conflictStrategy !== 'rename') {
@@ -3244,7 +3313,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         currentRunFailedPathsRef.current = new Set<string>();
         setIsProcessing(true);
         try {
-            const files = retryFailedOnly ? failedRecords : dropResult.files;
+            const files = useOverrideFiles
+                ? normalizedOverrideFiles
+                : (manualRetryOnly ? failedRecords : (dropResult?.files || []));
             currentRunFiles = files;
             const total = files.length;
             let completed = 0;
@@ -3898,7 +3969,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     }
 
                     const first = files[0];
-                    const baseName = dropResult?.has_directory && first?.source_root
+                    const baseName = activeHasDirectory && first?.source_root
                         ? basename(first.source_root)
                         : basename(first.input_path).replace(/\.[^.]+$/, '');
                     const safeName = baseName || 'output';
@@ -4042,7 +4113,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             setLastMessage('该功能暂未接入');
         } catch (e: any) {
             console.error(e);
-            reportBatchTaskFailure(feature.title, dropResult?.files || [], e, '处理失败');
+            reportBatchTaskFailure(feature.title, currentRunFiles.length > 0 ? currentRunFiles : (dropResult?.files || []), e, '处理失败');
             if (isCancellationError(e)) {
                 setLastMessage('任务已取消');
             } else {
@@ -4063,6 +4134,139 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             setIsProcessing(false);
         }
     };
+
+    useEffect(() => {
+        startProcessingRef.current = handleStartProcessing;
+    }, [handleStartProcessing]);
+
+    useEffect(() => {
+        if (id !== 'info') return;
+        setWatchEnabled(false);
+        watchedKnownPathsRef.current = new Set();
+    }, [id]);
+
+    useEffect(() => {
+        watchedKnownPathsRef.current = new Set();
+    }, [watchDirectory]);
+
+    useEffect(() => {
+        if (!watchEnabled) {
+            watchPollingRef.current = false;
+            return;
+        }
+        if (id === 'info') {
+            setWatchEnabled(false);
+            return;
+        }
+        const normalizedWatchDir = normalizePath(watchDirectory || '');
+        if (!normalizedWatchDir) {
+            setLastMessage('请先选择监听目录');
+            return;
+        }
+        const outputRoot = normalizePath(outputDir || '');
+        if (!outputRoot) {
+            setLastMessage('开启目录监听前请先选择输出位置，避免重复处理');
+            setWatchEnabled(false);
+            return;
+        }
+        if (normalizeComparablePath(outputRoot) === normalizeComparablePath(normalizedWatchDir)) {
+            setLastMessage('监听目录不能与输出位置相同，请调整后再开启监听');
+            setWatchEnabled(false);
+            return;
+        }
+        const appAny = getAppBindings();
+        if (!appAny?.ExpandDroppedPaths) {
+            setLastMessage('当前环境不支持目录监听自动处理');
+            return;
+        }
+        const intervalSec = Math.max(1, Math.min(300, Math.floor(Number(watchIntervalSec) || 5)));
+        let closed = false;
+        let initialized = false;
+
+        const collectWatchResult = async (): Promise<ExpandDroppedPathsResult> => {
+            const expanded = await appAny.ExpandDroppedPaths([normalizedWatchDir]);
+            const allFiles = dedupeDroppedFiles(Array.isArray(expanded?.files) ? (expanded.files as any as DroppedFile[]) : []);
+            const files = outputRoot
+                ? allFiles.filter((item) => !isPathInside(item.input_path, outputRoot))
+                : allFiles;
+            return {
+                files,
+                has_directory: true,
+            };
+        };
+
+        const syncKnownPaths = (files: DroppedFile[]) => {
+            const known = watchedKnownPathsRef.current;
+            files.forEach((item) => {
+                const key = normalizePath(item.input_path);
+                if (key) known.add(key);
+            });
+        };
+
+        const runPoll = async (allowTrigger: boolean) => {
+            if (watchPollingRef.current || closed) return;
+            watchPollingRef.current = true;
+            try {
+                const expanded = await collectWatchResult();
+                if (closed) return;
+                const files = expanded.files || [];
+
+                if (!initialized) {
+                    initialized = true;
+                    syncKnownPaths(files);
+                    setDropResult(expanded);
+                    setLastMessage(`目录监听已开启：每 ${intervalSec} 秒扫描`);
+                    return;
+                }
+
+                const known = watchedKnownPathsRef.current;
+                const newFiles = files.filter((item) => !known.has(normalizePath(item.input_path)));
+                syncKnownPaths(files);
+                if (isProcessingRef.current) {
+                    return;
+                }
+                if (!allowTrigger || files.length === 0) {
+                    return;
+                }
+                if (newFiles.length === 0) {
+                    return;
+                }
+
+                setDropResult(expanded);
+                setLastMessage(`监听到 ${newFiles.length} 个新文件，开始自动处理...`);
+                await (startProcessingRef.current?.(newFiles) || Promise.resolve());
+                if (closed) return;
+                try {
+                    const latest = await collectWatchResult();
+                    if (closed) return;
+                    setDropResult(latest);
+                } catch (err) {
+                    console.error('Failed to refresh watch result after processing:', err);
+                }
+            } catch (err) {
+                if (!closed) {
+                    console.error('Directory watch polling failed:', err);
+                    const msg = typeof (err as any)?.message === 'string' && (err as any).message.trim()
+                        ? (err as any).message.trim()
+                        : '目录监听失败';
+                    setLastMessage(msg);
+                }
+            } finally {
+                watchPollingRef.current = false;
+            }
+        };
+
+        void runPoll(false);
+        const timer = window.setInterval(() => {
+            void runPoll(true);
+        }, intervalSec * 1000);
+
+        return () => {
+            closed = true;
+            watchPollingRef.current = false;
+            window.clearInterval(timer);
+        };
+    }, [id, outputDir, watchDirectory, watchEnabled, watchIntervalSec]);
 
     const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
     const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
@@ -4279,6 +4483,68 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 </div>
             )}
             {id !== 'info' && (
+                <div className="space-y-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs text-gray-600 dark:text-gray-300 font-medium">目录监听自动处理</div>
+                        <button
+                            onClick={() => {
+                                if (!watchEnabled && !watchDirectory) {
+                                    setLastMessage('请先选择监听目录');
+                                    return;
+                                }
+                                if (!watchEnabled && !outputDir) {
+                                    setLastMessage('开启目录监听前请先选择输出位置，避免重复处理');
+                                    return;
+                                }
+                                if (
+                                    !watchEnabled &&
+                                    watchDirectory &&
+                                    outputDir &&
+                                    normalizeComparablePath(watchDirectory) === normalizeComparablePath(outputDir)
+                                ) {
+                                    setLastMessage('监听目录不能与输出位置相同，请调整后再开启监听');
+                                    return;
+                                }
+                                setWatchEnabled((v) => !v);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg border text-xs font-medium ${watchEnabled ? 'border-emerald-400 text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-500/20' : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300'}`}
+                        >
+                            {watchEnabled ? '监听中' : '已暂停'}
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleSelectWatchDirectory}
+                            className="px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-white/10"
+                        >
+                            选择监听目录
+                        </button>
+                        <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E]">
+                            <input
+                                type="number"
+                                min={1}
+                                max={300}
+                                value={watchIntervalSec}
+                                onChange={(e) => {
+                                    const raw = Math.floor(Number(e.target.value) || 0);
+                                    const next = Math.max(1, Math.min(300, raw || 5));
+                                    setWatchIntervalSec(next);
+                                }}
+                                className="w-12 text-center text-xs font-mono bg-transparent outline-none dark:text-white"
+                            />
+                            <span className="text-[11px] text-gray-500 dark:text-gray-400">秒</span>
+                        </div>
+                    </div>
+                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                        {watchDirectory ? watchDirectory : '未设置监听目录'}
+                    </div>
+                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                        {watchEnabled ? `状态：监听中，每 ${watchIntervalSec} 秒扫描` : '状态：监听已暂停'}
+                        {!outputDir ? '，建议设置输出目录避免重复处理' : ''}
+                    </div>
+                </div>
+            )}
+            {id !== 'info' && (
                 <div className="space-y-2">
                     <div className="text-xs text-gray-500 dark:text-gray-400">批处理预设</div>
                     <div className="flex gap-2">
@@ -4351,7 +4617,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
             )}
             <button 
-                onClick={isProcessing ? requestCancelProcessing : handleStartProcessing}
+                onClick={isProcessing ? requestCancelProcessing : () => { void handleStartProcessing(); }}
                 disabled={isProcessing && cancelRequested}
                 className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
             >
