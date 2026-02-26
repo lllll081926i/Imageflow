@@ -1579,6 +1579,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const ext = normalized.slice(idx + 1).toLowerCase();
         return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
+    const normalizePath = useCallback((p: string) => p.replace(/\\/g, '/').replace(/\/+$/, ''), []);
 
     const gifInputType = useMemo(() => {
         const list = dropResult?.files || [];
@@ -2429,7 +2430,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     };
 
-    const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
     const normalizeComparablePath = (p: string) => normalizePath(p).toLowerCase();
     const isPathInside = (targetPath: string, basePath: string) => {
         const target = normalizeComparablePath(targetPath);

@@ -1,6 +1,6 @@
 import type { models } from '../wailsjs/go/models';
 
-export type GIFSplitRequest = models.GIFSplitRequest & {
+export type GIFSplitRequest = Omit<models.GIFSplitRequest, 'maintain_aspect'> & {
     width?: number;
     height?: number;
     maintain_aspect?: boolean;

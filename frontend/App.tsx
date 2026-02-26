@@ -5,10 +5,12 @@ import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
 import DetailView from './components/DetailView';
 import SettingsView from './components/SettingsView';
-import { ViewState, Theme } from './types';
+import { ViewState, Theme, FeatureId } from './types';
 import { FEATURES } from './constants';
 
-const FEATURE_IDS = FEATURES.map((feature) => feature.id);
+const FEATURE_IDS = FEATURES.map((feature) => feature.id) as FeatureId[];
+
+const isFeatureId = (view: ViewState): view is FeatureId => FEATURE_IDS.includes(view as FeatureId);
 
 type TaskFailureNotification = {
     id: string;
@@ -22,14 +24,14 @@ const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
-    const [loadedFeatureViews, setLoadedFeatureViews] = useState<ViewState[]>([]);
+    const [loadedFeatureViews, setLoadedFeatureViews] = useState<FeatureId[]>([]);
     const [failureNotifications, setFailureNotifications] = useState<TaskFailureNotification[]>([]);
     const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const closeNotificationTimerRef = useRef<number | null>(null);
     const notificationContainerRef = useRef<HTMLDivElement | null>(null);
     const isSecondaryView = activeView !== 'dashboard';
-    const isFeatureView = FEATURE_IDS.includes(activeView);
+    const isFeatureView = isFeatureId(activeView);
     const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
         ? [...loadedFeatureViews, activeView]
         : loadedFeatureViews;
@@ -85,7 +87,7 @@ const App: React.FC = () => {
     }, []);
 
     const handlePreload = useCallback((view: ViewState) => {
-        if (!FEATURE_IDS.includes(view)) return;
+        if (!isFeatureId(view)) return;
         setLoadedFeatureViews((prev) => (prev.includes(view) ? prev : [...prev, view]));
     }, []);
 

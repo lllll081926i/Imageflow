@@ -287,7 +287,7 @@ class InfoViewer:
         try:
             with open(input_path, "rb") as f:
                 signature = f.read(16)
-        except Exception:
+        except OSError:
             return {"format": "Unknown", "width": 0, "height": 0, "mode": "Unknown", "bit_depth": 0}, {}
 
         if signature.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -349,8 +349,8 @@ class InfoViewer:
                                     extra[f"PNG:Text:{key.decode('latin-1', errors='replace')}"] = self._stringify_value(
                                         text.decode("utf-8", errors="replace")
                                     )
-                                except Exception:
-                                    pass
+                                except (zlib.error, UnicodeDecodeError, ValueError):
+                                    logger.debug("Failed to decompress PNG zTXt chunk for key %s", key.decode("latin-1", errors="replace"))
                     elif chunk_type == b"iTXt":
                         try:
                             key_raw, rest = data.split(b"\x00", 1)
@@ -364,11 +364,11 @@ class InfoViewer:
                             if comp_flag == 1:
                                 try:
                                     text = zlib.decompress(text)
-                                except Exception:
-                                    pass
+                                except (zlib.error, UnicodeDecodeError, ValueError):
+                                    logger.debug("Failed to decompress PNG iTXt chunk for key %s", key)
                             extra[f"PNG:Text:{key}"] = self._stringify_value(text.decode("utf-8", errors="replace"))
-                        except Exception:
-                            pass
+                        except (ValueError, UnicodeDecodeError):
+                            logger.debug("Failed to parse PNG iTXt chunk")
                     elif chunk_type == b"pHYs" and len(data) >= 9:
                         ppu_x, ppu_y, unit = struct.unpack(">IIB", data[:9])
                         if unit == 1 and ppu_x > 0 and ppu_y > 0:
@@ -645,8 +645,8 @@ class InfoViewer:
             if value is None:
                 try:
                     exif_dict[ifd_name].pop(tag_id, None)
-                except Exception:
-                    pass
+                except (AttributeError, KeyError, TypeError):
+                    logger.debug("Failed to remove EXIF tag %s:%s", ifd_name, tag_name)
                 continue
 
             converted = self._coerce_exif_value(value, tag_info)
@@ -671,7 +671,7 @@ class InfoViewer:
             if text.lower().startswith("hex:"):
                 try:
                     return bytes.fromhex(text[4:])
-                except Exception:
+                except ValueError:
                     return value
             if "/" in text:
                 parts = text.split("/")

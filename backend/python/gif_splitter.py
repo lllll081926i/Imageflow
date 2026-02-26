@@ -22,6 +22,7 @@ import logging
 import os
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageSequence, UnidentifiedImageError
@@ -208,36 +209,72 @@ class GIFTool:
             fps_value = self._sanitize_fps(fps)
             duration_ms = max(1, int(1000 / fps_value))
 
-            frames = []
-            sizes = []
-            for path in paths:
+            max_width = 0
+            max_height = 0
+            for idx, path in enumerate(paths):
                 with Image.open(path) as img:
-                    ext = Path(path).suffix.lower()
-                    if ext != ".png":
-                        logger.info("Converting %s to PNG-compatible RGBA before GIF", path)
-                    img = img.convert("RGBA")
+                    width, height = img.size
+                max_width = max(max_width, width)
+                max_height = max(max_height, height)
+                self._assert_frame_pixel_budget(idx + 1, (max_width, max_height), "build")
 
-                    frame = img.copy()
-                frames.append(frame)
-                sizes.append(frame.size)
+            canvas_size = (max_width, max_height)
+            self._assert_frame_pixel_budget(len(paths), canvas_size, "build")
 
-            canvas_size = self._choose_canvas_size(sizes)
-            frames = [self._pad_to_size(frame, canvas_size) for frame in frames]
+            temp_frame_paths = []
+            opened_frames = []
+            try:
+                for path in paths:
+                    with Image.open(path) as img:
+                        ext = Path(path).suffix.lower()
+                        if ext != ".png":
+                            logger.info("Converting %s to PNG-compatible RGBA before GIF", path)
+                        rgba = img.convert("RGBA")
+                        padded = self._pad_to_size(rgba, canvas_size)
+                        quantized = self._quantize_rgba_frame(padded, 255)
 
-            self._ensure_parent_dir(output_path)
-            self._save_gif(frames, output_path, [duration_ms] * len(frames), loop)
+                    with tempfile.NamedTemporaryFile(prefix="imageflow-gif-frame-", suffix=".png", delete=False) as tmp_frame:
+                        tmp_path = tmp_frame.name
+                    quantized.save(tmp_path, format="PNG")
+                    temp_frame_paths.append(tmp_path)
+
+                for temp_path in temp_frame_paths:
+                    opened_frames.append(Image.open(temp_path))
+
+                self._ensure_parent_dir(output_path)
+                self._save_gif(
+                    opened_frames,
+                    output_path,
+                    [duration_ms] * len(opened_frames),
+                    loop,
+                    optimize=True,
+                    transparency=255,
+                )
+            finally:
+                for frame in opened_frames:
+                    try:
+                        frame.close()
+                    except Exception:
+                        pass
+                for temp_path in temp_frame_paths:
+                    try:
+                        os.remove(temp_path)
+                    except OSError as cleanup_err:
+                        logger.warning("Failed to cleanup temp GIF frame %s: %s", temp_path, cleanup_err)
 
             return {
                 "success": True,
                 "input_paths": paths,
                 "output_path": output_path,
-                "frame_count": len(frames),
+                "frame_count": len(paths),
                 "fps": fps_value,
             }
         except FileNotFoundError as exc:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {exc.filename}")
         except UnidentifiedImageError as exc:
             return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {exc}")
+        except MemoryError as exc:
+            return _error_response("GIF_MEMORY_LIMIT", "GIF is too large to process safely", exc)
         except Exception as exc:
             logger.error("GIF build failed: %s", exc, exc_info=True)
             return _error_response("GIF_BUILD_FAILED", str(exc))

@@ -1,5 +1,5 @@
 export interface Feature {
-    id: string;
+    id: FeatureId;
     title: string;
     desc: string;
     iconName: string;

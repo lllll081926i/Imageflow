@@ -168,7 +168,7 @@ class ImageCompressor:
                 target_kb_int = int(target_size_kb or 0)
                 if target_kb_int > 0:
                     target_bytes = target_kb_int * 1024
-            except Exception:
+            except (TypeError, ValueError):
                 target_bytes = 0
 
             engine = str(engine or "").strip().lower()
@@ -263,8 +263,8 @@ class ImageCompressor:
             try:
                 if tmp_output_path:
                     os.remove(tmp_output_path)
-            except Exception:
-                pass
+            except OSError as cleanup_err:
+                logger.warning(f"Failed to cleanup temp compressed file {tmp_output_path}: {cleanup_err}")
 
     def _compress_jpeg(
         self,
@@ -334,7 +334,8 @@ class ImageCompressor:
                 if stripped != raw:
                     with open(path, "wb") as f:
                         f.write(stripped)
-            except Exception:
+            except OSError as strip_err:
+                logger.warning(f"Failed to strip JPEG metadata for {path}: {strip_err}")
                 return
 
         def save_once(q):
@@ -386,8 +387,8 @@ class ImageCompressor:
             try:
                 if os.path.getsize(output_path) <= target_bytes:
                     return lossless_warning
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Failed to stat JPEG output during target size check: %s", output_path)
             return (lossless_warning + "，" if lossless_warning else "") + f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
 
         if target_bytes > 0:
@@ -406,7 +407,7 @@ class ImageCompressor:
                 save_once(q)
                 try:
                     size = os.path.getsize(output_path)
-                except Exception:
+                except OSError:
                     break
                 if last_size == size:
                     stable_hits += 1
@@ -569,8 +570,8 @@ class ImageCompressor:
                 try:
                     if os.path.getsize(output_path) <= target_bytes:
                         return ""
-                except Exception:
-                    pass
+                except OSError:
+                    logger.debug("Failed to stat PNG output during target size check: %s", output_path)
                 return f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
             return ""
 
@@ -605,7 +606,7 @@ class ImageCompressor:
                 save_for_quality(q)
                 try:
                     size = os.path.getsize(output_path)
-                except Exception:
+                except OSError:
                     break
                 if last_size == size:
                     stable_hits += 1
@@ -660,8 +661,8 @@ class ImageCompressor:
             try:
                 if os.path.getsize(output_path) <= target_bytes:
                     return ""
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Failed to stat WEBP output during target size check: %s", output_path)
             return f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
 
         if target_bytes > 0 and level != CompressionLevel.LOSSLESS:
@@ -680,7 +681,7 @@ class ImageCompressor:
                 save_once(q)
                 try:
                     size = os.path.getsize(output_path)
-                except Exception:
+                except OSError:
                     break
                 if last_size == size:
                     stable_hits += 1
@@ -734,8 +735,8 @@ class ImageCompressor:
             try:
                 if os.path.getsize(output_path) <= target_bytes:
                     return ""
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Failed to stat fallback output during target size check: %s", output_path)
             return f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
         return ""
 

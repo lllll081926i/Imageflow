@@ -88,7 +88,7 @@ class ImageConverter:
         try:
             tree = ET.parse(svg_path)
             root = tree.getroot()
-        except Exception:
+        except (ET.ParseError, OSError):
             return None
 
         def strip_unit(v: str):
@@ -116,8 +116,8 @@ class ImageConverter:
                     vb_h = float(parts[3])
                     if vb_w > 0 and vb_h > 0:
                         return int(round(vb_w)), int(round(vb_h))
-                except Exception:
-                    pass
+                except (TypeError, ValueError):
+                    logger.debug("Invalid viewBox size values in SVG: %s", view_box)
 
         return None
 
@@ -183,8 +183,8 @@ class ImageConverter:
                 target_edge = max(target_w, target_h, max_size)
                 target_w = target_edge
                 target_h = target_edge
-            except Exception:
-                pass
+            except (TypeError, ValueError):
+                logger.debug("Invalid ico size value in request: %s", ico_sizes)
 
         return max(1, int(target_w)), max(1, int(target_h))
 
@@ -194,7 +194,7 @@ class ImageConverter:
             png_data = cairosvg.svg2png(url=svg_path, output_width=render_width, output_height=render_height)
             return Image.open(io.BytesIO(png_data))
         except ImportError:
-            pass
+            logger.debug("cairosvg not available, fallback to svglib/inkscape")
         except Exception as e:
             logger.warning(f"cairosvg SVG render failed: {e}")
 
@@ -211,13 +211,13 @@ class ImageConverter:
                 sy = render_height / float(getattr(drawing, "height", render_height) or render_height)
                 try:
                     drawing.scale(sx, sy)
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+                    logger.debug("SVG drawing scale failed, fallback to original size")
 
             png_bytes = renderPM.drawToString(drawing, fmt="PNG")
             return Image.open(io.BytesIO(png_bytes))
         except ImportError:
-            pass
+            logger.debug("svglib/reportlab not available, fallback to inkscape")
         except Exception as e:
             logger.warning(f"svglib SVG render failed: {e}")
 
@@ -240,8 +240,8 @@ class ImageConverter:
                 img = Image.open(tmp_path)
                 try:
                     os.unlink(tmp_path)
-                except Exception:
-                    pass
+                except OSError as cleanup_err:
+                    logger.warning(f"Failed to cleanup temp SVG render file {tmp_path}: {cleanup_err}")
                 return img
             except Exception as e:
                 logger.warning(f"Inkscape SVG render failed: {e}")
@@ -259,7 +259,7 @@ class ImageConverter:
                     v = int(s)
                     if v in self.VALID_ICO_SIZES:
                         values.append(v)
-                except Exception:
+                except (TypeError, ValueError):
                     continue
         if not values:
             values = [16]
@@ -439,8 +439,8 @@ class ImageConverter:
                 try:
                     if tmp_output_path:
                         os.remove(tmp_output_path)
-                except Exception:
-                    pass
+                except OSError as cleanup_err:
+                    logger.warning(f"Failed to cleanup temp output file {tmp_output_path}: {cleanup_err}")
 
             # Explicitly close image to free memory
             img.close()
@@ -684,8 +684,8 @@ def main():
         try:
             sys.stdin.reconfigure(encoding="utf-8", errors="strict")
             sys.stdout.reconfigure(encoding="utf-8", errors="strict")
-        except Exception:
-            pass
+        except (AttributeError, ValueError, OSError):
+            logger.debug("stdin/stdout reconfigure is not supported on this runtime")
 
         # Read input from stdin
         input_data = json.load(sys.stdin)

@@ -40,14 +40,27 @@ type App struct {
 	adjusterService     *services.AdjusterService
 	filterService       *services.FilterService
 	cancelRequested     uint32
+
+	previewCacheMu         sync.Mutex
+	previewCache           map[string]previewCacheEntry
+	previewCacheOrder      []string
+	previewCacheMaxEntries int
 }
 
 const (
 	defaultPreviewMaxBytes = int64(4 * 1024 * 1024)
 	previewMaxEdge         = 1280
 	previewJPEGQuality     = 85
+	defaultPreviewCacheCap = 128
+	maxPreviewCacheCap     = 1024
 	cancelledErrorMessage  = "[PY_CANCELLED] operation cancelled"
 )
+
+type previewCacheEntry struct {
+	DataURL         string
+	FileSize        int64
+	ModTimeUnixNano int64
+}
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -619,6 +632,82 @@ func getPreviewMaxBytes() int64 {
 	return parsed
 }
 
+func getPreviewCacheCap() int {
+	value := strings.TrimSpace(os.Getenv("IMAGEFLOW_PREVIEW_CACHE_ENTRIES"))
+	if value == "" {
+		return defaultPreviewCacheCap
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return defaultPreviewCacheCap
+	}
+	if parsed > maxPreviewCacheCap {
+		return maxPreviewCacheCap
+	}
+	return parsed
+}
+
+func removePreviewCacheOrderKey(order []string, key string) []string {
+	for idx, item := range order {
+		if item != key {
+			continue
+		}
+		return append(order[:idx], order[idx+1:]...)
+	}
+	return order
+}
+
+func (a *App) ensurePreviewCacheLocked() {
+	if a.previewCache == nil {
+		a.previewCache = make(map[string]previewCacheEntry)
+	}
+	if a.previewCacheMaxEntries <= 0 {
+		a.previewCacheMaxEntries = getPreviewCacheCap()
+	}
+}
+
+func (a *App) getPreviewCacheEntry(key string, info os.FileInfo) (string, bool) {
+	if key == "" || info == nil {
+		return "", false
+	}
+	a.previewCacheMu.Lock()
+	defer a.previewCacheMu.Unlock()
+
+	a.ensurePreviewCacheLocked()
+	entry, ok := a.previewCache[key]
+	if !ok {
+		return "", false
+	}
+	if entry.FileSize != info.Size() || entry.ModTimeUnixNano != info.ModTime().UnixNano() {
+		delete(a.previewCache, key)
+		a.previewCacheOrder = removePreviewCacheOrderKey(a.previewCacheOrder, key)
+		return "", false
+	}
+	a.previewCacheOrder = append(removePreviewCacheOrderKey(a.previewCacheOrder, key), key)
+	return entry.DataURL, true
+}
+
+func (a *App) setPreviewCacheEntry(key string, info os.FileInfo, dataURL string) {
+	if key == "" || info == nil || strings.TrimSpace(dataURL) == "" {
+		return
+	}
+	a.previewCacheMu.Lock()
+	defer a.previewCacheMu.Unlock()
+
+	a.ensurePreviewCacheLocked()
+	a.previewCache[key] = previewCacheEntry{
+		DataURL:         dataURL,
+		FileSize:        info.Size(),
+		ModTimeUnixNano: info.ModTime().UnixNano(),
+	}
+	a.previewCacheOrder = append(removePreviewCacheOrderKey(a.previewCacheOrder, key), key)
+	for len(a.previewCacheOrder) > a.previewCacheMaxEntries {
+		oldest := a.previewCacheOrder[0]
+		a.previewCacheOrder = a.previewCacheOrder[1:]
+		delete(a.previewCache, oldest)
+	}
+}
+
 func detectPreviewMimeType(data []byte, inputPath string) string {
 	mimeType := http.DetectContentType(data)
 	if strings.HasPrefix(mimeType, "application/octet-stream") || strings.HasPrefix(mimeType, "text/plain") {
@@ -688,26 +777,39 @@ func (a *App) buildPreviewFromConverter(inputPath string) (models.PreviewResult,
 
 // GetImagePreview builds a data URL for previewing images in the frontend.
 func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, error) {
-	if strings.TrimSpace(req.InputPath) == "" {
+	inputPath := strings.TrimSpace(req.InputPath)
+	if inputPath == "" {
 		return models.PreviewResult{Success: false, Error: "输入路径为空"}, errors.New("input path is empty")
 	}
 
+	cacheKey := filepath.Clean(inputPath)
+	fileInfo, statErr := os.Stat(inputPath)
+	if statErr == nil {
+		if dataURL, ok := a.getPreviewCacheEntry(cacheKey, fileInfo); ok {
+			return models.PreviewResult{Success: true, DataURL: dataURL}, nil
+		}
+	}
+
 	maxPreviewBytes := getPreviewMaxBytes()
-	if info, err := os.Stat(req.InputPath); err == nil && info.Size() > maxPreviewBytes {
-		preview, err := a.buildPreviewFromConverter(req.InputPath)
+	if statErr == nil && fileInfo.Size() > maxPreviewBytes {
+		preview, err := a.buildPreviewFromConverter(inputPath)
 		if err == nil && preview.Success && preview.DataURL != "" {
+			a.setPreviewCacheEntry(cacheKey, fileInfo, preview.DataURL)
 			return preview, nil
 		}
 		return models.PreviewResult{Success: false, Error: "PREVIEW_SKIPPED"}, nil
 	}
 
-	data, err := os.ReadFile(req.InputPath)
+	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return models.PreviewResult{Success: false, Error: err.Error()}, err
 	}
 
-	mimeType := detectPreviewMimeType(data, req.InputPath)
+	mimeType := detectPreviewMimeType(data, inputPath)
 	dataURL := buildDataURL(data, mimeType)
+	if statErr == nil {
+		a.setPreviewCacheEntry(cacheKey, fileInfo, dataURL)
+	}
 	return models.PreviewResult{Success: true, DataURL: dataURL}, nil
 }
 
@@ -822,6 +924,7 @@ func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult,
 
 // AddWatermarkBatch adds watermarks to multiple images concurrently
 func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.WatermarkResult, error) {
+	a.beginCancelableOperation()
 	n := len(requests)
 	results := make([]models.WatermarkResult, n)
 	if n == 0 {
@@ -858,6 +961,15 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				if a.isCancelRequested() {
+					results[idx] = models.WatermarkResult{
+						Success:    false,
+						InputPath:  requests[idx].InputPath,
+						OutputPath: requests[idx].OutputPath,
+						Error:      cancelledErrorMessage,
+					}
+					continue
+				}
 				res, err := a.watermarkService.AddWatermark(requests[idx])
 				if err != nil {
 					res.Success = false
@@ -867,13 +979,28 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 					if strings.TrimSpace(res.OutputPath) == "" {
 						res.OutputPath = requests[idx].OutputPath
 					}
-					res.Error = mergeOperationError(res.Error, err)
+					if isCancelledExecutionError(err) || a.isCancelRequested() {
+						res.Error = cancelledErrorMessage
+					} else {
+						res.Error = mergeOperationError(res.Error, err)
+					}
 				}
 				results[idx] = res
 			}
 		}()
 	}
 	for i := 0; i < n; i++ {
+		if a.isCancelRequested() {
+			for j := i; j < n; j++ {
+				results[j] = models.WatermarkResult{
+					Success:    false,
+					InputPath:  requests[j].InputPath,
+					OutputPath: requests[j].OutputPath,
+					Error:      cancelledErrorMessage,
+				}
+			}
+			break
+		}
 		jobs <- i
 	}
 	close(jobs)
@@ -923,6 +1050,7 @@ func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
 
 // AdjustBatch applies adjustments to multiple images concurrently
 func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResult, error) {
+	a.beginCancelableOperation()
 	n := len(requests)
 	results := make([]models.AdjustResult, n)
 	if n == 0 {
@@ -959,6 +1087,15 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				if a.isCancelRequested() {
+					results[idx] = models.AdjustResult{
+						Success:    false,
+						InputPath:  requests[idx].InputPath,
+						OutputPath: requests[idx].OutputPath,
+						Error:      cancelledErrorMessage,
+					}
+					continue
+				}
 				res, err := a.adjusterService.Adjust(requests[idx])
 				if err != nil {
 					res.Success = false
@@ -968,13 +1105,28 @@ func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResul
 					if strings.TrimSpace(res.OutputPath) == "" {
 						res.OutputPath = requests[idx].OutputPath
 					}
-					res.Error = mergeOperationError(res.Error, err)
+					if isCancelledExecutionError(err) || a.isCancelRequested() {
+						res.Error = cancelledErrorMessage
+					} else {
+						res.Error = mergeOperationError(res.Error, err)
+					}
 				}
 				results[idx] = res
 			}
 		}()
 	}
 	for i := 0; i < n; i++ {
+		if a.isCancelRequested() {
+			for j := i; j < n; j++ {
+				results[j] = models.AdjustResult{
+					Success:    false,
+					InputPath:  requests[j].InputPath,
+					OutputPath: requests[j].OutputPath,
+					Error:      cancelledErrorMessage,
+				}
+			}
+			break
+		}
 		jobs <- i
 	}
 	close(jobs)
@@ -1014,6 +1166,7 @@ func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error)
 
 // ApplyFilterBatch applies filters to multiple images concurrently
 func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.FilterResult, error) {
+	a.beginCancelableOperation()
 	n := len(requests)
 	results := make([]models.FilterResult, n)
 	if n == 0 {
@@ -1050,6 +1203,15 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
+				if a.isCancelRequested() {
+					results[idx] = models.FilterResult{
+						Success:    false,
+						InputPath:  requests[idx].InputPath,
+						OutputPath: requests[idx].OutputPath,
+						Error:      cancelledErrorMessage,
+					}
+					continue
+				}
 				res, err := a.filterService.ApplyFilter(requests[idx])
 				if err != nil {
 					res.Success = false
@@ -1059,13 +1221,28 @@ func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.Filter
 					if strings.TrimSpace(res.OutputPath) == "" {
 						res.OutputPath = requests[idx].OutputPath
 					}
-					res.Error = mergeOperationError(res.Error, err)
+					if isCancelledExecutionError(err) || a.isCancelRequested() {
+						res.Error = cancelledErrorMessage
+					} else {
+						res.Error = mergeOperationError(res.Error, err)
+					}
 				}
 				results[idx] = res
 			}
 		}()
 	}
 	for i := 0; i < n; i++ {
+		if a.isCancelRequested() {
+			for j := i; j < n; j++ {
+				results[j] = models.FilterResult{
+					Success:    false,
+					InputPath:  requests[j].InputPath,
+					OutputPath: requests[j].OutputPath,
+					Error:      cancelledErrorMessage,
+				}
+			}
+			break
+		}
 		jobs <- i
 	}
 	close(jobs)
