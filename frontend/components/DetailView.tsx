@@ -9,6 +9,7 @@ import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings } from '../types/wails-api';
+import type { models } from '../wailsjs/go/models';
 
 interface DetailViewProps {
     id: ViewState;
@@ -3353,7 +3354,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
                     const group = files.slice(i, i + chunkSize);
-                    const chunk = [];
+                    const chunk: models.ConvertRequest[] = [];
                     for (const f of group) {
                         if (cancelRequestedRef.current) break;
                         const input_path = normalizePath(f.input_path);
@@ -3437,7 +3438,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             const res = await appAny.ConvertBatch(chunk);
                             if (Array.isArray(res)) {
                                 let cancelledInBatch = false;
-                                res.forEach((item: any, idx: number) => {
+                                res.forEach((item, idx: number) => {
                                     if (!item?.success) {
                                         if (isCancellationError(item?.error)) {
                                             cancelledInBatch = true;
@@ -3508,7 +3509,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
                     const group = files.slice(i, i + chunkSize);
-                    const chunk = [];
+                    const chunk: models.CompressRequest[] = [];
                     for (const f of group) {
                         if (cancelRequestedRef.current) break;
                         const input_path = normalizePath(f.input_path);
@@ -3554,7 +3555,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             const res = await appAny.CompressBatch(chunk);
                             warned += (res || []).filter(r => r?.warning).length;
                             let cancelledInBatch = false;
-                            (res || []).forEach((item: any, idx: number) => {
+                            (res || []).forEach((item, idx: number) => {
                                 if (!item?.success) {
                                     if (isCancellationError(item?.error)) {
                                         cancelledInBatch = true;
@@ -3642,7 +3643,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         preserveStructure,
                         date: batchTime,
                     });
-                    const req = {
+                    const req: models.WatermarkRequest = {
                         input_path: normalizePath(f.input_path),
                         output_path: await resolveUniquePath(joinPath(outDir, outRel)),
                         watermark_type: isText ? 'text' : 'image',
@@ -3715,7 +3716,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     });
                     const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
                     const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
-                    const req = {
+                    const req: models.AdjustRequest = {
                         input_path: normalizePath(f.input_path),
                         output_path: await resolveUniquePath(joinPath(outDir, outRel)),
                         rotate: adjustRotate,
@@ -3787,7 +3788,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         preserveStructure,
                         date: batchTime,
                     });
-                    const req = {
+                    const req: models.FilterRequest = {
                         input_path: normalizePath(f.input_path),
                         output_path: await resolveUniquePath(joinPath(outDir, outRel)),
                         filter_type: filterPreset,
@@ -3870,7 +3871,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     op: 'pdf',
                     date: batchTime,
                 });
-                const req: any = {
+                const req: models.PDFRequest = {
                     image_paths: files.map(f => normalizePath(f.input_path)),
                     output_path: await resolveUniquePath(joinPath(outDir, `${pdfName}.pdf`)),
                     page_size: sizeMap[pdfSize] ?? 'A4',
@@ -3937,11 +3938,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             });
                             const rawOutputDir = relDir ? joinPath(outDir, `${relDir}/${folderName}`) : joinPath(outDir, folderName);
                             const outputDir = await resolveUniquePath(rawOutputDir);
-                            const req = {
+                            const req: models.GIFSplitRequest = {
                                 action: 'export_frames',
                                 input_path: normalizePath(f.input_path),
                                 output_dir: outputDir,
                                 output_format: outputFormat,
+                                maintain_aspect: true,
                             };
                             try {
                                 const res = await appAny.SplitGIF(req);
@@ -3992,12 +3994,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     });
                     const outputPath = await resolveUniquePath(joinPath(outDir, `${combinedName}.gif`));
                         try {
-                            const res = await appAny.SplitGIF({
+                            const req: models.GIFSplitRequest = {
                                 action: 'build_gif',
                                 input_paths: files.map(f => normalizePath(f.input_path)),
                                 output_path: outputPath,
                                 fps: gifBuildFps,
-                            });
+                                maintain_aspect: true,
+                            };
+                            const res = await appAny.SplitGIF(req);
                             if (res?.success) {
                                 setLastMessage(`合成完成：${res.output_path || outputPath}`);
                             } else {
@@ -4068,12 +4072,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         });
                         const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
                         try {
-                            const res = await appAny.SplitGIF({
+                            const req: models.GIFSplitRequest = {
                                 action: 'convert_animation',
                                 input_path: normalizePath(f.input_path),
                                 output_path: outputPath,
                                 output_format: targetExt,
-                            });
+                                maintain_aspect: true,
+                            };
+                            const res = await appAny.SplitGIF(req);
                             if (!res?.success) {
                                 const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                                 if (isCancellationError(res?.error)) {
@@ -4145,10 +4151,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                         date: batchTime,
                     });
                     const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
-                    const req: any = {
+                    const req: models.GIFSplitRequest = {
                         action,
                         input_path: normalizePath(f.input_path),
                         output_path: outputPath,
+                        maintain_aspect: gifResizeMaintainAR,
                     };
                     if (action === 'change_speed') {
                         req.speed_factor = speedFactor;
