@@ -315,6 +315,82 @@ func (a *App) SaveSettings(settings models.AppSettings) (models.AppSettings, err
 	return saved, nil
 }
 
+func normalizeRecentPathValue(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "/" || trimmed == `\` {
+		return trimmed
+	}
+	cleaned := strings.TrimRight(trimmed, "/\\")
+	if len(cleaned) == 2 && cleaned[1] == ':' {
+		return trimmed
+	}
+	if cleaned == "" {
+		return trimmed
+	}
+	return cleaned
+}
+
+func mergeRecentPaths(current []string, next string) []string {
+	normalized := normalizeRecentPathValue(next)
+	if normalized == "" {
+		clone := append([]string(nil), current...)
+		return clone
+	}
+	merged := make([]string, 0, len(current)+1)
+	merged = append(merged, normalized)
+	for _, item := range current {
+		if strings.EqualFold(normalizeRecentPathValue(item), normalized) {
+			continue
+		}
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) UpdateRecentPaths(req models.RecentPathsUpdateRequest) (models.AppSettings, error) {
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	a.stateMu.RLock()
+	currentSettings := a.settings
+	a.stateMu.RUnlock()
+
+	next := currentSettings
+	next.RecentInputDirs = mergeRecentPaths(currentSettings.RecentInputDirs, req.InputDir)
+	next.RecentOutputDirs = mergeRecentPaths(currentSettings.RecentOutputDirs, req.OutputDir)
+	next = utils.NormalizeSettings(next)
+
+	if sameStringSlice(next.RecentInputDirs, currentSettings.RecentInputDirs) &&
+		sameStringSlice(next.RecentOutputDirs, currentSettings.RecentOutputDirs) {
+		return currentSettings, nil
+	}
+
+	persisted, err := saveAppSettings(next)
+	if err != nil {
+		return currentSettings, err
+	}
+
+	a.stateMu.Lock()
+	a.settings = persisted
+	a.stateMu.Unlock()
+	return persisted, nil
+}
+
 func (a *App) SelectOutputDirectory() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "选择输出文件夹",

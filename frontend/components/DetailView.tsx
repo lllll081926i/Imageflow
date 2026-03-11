@@ -8,7 +8,12 @@ import { buildGifProcessSuffix, resolveGifAction } from './gifHelpers';
 import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
-import { getAppBindings } from '../types/wails-api';
+import {
+    DEFAULT_APP_SETTINGS,
+    getAppBindings,
+    loadAppSettings,
+    updateRecentPaths,
+} from '../types/wails-api';
 import type { models } from '../wailsjs/go/models';
 
 interface DetailViewProps {
@@ -1558,18 +1563,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
 
     const loadOutputSettings = async () => {
-        const appAny = getAppBindings();
-        if (!appAny?.GetSettings) {
-            return defaultOutputSettings;
-        }
         try {
-            const res = await appAny.GetSettings();
-            const normalized = normalizeOutputSettings(res);
+            const loaded = await loadAppSettings();
+            const normalized = normalizeOutputSettings(loaded);
             setOutputSettings(normalized);
-            return normalized;
+            setOutputDir((previous) => previous || loaded.default_output_dir || '');
+            return loaded;
         } catch (e) {
             console.error(e);
-            return outputSettings;
+            setOutputDir((previous) => previous || DEFAULT_APP_SETTINGS.default_output_dir);
+            return { ...DEFAULT_APP_SETTINGS };
         }
     };
 
@@ -1581,6 +1584,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
     const normalizePath = useCallback((p: string) => p.replace(/\\/g, '/').replace(/\/+$/, ''), []);
+    const dirname = (p: string) => {
+        const normalized = p.replace(/\\/g, '/');
+        const idx = normalized.lastIndexOf('/');
+        if (idx <= 0) return '';
+        return normalized.slice(0, idx);
+    };
+    const rememberRecentDirs = useCallback(async (payload: { inputDir?: string; outputDir?: string }) => {
+        try {
+            await updateRecentPaths(payload);
+        } catch (error) {
+            console.error('Failed to persist recent paths:', error);
+        }
+    }, []);
 
     const gifInputType = useMemo(() => {
         const list = dropResult?.files || [];
@@ -2415,14 +2431,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             if (appAny?.SelectOutputDirectory) {
                 const dir = await appAny.SelectOutputDirectory();
                 if (typeof dir === 'string' && dir.trim()) {
-                    setOutputDir(dir);
+                    const trimmed = dir.trim();
+                    setOutputDir(trimmed);
+                    void rememberRecentDirs({ outputDir: trimmed });
                 }
                 return;
             }
             if (window.runtime?.OpenDirectoryDialog) {
                 const dir = await window.runtime.OpenDirectoryDialog({ title: '选择输出位置' });
                 if (typeof dir === 'string' && dir.trim()) {
-                    setOutputDir(dir);
+                    const trimmed = dir.trim();
+                    setOutputDir(trimmed);
+                    void rememberRecentDirs({ outputDir: trimmed });
                 }
             }
         } catch (e) {
@@ -3282,11 +3302,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             return;
         }
 
-        const outputSettingsSnapshot = await loadOutputSettings();
-        const preserveStructure = Boolean(outputSettingsSnapshot.preserve_folder_structure);
-        const outputTemplate = outputSettingsSnapshot.output_template || defaultOutputSettings.output_template;
-        const outputPrefix = outputSettingsSnapshot.output_prefix || defaultOutputSettings.output_prefix;
-        const conflictStrategy = outputSettingsSnapshot.conflict_strategy || defaultOutputSettings.conflict_strategy;
+        const appSettingsSnapshot = await loadOutputSettings();
+        const preserveStructure = Boolean(appSettingsSnapshot.preserve_folder_structure);
+        const outputTemplate = appSettingsSnapshot.output_template || defaultOutputSettings.output_template;
+        const outputPrefix = appSettingsSnapshot.output_prefix || defaultOutputSettings.output_prefix;
+        const conflictStrategy = appSettingsSnapshot.conflict_strategy || defaultOutputSettings.conflict_strategy;
         const reservedPaths = new Set<string>();
         const batchTime = new Date();
         let currentRunFiles: DroppedFile[] = [];
@@ -3324,6 +3344,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 ? normalizedOverrideFiles
                 : (manualRetryOnly ? failedRecords : (dropResult?.files || []));
             currentRunFiles = files;
+            const firstInput = files[0];
+            const inputDirForHistory = activeHasDirectory
+                ? (firstInput?.source_root || '')
+                : dirname(firstInput?.input_path || '');
+            void rememberRecentDirs({ inputDir: inputDirForHistory, outputDir: outDir });
             const total = files.length;
             let completed = 0;
 
@@ -4550,6 +4575,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             onFilesSelected={handleFilesSelected}
             onPathsExpanded={(result) => {
                 setDropResult(result);
+                const firstFile = result?.files?.[0];
+                const inputDirForHistory = result?.has_directory
+                    ? (firstFile?.source_root || '')
+                    : dirname(firstFile?.input_path || '');
+                if (inputDirForHistory) {
+                    void rememberRecentDirs({ inputDir: inputDirForHistory });
+                }
                 if (id !== 'info') {
                     setLastMessage('');
                     setProgress(0);
@@ -4559,9 +4591,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
                     : false;
                 if (selected) return;
-                const first = result?.files?.[0];
-                if (first?.input_path) {
-                    loadInfoForPath(first.input_path);
+                const selectedFirst = result?.files?.[0];
+                if (selectedFirst?.input_path) {
+                    loadInfoForPath(selectedFirst.input_path);
                     return;
                 }
                 setInfoFilePath('');

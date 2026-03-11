@@ -105,3 +105,7 @@ export function SplitGIF(arg1) {
 export function StripMetadata(arg1) {
   return window['go']['main']['App']['StripMetadata'](arg1);
 }
+
+export function UpdateRecentPaths(arg1) {
+  return window['go']['main']['App']['UpdateRecentPaths'](arg1);
+}

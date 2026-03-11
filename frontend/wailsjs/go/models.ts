@@ -1,5 +1,5 @@
 export namespace models {
-	
+
 	export class AdjustRequest {
 	    input_path: string;
 	    output_path: string;
@@ -15,11 +15,11 @@ export namespace models {
 	    sharpness: number;
 	    crop_ratio: string;
 	    crop_mode: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AdjustRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.input_path = source["input_path"];
@@ -43,7 +43,7 @@ export namespace models {
 	    input_path: string;
 	    output_path: string;
 	    error?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AdjustResult(source);
 	    }
@@ -62,6 +62,9 @@ export namespace models {
 	    output_template: string;
 	    preserve_folder_structure: boolean;
 	    conflict_strategy: string;
+	    default_output_dir: string;
+	    recent_input_dirs: string[];
+	    recent_output_dirs: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -74,6 +77,9 @@ export namespace models {
 	        this.output_template = source["output_template"];
 	        this.preserve_folder_structure = source["preserve_folder_structure"];
 	        this.conflict_strategy = source["conflict_strategy"];
+	        this.default_output_dir = source["default_output_dir"];
+	        this.recent_input_dirs = source["recent_input_dirs"];
+	        this.recent_output_dirs = source["recent_output_dirs"];
 	    }
 	}
 	export class CompressRequest {
@@ -564,6 +570,18 @@ export namespace models {
 	        this.error = source["error"];
 	    }
 	}
+	export class RecentPathsUpdateRequest {
+	    input_dir: string;
+	    output_dir: string;
+	    static createFrom(source: any = {}) {
+	        return new RecentPathsUpdateRequest(source);
+	    }
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input_dir = source["input_dir"];
+	        this.output_dir = source["output_dir"];
+	    }
+	}
 	export class ResolveOutputPathRequest {
 	    base_path: string;
 	    strategy: string;
@@ -660,4 +678,3 @@ export namespace models {
 	}
 
 }
-

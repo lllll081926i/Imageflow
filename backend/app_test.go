@@ -510,3 +510,78 @@ func TestSaveSettings_DoesNotPersistWhenRunnerRebuildFails(t *testing.T) {
 		t.Fatalf("expected persisted concurrency %d, got %d", original.MaxConcurrency, reloaded.MaxConcurrency)
 	}
 }
+
+func TestUpdateRecentPaths_PersistsIncrementallyWithoutOverwritingOtherSettings(t *testing.T) {
+	tmpConfig := t.TempDir()
+	t.Setenv("APPDATA", tmpConfig)
+
+	original := models.AppSettings{
+		MaxConcurrency:          6,
+		OutputPrefix:            "KEEP",
+		OutputTemplate:          "{prefix}_{basename}",
+		PreserveFolderStructure: false,
+		ConflictStrategy:        "rename",
+		DefaultOutputDir:        "D:/Exports",
+		RecentInputDirs:         []string{"D:/OldInput"},
+		RecentOutputDirs:        []string{"D:/OldOutput"},
+	}
+	if _, err := saveAppSettings(original); err != nil {
+		t.Fatalf("failed to seed settings: %v", err)
+	}
+
+	app := &App{
+		settings: original,
+	}
+
+	updated, err := app.UpdateRecentPaths(models.RecentPathsUpdateRequest{
+		InputDir:  " D:/Shots/New/ ",
+		OutputDir: " D:/Exports/New/ ",
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if updated.MaxConcurrency != original.MaxConcurrency {
+		t.Fatalf("expected max concurrency %d, got %d", original.MaxConcurrency, updated.MaxConcurrency)
+	}
+	if updated.OutputPrefix != original.OutputPrefix {
+		t.Fatalf("expected output prefix %q, got %q", original.OutputPrefix, updated.OutputPrefix)
+	}
+	if updated.DefaultOutputDir != original.DefaultOutputDir {
+		t.Fatalf("expected default output dir %q, got %q", original.DefaultOutputDir, updated.DefaultOutputDir)
+	}
+
+	wantInputs := []string{"D:/Shots/New", "D:/OldInput"}
+	if len(updated.RecentInputDirs) != len(wantInputs) {
+		t.Fatalf("expected %d input dirs, got %d", len(wantInputs), len(updated.RecentInputDirs))
+	}
+	for i, want := range wantInputs {
+		if updated.RecentInputDirs[i] != want {
+			t.Fatalf("expected input dir %d to be %q, got %q", i, want, updated.RecentInputDirs[i])
+		}
+	}
+
+	wantOutputs := []string{"D:/Exports/New", "D:/OldOutput"}
+	if len(updated.RecentOutputDirs) != len(wantOutputs) {
+		t.Fatalf("expected %d output dirs, got %d", len(wantOutputs), len(updated.RecentOutputDirs))
+	}
+	for i, want := range wantOutputs {
+		if updated.RecentOutputDirs[i] != want {
+			t.Fatalf("expected output dir %d to be %q, got %q", i, want, updated.RecentOutputDirs[i])
+		}
+	}
+
+	reloaded, err := utils.LoadSettings()
+	if err != nil {
+		t.Fatalf("failed to reload settings: %v", err)
+	}
+	if reloaded.OutputTemplate != original.OutputTemplate {
+		t.Fatalf("expected output template %q, got %q", original.OutputTemplate, reloaded.OutputTemplate)
+	}
+	if reloaded.DefaultOutputDir != original.DefaultOutputDir {
+		t.Fatalf("expected persisted default output dir %q, got %q", original.DefaultOutputDir, reloaded.DefaultOutputDir)
+	}
+	if reloaded.RecentInputDirs[0] != "D:/Shots/New" {
+		t.Fatalf("expected latest recent input dir to persist, got %q", reloaded.RecentInputDirs[0])
+	}
+}

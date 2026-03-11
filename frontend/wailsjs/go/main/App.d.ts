@@ -53,3 +53,5 @@ export function SelectOutputDirectory():Promise<string>;
 export function SplitGIF(arg1:models.GIFSplitRequest):Promise<models.GIFSplitResult>;
 
 export function StripMetadata(arg1:models.MetadataStripRequest):Promise<models.MetadataStripResult>;
+
+export function UpdateRecentPaths(arg1:models.RecentPathsUpdateRequest):Promise<models.AppSettings>;

@@ -95,6 +95,60 @@ func TestNormalizeSettings_PreservesExplicitFalseFolderStructure(t *testing.T) {
 	}
 }
 
+func TestNormalizeSettings_CapsRecentPathsAndDeduplicates(t *testing.T) {
+	input := models.AppSettings{
+		MaxConcurrency:          4,
+		OutputPrefix:            "IF",
+		OutputTemplate:          "{prefix}{basename}",
+		PreserveFolderStructure: true,
+		ConflictStrategy:        "rename",
+		DefaultOutputDir:        " C:/Exports/Final/ ",
+		RecentInputDirs: []string{
+			" C:/Shots/A ",
+			"C:/Shots/B",
+			"C:/Shots/A",
+			"",
+			"C:/Shots/C/",
+			"C:/Shots/D",
+			"C:/Shots/E",
+		},
+		RecentOutputDirs: []string{
+			" D:/Out/One ",
+			"D:/Out/Two",
+			"D:/Out/One",
+			"D:/Out/Three/",
+			"D:/Out/Four",
+			"D:/Out/Five",
+		},
+	}
+
+	got := normalizeSettings(input)
+
+	if got.DefaultOutputDir != "C:/Exports/Final" {
+		t.Fatalf("expected trimmed default output dir, got %q", got.DefaultOutputDir)
+	}
+
+	wantInputs := []string{"C:/Shots/A", "C:/Shots/B", "C:/Shots/C", "C:/Shots/D"}
+	if len(got.RecentInputDirs) != len(wantInputs) {
+		t.Fatalf("expected %d recent input dirs, got %d", len(wantInputs), len(got.RecentInputDirs))
+	}
+	for i, want := range wantInputs {
+		if got.RecentInputDirs[i] != want {
+			t.Fatalf("expected recent input dir %d to be %q, got %q", i, want, got.RecentInputDirs[i])
+		}
+	}
+
+	wantOutputs := []string{"D:/Out/One", "D:/Out/Two", "D:/Out/Three", "D:/Out/Four"}
+	if len(got.RecentOutputDirs) != len(wantOutputs) {
+		t.Fatalf("expected %d recent output dirs, got %d", len(wantOutputs), len(got.RecentOutputDirs))
+	}
+	for i, want := range wantOutputs {
+		if got.RecentOutputDirs[i] != want {
+			t.Fatalf("expected recent output dir %d to be %q, got %q", i, want, got.RecentOutputDirs[i])
+		}
+	}
+}
+
 func TestNewLogger_FallsBackToConsoleWhenFileLoggingUnavailable(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCALAPPDATA", tmpDir)

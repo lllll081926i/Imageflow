@@ -10,6 +10,8 @@ import (
 	"github.com/imageflow/backend/models"
 )
 
+const maxRecentPaths = 4
+
 func clampInt(v, minV, maxV int) int {
 	if v < minV {
 		return minV
@@ -18,6 +20,49 @@ func clampInt(v, minV, maxV int) int {
 		return maxV
 	}
 	return v
+}
+
+func normalizeSavedPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "/" || trimmed == `\` {
+		return trimmed
+	}
+	cleaned := strings.TrimRight(trimmed, "/\\")
+	if len(cleaned) == 2 && cleaned[1] == ':' {
+		return trimmed
+	}
+	if cleaned == "" {
+		return trimmed
+	}
+	return cleaned
+}
+
+func normalizeRecentPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return []string{}
+	}
+
+	normalized := make([]string, 0, maxRecentPaths)
+	seen := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		path := normalizeSavedPath(raw)
+		if path == "" {
+			continue
+		}
+		key := strings.ToLower(path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, path)
+		if len(normalized) == maxRecentPaths {
+			break
+		}
+	}
+	return normalized
 }
 
 func normalizeSettings(s models.AppSettings) models.AppSettings {
@@ -38,6 +83,9 @@ func normalizeSettings(s models.AppSettings) models.AppSettings {
 	if s.ConflictStrategy != "rename" {
 		s.ConflictStrategy = defaults.ConflictStrategy
 	}
+	s.DefaultOutputDir = normalizeSavedPath(s.DefaultOutputDir)
+	s.RecentInputDirs = normalizeRecentPaths(s.RecentInputDirs)
+	s.RecentOutputDirs = normalizeRecentPaths(s.RecentOutputDirs)
 	return s
 }
 
