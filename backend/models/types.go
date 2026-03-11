@@ -115,6 +115,30 @@ type GIFSplitResult struct {
 	Error          string   `json:"error,omitempty"`
 }
 
+// SubtitleStitchRequest represents request for movie dialogue long image generation.
+type SubtitleStitchRequest struct {
+	InputPaths         []string `json:"input_paths"`
+	OutputPath         string   `json:"output_path"`
+	SubtitleCropRatio  float64  `json:"subtitle_crop_ratio"`
+	HeaderKeepFull     bool     `json:"header_keep_full"`
+	DedupEnabled       bool     `json:"dedup_enabled"`
+	DedupThreshold     int      `json:"dedup_threshold"`
+	MinimumStripHeight int      `json:"minimum_strip_height"`
+}
+
+// SubtitleStitchResult represents result of subtitle stitching.
+type SubtitleStitchResult struct {
+	Success      bool   `json:"success"`
+	OutputPath   string `json:"output_path,omitempty"`
+	InputCount   int    `json:"input_count,omitempty"`
+	KeptCount    int    `json:"kept_count,omitempty"`
+	SkippedCount int    `json:"skipped_count,omitempty"`
+	StripHeight  int    `json:"strip_height,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorDetail  string `json:"error_detail,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
 // InfoRequest represents a request to get image information
 type InfoRequest struct {
 	InputPath string `json:"input_path"`
