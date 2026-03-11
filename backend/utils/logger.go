@@ -33,19 +33,24 @@ func NewLogger(level LogLevel, enableFile bool) (*Logger, error) {
 	}
 
 	if enableFile {
-		// Create logs directory
-		logsDir := "logs"
-		if err := os.MkdirAll(logsDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create logs directory: %w", err)
+		cacheDir, err := os.UserCacheDir()
+		if err != nil || cacheDir == "" {
+			cacheDir = os.TempDir()
 		}
 
-		// Create log file with timestamp
+		logsDir := filepath.Join(cacheDir, "ImageFlow", "logs")
+		if err := os.MkdirAll(logsDir, 0755); err != nil {
+			fmt.Printf("[WARN] failed to create logs directory %s: %v\n", logsDir, err)
+			return logger, nil
+		}
+
 		timestamp := time.Now().Format("20060102_150405")
 		logPath := filepath.Join(logsDir, fmt.Sprintf("imageflow_%s.log", timestamp))
 
 		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open log file: %w", err)
+			fmt.Printf("[WARN] failed to open log file %s: %v\n", logPath, err)
+			return logger, nil
 		}
 
 		logger.file = file

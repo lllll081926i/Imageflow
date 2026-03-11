@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,6 +52,35 @@ func TestGetPreviewCacheCap_Default(t *testing.T) {
 	if got := getPreviewCacheCap(); got != defaultPreviewCacheCap {
 		t.Fatalf("expected default cache cap %d, got %d", defaultPreviewCacheCap, got)
 	}
+}
+
+func TestServiceNotReadyMessage_IsReadableChinese(t *testing.T) {
+	got := serviceNotReadyMessage("格式转换服务")
+	want := "格式转换服务未就绪，请重启应用后重试"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestGetImagePreview_EmptyInputUsesReadableChinese(t *testing.T) {
+	app := &App{}
+	result, err := app.GetImagePreview(models.PreviewRequest{})
+	if err == nil {
+		t.Fatalf("expected error for empty input path")
+	}
+	if result.Error != "输入路径为空" {
+		t.Fatalf("expected readable chinese error, got %q", result.Error)
+	}
+}
+
+func TestListSystemFonts_DoesNotPanicWithoutLogger(t *testing.T) {
+	app := &App{}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("ListSystemFonts should not panic when logger is nil: %v", recovered)
+		}
+	}()
+	_, _ = app.ListSystemFonts()
 }
 
 func TestGetImagePreview_CacheHitAndInvalidation(t *testing.T) {
@@ -102,6 +132,105 @@ func TestGetImagePreview_CacheHitAndInvalidation(t *testing.T) {
 	}
 	if len(app.previewCache) != 1 {
 		t.Fatalf("expected cache size 1 after invalidation refresh, got %d", len(app.previewCache))
+	}
+}
+
+type fakeSerializedRunner struct {
+	delay      time.Duration
+	running    int32
+	maxRunning int32
+}
+
+func newFakeSerializedRunner(delay time.Duration) *fakeSerializedRunner {
+	return &fakeSerializedRunner{delay: delay}
+}
+
+func (r *fakeSerializedRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakeSerializedRunner) StartWorker() error { return nil }
+
+func (r *fakeSerializedRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakeSerializedRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	current := atomic.AddInt32(&r.running, 1)
+	defer atomic.AddInt32(&r.running, -1)
+	for {
+		maxRunning := atomic.LoadInt32(&r.maxRunning)
+		if current <= maxRunning {
+			break
+		}
+		if atomic.CompareAndSwapInt32(&r.maxRunning, maxRunning, current) {
+			break
+		}
+	}
+	time.Sleep(r.delay)
+
+	switch typed := result.(type) {
+	case *models.ConvertResult:
+		req, _ := input.(models.ConvertRequest)
+		*typed = models.ConvertResult{
+			Success:    true,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+		}
+		return nil
+	default:
+		return errors.New("unexpected result type")
+	}
+}
+
+func (r *fakeSerializedRunner) CancelActiveTask() {}
+
+func (r *fakeSerializedRunner) StopWorker() {}
+
+func TestConvert_SerializesTopLevelProcessing(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := newFakeSerializedRunner(120 * time.Millisecond)
+	app := &App{
+		logger:   logger,
+		executor: runner,
+		settings: models.AppSettings{MaxConcurrency: 4},
+	}
+	app.converterService = services.NewConverterService(runner, logger)
+
+	requests := []models.ConvertRequest{
+		{InputPath: "a.jpg", OutputPath: "a.png", Format: "png"},
+		{InputPath: "b.jpg", OutputPath: "b.png", Format: "png"},
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(requests))
+	for _, req := range requests {
+		wg.Add(1)
+		go func(req models.ConvertRequest) {
+			defer wg.Done()
+			result, err := app.Convert(req)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if !result.Success {
+				errCh <- errors.New("expected successful conversion result")
+			}
+		}(req)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("unexpected convert error: %v", err)
+		}
+	}
+
+	if got := atomic.LoadInt32(&runner.maxRunning); got != 1 {
+		t.Fatalf("expected top-level processing to be serialized, max concurrent executions = %d", got)
 	}
 }
 
@@ -325,4 +454,59 @@ func TestApplyFilterBatch_RespectsCancellation(t *testing.T) {
 		t.Fatalf("expected %d results, got %d", len(requests), len(results))
 	}
 	assertContainsCancelledResult(t, results)
+}
+
+func TestSaveSettings_DoesNotPersistWhenRunnerRebuildFails(t *testing.T) {
+	tmpConfig := t.TempDir()
+	t.Setenv("APPDATA", tmpConfig)
+
+	original := models.AppSettings{
+		MaxConcurrency:          1,
+		OutputPrefix:            "OLD",
+		OutputTemplate:          "{basename}",
+		PreserveFolderStructure: true,
+		ConflictStrategy:        "rename",
+	}
+	if _, err := saveAppSettings(original); err != nil {
+		t.Fatalf("failed to seed settings: %v", err)
+	}
+
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	app := &App{
+		logger:     logger,
+		scriptsDir: t.TempDir(),
+		settings:   original,
+	}
+
+	previousBuilder := buildRunnerForSettingsFn
+	buildRunnerForSettingsFn = func(_ string, _ *utils.Logger, _ models.AppSettings) (utils.PythonRunner, error) {
+		return nil, errors.New("runner rebuild failed")
+	}
+	defer func() {
+		buildRunnerForSettingsFn = previousBuilder
+	}()
+
+	next := original
+	next.MaxConcurrency = 4
+	next.OutputPrefix = "NEW"
+
+	if _, err := app.SaveSettings(next); err == nil {
+		t.Fatal("expected SaveSettings to fail")
+	}
+
+	reloaded, err := utils.LoadSettings()
+	if err != nil {
+		t.Fatalf("failed to reload settings: %v", err)
+	}
+	if reloaded.OutputPrefix != original.OutputPrefix {
+		t.Fatalf("expected persisted prefix %q, got %q", original.OutputPrefix, reloaded.OutputPrefix)
+	}
+	if reloaded.MaxConcurrency != original.MaxConcurrency {
+		t.Fatalf("expected persisted concurrency %d, got %d", original.MaxConcurrency, reloaded.MaxConcurrency)
+	}
 }

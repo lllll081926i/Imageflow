@@ -85,9 +85,6 @@ func resolveInputPath(inputPath, outputPath string) string {
 	}
 
 	candidates := []string{}
-	if outputPath != "" && filepath.IsAbs(outputPath) {
-		candidates = append(candidates, filepath.Join(filepath.Dir(outputPath), cleaned))
-	}
 	if wd, err := os.Getwd(); err == nil && wd != "" {
 		candidates = append(candidates, filepath.Join(wd, cleaned))
 	}

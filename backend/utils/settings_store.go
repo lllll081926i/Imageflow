@@ -22,9 +22,6 @@ func clampInt(v, minV, maxV int) int {
 
 func normalizeSettings(s models.AppSettings) models.AppSettings {
 	defaults := models.DefaultAppSettings()
-	emptyOutputFields := strings.TrimSpace(s.OutputPrefix) == "" &&
-		strings.TrimSpace(s.OutputTemplate) == "" &&
-		strings.TrimSpace(s.ConflictStrategy) == ""
 	if s.MaxConcurrency == 0 {
 		s.MaxConcurrency = defaults.MaxConcurrency
 	}
@@ -41,10 +38,11 @@ func normalizeSettings(s models.AppSettings) models.AppSettings {
 	if s.ConflictStrategy != "rename" {
 		s.ConflictStrategy = defaults.ConflictStrategy
 	}
-	if !s.PreserveFolderStructure && emptyOutputFields {
-		s.PreserveFolderStructure = defaults.PreserveFolderStructure
-	}
 	return s
+}
+
+func NormalizeSettings(s models.AppSettings) models.AppSettings {
+	return normalizeSettings(s)
 }
 
 func settingsFilePath() (string, error) {

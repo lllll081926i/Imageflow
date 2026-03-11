@@ -4,10 +4,30 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
+
+func HasEmbeddedPythonRuntime(embedded fs.FS, embeddedRoot string) bool {
+	root := strings.TrimSuffix(embeddedRoot, "/")
+	candidates := []string{
+		path.Join(root, "python.exe"),
+		path.Join(root, "pythonw.exe"),
+		path.Join(root, "python3.exe"),
+		path.Join(root, "bin", "python3"),
+		path.Join(root, "bin", "python"),
+		path.Join(root, "python3"),
+		path.Join(root, "python"),
+	}
+	for _, candidate := range candidates {
+		if st, err := fs.Stat(embedded, candidate); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
 
 // ExtractEmbeddedPythonRuntime writes embedded runtime files next to the executable and returns its path.
 func ExtractEmbeddedPythonRuntime(embedded fs.FS, embeddedRoot string) (string, error) {

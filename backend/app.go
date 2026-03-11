@@ -21,7 +21,9 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx          context.Context
+	stateMu      sync.RWMutex
+	processingMu sync.Mutex
 
 	// Utilities
 	logger     *utils.Logger
@@ -30,16 +32,17 @@ type App struct {
 	settings   models.AppSettings
 
 	// Services
-	converterService    *services.ConverterService
-	compressorService   *services.CompressorService
-	pdfGeneratorService *services.PDFGeneratorService
-	gifSplitterService  *services.GIFSplitterService
-	infoViewerService   *services.InfoViewerService
-	metadataService     *services.MetadataService
-	watermarkService    *services.WatermarkService
-	adjusterService     *services.AdjusterService
-	filterService       *services.FilterService
-	cancelRequested     uint32
+	converterService      *services.ConverterService
+	compressorService     *services.CompressorService
+	pdfGeneratorService   *services.PDFGeneratorService
+	gifSplitterService    *services.GIFSplitterService
+	infoViewerService     *services.InfoViewerService
+	metadataService       *services.MetadataService
+	watermarkService      *services.WatermarkService
+	adjusterService       *services.AdjusterService
+	filterService         *services.FilterService
+	subtitleStitchService *services.SubtitleStitchService
+	cancelRequested       uint32
 
 	previewCacheMu         sync.Mutex
 	previewCache           map[string]previewCacheEntry
@@ -60,6 +63,18 @@ type previewCacheEntry struct {
 	DataURL         string
 	FileSize        int64
 	ModTimeUnixNano int64
+}
+
+var (
+	saveAppSettings          = utils.SaveSettings
+	buildRunnerForSettingsFn = buildRunnerForSettings
+)
+
+func buildRunnerForSettings(scriptsDir string, logger *utils.Logger, settings models.AppSettings) (utils.PythonRunner, error) {
+	if settings.MaxConcurrency > 1 {
+		return utils.NewPythonExecutorPool(scriptsDir, logger, settings.MaxConcurrency)
+	}
+	return utils.NewPythonExecutor(scriptsDir, logger)
 }
 
 // NewApp creates a new App application struct
@@ -91,7 +106,7 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 
-		if preferredRuntime == "" {
+		if preferredRuntime == "" && utils.HasEmbeddedPythonRuntime(embeddedPythonFS, "embedded_python_runtime") {
 			if runtimeDir, err := utils.ExtractEmbeddedPythonRuntime(embeddedPythonFS, "embedded_python_runtime"); err == nil {
 				if pythonExe := utils.PythonExecutableFromRuntime(runtimeDir); pythonExe != "" {
 					_ = os.Setenv("IMAGEFLOW_PYTHON_EXE", pythonExe)
@@ -120,21 +135,10 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.settings = settings
 
-	var runner utils.PythonRunner
-	if settings.MaxConcurrency > 1 {
-		pool, err := utils.NewPythonExecutorPool(scriptsDir, logger, settings.MaxConcurrency)
-		if err != nil {
-			a.logger.Error("Failed to initialize Python executor pool: %v", err)
-			return
-		}
-		runner = pool
-	} else {
-		executor, err := utils.NewPythonExecutor(scriptsDir, logger)
-		if err != nil {
-			a.logger.Error("Failed to initialize Python executor: %v", err)
-			return
-		}
-		runner = executor
+	runner, err := buildRunnerForSettingsFn(scriptsDir, logger, settings)
+	if err != nil {
+		a.logger.Error("Failed to initialize Python executor: %v", err)
+		return
 	}
 	a.executor = runner
 
@@ -157,19 +161,25 @@ func (a *App) startup(ctx context.Context) {
 	a.watermarkService = services.NewWatermarkService(runner, logger)
 	a.adjusterService = services.NewAdjusterService(runner, logger)
 	a.filterService = services.NewFilterService(runner, logger)
+	a.subtitleStitchService = services.NewSubtitleStitchService(runner, logger)
 
 	a.logger.Info("All services initialized successfully")
 }
 
 // shutdown is called when the app is closing
 func (a *App) shutdown(ctx context.Context) {
-	if a.executor != nil {
-		a.executor.StopWorker()
+	a.stateMu.RLock()
+	executor := a.executor
+	logger := a.logger
+	a.stateMu.RUnlock()
+
+	if executor != nil {
+		executor.StopWorker()
 	}
 
-	if a.logger != nil {
-		a.logger.Info("ImageFlow backend shutting down...")
-		a.logger.Close()
+	if logger != nil {
+		logger.Info("ImageFlow backend shutting down...")
+		logger.Close()
 	}
 }
 
@@ -192,14 +202,26 @@ func serviceNotReadyMessage(serviceName string) string {
 	return fmt.Sprintf("%s未就绪，请重启应用后重试", serviceName)
 }
 
+func (a *App) startProcessing() {
+	a.processingMu.Lock()
+	a.beginCancelableOperation()
+}
+
+func (a *App) finishProcessing() {
+	a.processingMu.Unlock()
+}
+
 func (a *App) beginCancelableOperation() {
 	atomic.StoreUint32(&a.cancelRequested, 0)
 }
 
 func (a *App) requestCancelOperation() {
 	atomic.StoreUint32(&a.cancelRequested, 1)
-	if a.executor != nil {
-		a.executor.CancelActiveTask()
+	a.stateMu.RLock()
+	executor := a.executor
+	a.stateMu.RUnlock()
+	if executor != nil {
+		executor.CancelActiveTask()
 	}
 }
 
@@ -220,58 +242,76 @@ func (a *App) CancelProcessing() bool {
 }
 
 func (a *App) GetSettings() (models.AppSettings, error) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	return a.settings, nil
 }
 
 func (a *App) SaveSettings(settings models.AppSettings) (models.AppSettings, error) {
-	saved, err := utils.SaveSettings(settings)
-	if err != nil {
-		return saved, err
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	saved := utils.NormalizeSettings(settings)
+
+	a.stateMu.RLock()
+	currentSettings := a.settings
+	scriptsDir := a.scriptsDir
+	logger := a.logger
+	old := a.executor
+	a.stateMu.RUnlock()
+
+	var (
+		runner     utils.PythonRunner
+		rebuildErr error
+	)
+	if saved.MaxConcurrency != currentSettings.MaxConcurrency {
+		runner, rebuildErr = buildRunnerForSettingsFn(scriptsDir, logger, saved)
+		if rebuildErr != nil {
+			return currentSettings, rebuildErr
+		}
 	}
 
-	if saved.MaxConcurrency != a.settings.MaxConcurrency {
-		var runner utils.PythonRunner
-		if saved.MaxConcurrency > 1 {
-			pool, err := utils.NewPythonExecutorPool(a.scriptsDir, a.logger, saved.MaxConcurrency)
-			if err != nil {
-				return a.settings, err
-			}
-			runner = pool
-		} else {
-			exec, err := utils.NewPythonExecutor(a.scriptsDir, a.logger)
-			if err != nil {
-				return a.settings, err
-			}
-			runner = exec
+	persisted, err := saveAppSettings(saved)
+	if err != nil {
+		if runner != nil {
+			runner.StopWorker()
 		}
+		return saved, err
+	}
+	saved = persisted
 
-		old := a.executor
+	if runner != nil {
+		a.stateMu.Lock()
 		a.executor = runner
-		a.converterService = services.NewConverterService(runner, a.logger)
-		a.compressorService = services.NewCompressorService(runner, a.logger)
-		a.pdfGeneratorService = services.NewPDFGeneratorService(runner, a.logger)
-		a.gifSplitterService = services.NewGIFSplitterService(runner, a.logger)
-		a.infoViewerService = services.NewInfoViewerService(runner, a.logger)
-		a.metadataService = services.NewMetadataService(runner, a.logger)
-		a.watermarkService = services.NewWatermarkService(runner, a.logger)
-		a.adjusterService = services.NewAdjusterService(runner, a.logger)
-		a.filterService = services.NewFilterService(runner, a.logger)
+		a.converterService = services.NewConverterService(runner, logger)
+		a.compressorService = services.NewCompressorService(runner, logger)
+		a.pdfGeneratorService = services.NewPDFGeneratorService(runner, logger)
+		a.gifSplitterService = services.NewGIFSplitterService(runner, logger)
+		a.infoViewerService = services.NewInfoViewerService(runner, logger)
+		a.metadataService = services.NewMetadataService(runner, logger)
+		a.watermarkService = services.NewWatermarkService(runner, logger)
+		a.adjusterService = services.NewAdjusterService(runner, logger)
+		a.filterService = services.NewFilterService(runner, logger)
+		a.subtitleStitchService = services.NewSubtitleStitchService(runner, logger)
+		a.stateMu.Unlock()
 
 		go func(r utils.PythonRunner) {
 			if r == nil {
 				return
 			}
 			if err := r.StartWorker(); err != nil {
-				a.logger.Warn("Python worker warmup failed: %v", err)
+				logger.Warn("Python worker warmup failed: %v", err)
 			}
 		}(runner)
 
-		if old != nil {
+		if old != nil && old != runner {
 			old.StopWorker()
 		}
 	}
 
+	a.stateMu.Lock()
 	a.settings = saved
+	a.stateMu.Unlock()
 	return saved, nil
 }
 
@@ -305,7 +345,8 @@ func (a *App) ExpandDroppedPaths(paths []string) (models.ExpandDroppedPathsResul
 
 // Convert converts an image to a different format
 func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.converterService == nil {
 		return models.ConvertResult{
 			Success:    false,
@@ -333,82 +374,69 @@ func (a *App) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 	return result, nil
 }
 
-// ConvertBatch converts multiple images concurrently
-func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertResult, error) {
-	a.beginCancelableOperation()
-	n := len(requests)
-	results := make([]models.ConvertResult, n)
-	if n == 0 {
-		return results, nil
-	}
-	if a.converterService == nil {
-		errMsg := serviceNotReadyMessage("格式转换服务")
-		for i, req := range requests {
-			results[i] = models.ConvertResult{
-				Success:    false,
-				InputPath:  req.InputPath,
-				OutputPath: req.OutputPath,
-				Error:      errMsg,
-			}
-		}
-		return results, nil
-	}
-
-	workers := a.settings.MaxConcurrency
+func batchWorkerCount(total, configured int) int {
+	workers := configured
 	if workers < 1 {
 		workers = 1
 	}
 	if workers > 32 {
 		workers = 32
 	}
-	if workers > n {
-		workers = n
+	if workers > total {
+		workers = total
+	}
+	return workers
+}
+
+func buildBatchResults[TReq any, TRes any](requests []TReq, builder func(TReq) TRes) []TRes {
+	results := make([]TRes, len(requests))
+	for i, req := range requests {
+		results[i] = builder(req)
+	}
+	return results
+}
+
+func executeBatch[TReq any, TRes any](
+	requests []TReq,
+	maxConcurrency int,
+	isCancelRequested func() bool,
+	buildCancelled func(req TReq) TRes,
+	execute func(req TReq) (TRes, error),
+	normalizeError func(res *TRes, req TReq, err error),
+) []TRes {
+	n := len(requests)
+	results := make([]TRes, n)
+	if n == 0 {
+		return results
 	}
 
+	workers := batchWorkerCount(n, maxConcurrency)
 	jobs := make(chan int, workers)
 	var wg sync.WaitGroup
+
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				if a.isCancelRequested() {
-					results[idx] = models.ConvertResult{
-						Success:    false,
-						InputPath:  requests[idx].InputPath,
-						OutputPath: requests[idx].OutputPath,
-						Error:      cancelledErrorMessage,
-					}
+				req := requests[idx]
+				if isCancelRequested() {
+					results[idx] = buildCancelled(req)
 					continue
 				}
-				res, err := a.converterService.Convert(requests[idx])
+				res, err := execute(req)
 				if err != nil {
-					res.Success = false
-					if strings.TrimSpace(res.InputPath) == "" {
-						res.InputPath = requests[idx].InputPath
-					}
-					if strings.TrimSpace(res.OutputPath) == "" {
-						res.OutputPath = requests[idx].OutputPath
-					}
-					if isCancelledExecutionError(err) || a.isCancelRequested() {
-						res.Error = cancelledErrorMessage
-					} else {
-						res.Error = mergeOperationError(res.Error, err)
-					}
+					normalizeError(&res, req, err)
 				}
 				results[idx] = res
 			}
 		}()
 	}
+
 	for i := 0; i < n; i++ {
-		if a.isCancelRequested() {
+		if isCancelRequested() {
 			for j := i; j < n; j++ {
-				results[j] = models.ConvertResult{
-					Success:    false,
-					InputPath:  requests[j].InputPath,
-					OutputPath: requests[j].OutputPath,
-					Error:      cancelledErrorMessage,
-				}
+				results[j] = buildCancelled(requests[j])
 			}
 			break
 		}
@@ -416,12 +444,65 @@ func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertRe
 	}
 	close(jobs)
 	wg.Wait()
+	return results
+}
+
+// ConvertBatch converts multiple images concurrently
+func (a *App) ConvertBatch(requests []models.ConvertRequest) ([]models.ConvertResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+	if len(requests) == 0 {
+		return []models.ConvertResult{}, nil
+	}
+	if a.converterService == nil {
+		errMsg := serviceNotReadyMessage("格式转换服务")
+		return buildBatchResults(requests, func(req models.ConvertRequest) models.ConvertResult {
+			return models.ConvertResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      errMsg,
+			}
+		}), nil
+	}
+
+	results := executeBatch(
+		requests,
+		a.settings.MaxConcurrency,
+		a.isCancelRequested,
+		func(req models.ConvertRequest) models.ConvertResult {
+			return models.ConvertResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      cancelledErrorMessage,
+			}
+		},
+		func(req models.ConvertRequest) (models.ConvertResult, error) {
+			return a.converterService.Convert(req)
+		},
+		func(res *models.ConvertResult, req models.ConvertRequest, err error) {
+			res.Success = false
+			if strings.TrimSpace(res.InputPath) == "" {
+				res.InputPath = req.InputPath
+			}
+			if strings.TrimSpace(res.OutputPath) == "" {
+				res.OutputPath = req.OutputPath
+			}
+			if isCancelledExecutionError(err) || a.isCancelRequested() {
+				res.Error = cancelledErrorMessage
+			} else {
+				res.Error = mergeOperationError(res.Error, err)
+			}
+		},
+	)
 	return results, nil
 }
 
 // Compress compresses an image
 func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.compressorService == nil {
 		return models.CompressResult{
 			Success:    false,
@@ -451,93 +532,60 @@ func (a *App) Compress(req models.CompressRequest) (models.CompressResult, error
 
 // CompressBatch compresses multiple images concurrently
 func (a *App) CompressBatch(requests []models.CompressRequest) ([]models.CompressResult, error) {
-	a.beginCancelableOperation()
-	n := len(requests)
-	results := make([]models.CompressResult, n)
-	if n == 0 {
-		return results, nil
+	a.startProcessing()
+	defer a.finishProcessing()
+	if len(requests) == 0 {
+		return []models.CompressResult{}, nil
 	}
 	if a.compressorService == nil {
 		errMsg := serviceNotReadyMessage("图片压缩服务")
-		for i, req := range requests {
-			results[i] = models.CompressResult{
+		return buildBatchResults(requests, func(req models.CompressRequest) models.CompressResult {
+			return models.CompressResult{
 				Success:    false,
 				InputPath:  req.InputPath,
 				OutputPath: req.OutputPath,
 				Error:      errMsg,
 			}
-		}
-		return results, nil
+		}), nil
 	}
 
-	workers := a.settings.MaxConcurrency
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > 32 {
-		workers = 32
-	}
-	if workers > n {
-		workers = n
-	}
-
-	jobs := make(chan int, workers)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				if a.isCancelRequested() {
-					results[idx] = models.CompressResult{
-						Success:    false,
-						InputPath:  requests[idx].InputPath,
-						OutputPath: requests[idx].OutputPath,
-						Error:      cancelledErrorMessage,
-					}
-					continue
-				}
-				res, err := a.compressorService.Compress(requests[idx])
-				if err != nil {
-					res.Success = false
-					if strings.TrimSpace(res.InputPath) == "" {
-						res.InputPath = requests[idx].InputPath
-					}
-					if strings.TrimSpace(res.OutputPath) == "" {
-						res.OutputPath = requests[idx].OutputPath
-					}
-					if isCancelledExecutionError(err) || a.isCancelRequested() {
-						res.Error = cancelledErrorMessage
-					} else {
-						res.Error = mergeOperationError(res.Error, err)
-					}
-				}
-				results[idx] = res
+	results := executeBatch(
+		requests,
+		a.settings.MaxConcurrency,
+		a.isCancelRequested,
+		func(req models.CompressRequest) models.CompressResult {
+			return models.CompressResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      cancelledErrorMessage,
 			}
-		}()
-	}
-	for i := 0; i < n; i++ {
-		if a.isCancelRequested() {
-			for j := i; j < n; j++ {
-				results[j] = models.CompressResult{
-					Success:    false,
-					InputPath:  requests[j].InputPath,
-					OutputPath: requests[j].OutputPath,
-					Error:      cancelledErrorMessage,
-				}
+		},
+		func(req models.CompressRequest) (models.CompressResult, error) {
+			return a.compressorService.Compress(req)
+		},
+		func(res *models.CompressResult, req models.CompressRequest, err error) {
+			res.Success = false
+			if strings.TrimSpace(res.InputPath) == "" {
+				res.InputPath = req.InputPath
 			}
-			break
-		}
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+			if strings.TrimSpace(res.OutputPath) == "" {
+				res.OutputPath = req.OutputPath
+			}
+			if isCancelledExecutionError(err) || a.isCancelRequested() {
+				res.Error = cancelledErrorMessage
+			} else {
+				res.Error = mergeOperationError(res.Error, err)
+			}
+		},
+	)
 	return results, nil
 }
 
 // GeneratePDF generates a PDF from multiple images
 func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.pdfGeneratorService == nil {
 		return models.PDFResult{
 			Success:    false,
@@ -563,7 +611,8 @@ func (a *App) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
 
 // SplitGIF handles animation actions (export_frames, reverse, change_speed, build_gif, compress, resize, convert_animation)
 func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.gifSplitterService == nil {
 		return models.GIFSplitResult{
 			Success:    false,
@@ -599,8 +648,38 @@ func (a *App) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error
 	return result, nil
 }
 
+// GenerateSubtitleLongImage handles "first full frame + subtitle strips" image generation.
+func (a *App) GenerateSubtitleLongImage(req models.SubtitleStitchRequest) (models.SubtitleStitchResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+	if a.subtitleStitchService == nil {
+		return models.SubtitleStitchResult{
+			Success:    false,
+			OutputPath: req.OutputPath,
+			Error:      serviceNotReadyMessage("字幕拼接服务"),
+		}, nil
+	}
+	result, err := a.subtitleStitchService.Generate(req)
+	if err != nil {
+		result.Success = false
+		if strings.TrimSpace(result.OutputPath) == "" {
+			result.OutputPath = req.OutputPath
+		}
+		if isCancelledExecutionError(err) || a.isCancelRequested() {
+			result.Error = cancelledErrorMessage
+		} else {
+			result.Error = mergeOperationError(result.Error, err)
+		}
+		return result, nil
+	}
+	return result, nil
+}
+
 // GetInfo retrieves image information
 func (a *App) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+
 	if a.infoViewerService == nil {
 		return models.InfoResult{
 			Success:   false,
@@ -777,6 +856,9 @@ func (a *App) buildPreviewFromConverter(inputPath string) (models.PreviewResult,
 
 // GetImagePreview builds a data URL for previewing images in the frontend.
 func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+
 	inputPath := strings.TrimSpace(req.InputPath)
 	if inputPath == "" {
 		return models.PreviewResult{Success: false, Error: "输入路径为空"}, errors.New("input path is empty")
@@ -815,6 +897,9 @@ func (a *App) GetImagePreview(req models.PreviewRequest) (models.PreviewResult, 
 
 // EditMetadata edits image metadata (EXIF)
 func (a *App) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+
 	if a.infoViewerService == nil {
 		return models.MetadataEditResult{
 			Success:    false,
@@ -839,6 +924,9 @@ func (a *App) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditR
 }
 
 func (a *App) StripMetadata(req models.MetadataStripRequest) (models.MetadataStripResult, error) {
+	a.startProcessing()
+	defer a.finishProcessing()
+
 	if a.metadataService == nil {
 		return models.MetadataStripResult{
 			Success:    false,
@@ -894,7 +982,8 @@ func (a *App) ResolveOutputPath(req models.ResolveOutputPathRequest) (models.Res
 
 // AddWatermark adds a watermark to an image
 func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.watermarkService == nil {
 		return models.WatermarkResult{
 			Success:    false,
@@ -924,87 +1013,53 @@ func (a *App) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult,
 
 // AddWatermarkBatch adds watermarks to multiple images concurrently
 func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.WatermarkResult, error) {
-	a.beginCancelableOperation()
-	n := len(requests)
-	results := make([]models.WatermarkResult, n)
-	if n == 0 {
-		return results, nil
+	a.startProcessing()
+	defer a.finishProcessing()
+	if len(requests) == 0 {
+		return []models.WatermarkResult{}, nil
 	}
 	if a.watermarkService == nil {
 		errMsg := serviceNotReadyMessage("水印服务")
-		for i, req := range requests {
-			results[i] = models.WatermarkResult{
+		return buildBatchResults(requests, func(req models.WatermarkRequest) models.WatermarkResult {
+			return models.WatermarkResult{
 				Success:    false,
 				InputPath:  req.InputPath,
 				OutputPath: req.OutputPath,
 				Error:      errMsg,
 			}
-		}
-		return results, nil
+		}), nil
 	}
 
-	workers := a.settings.MaxConcurrency
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > 32 {
-		workers = 32
-	}
-	if workers > n {
-		workers = n
-	}
-
-	jobs := make(chan int, workers)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				if a.isCancelRequested() {
-					results[idx] = models.WatermarkResult{
-						Success:    false,
-						InputPath:  requests[idx].InputPath,
-						OutputPath: requests[idx].OutputPath,
-						Error:      cancelledErrorMessage,
-					}
-					continue
-				}
-				res, err := a.watermarkService.AddWatermark(requests[idx])
-				if err != nil {
-					res.Success = false
-					if strings.TrimSpace(res.InputPath) == "" {
-						res.InputPath = requests[idx].InputPath
-					}
-					if strings.TrimSpace(res.OutputPath) == "" {
-						res.OutputPath = requests[idx].OutputPath
-					}
-					if isCancelledExecutionError(err) || a.isCancelRequested() {
-						res.Error = cancelledErrorMessage
-					} else {
-						res.Error = mergeOperationError(res.Error, err)
-					}
-				}
-				results[idx] = res
+	results := executeBatch(
+		requests,
+		a.settings.MaxConcurrency,
+		a.isCancelRequested,
+		func(req models.WatermarkRequest) models.WatermarkResult {
+			return models.WatermarkResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      cancelledErrorMessage,
 			}
-		}()
-	}
-	for i := 0; i < n; i++ {
-		if a.isCancelRequested() {
-			for j := i; j < n; j++ {
-				results[j] = models.WatermarkResult{
-					Success:    false,
-					InputPath:  requests[j].InputPath,
-					OutputPath: requests[j].OutputPath,
-					Error:      cancelledErrorMessage,
-				}
+		},
+		func(req models.WatermarkRequest) (models.WatermarkResult, error) {
+			return a.watermarkService.AddWatermark(req)
+		},
+		func(res *models.WatermarkResult, req models.WatermarkRequest, err error) {
+			res.Success = false
+			if strings.TrimSpace(res.InputPath) == "" {
+				res.InputPath = req.InputPath
 			}
-			break
-		}
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+			if strings.TrimSpace(res.OutputPath) == "" {
+				res.OutputPath = req.OutputPath
+			}
+			if isCancelledExecutionError(err) || a.isCancelRequested() {
+				res.Error = cancelledErrorMessage
+			} else {
+				res.Error = mergeOperationError(res.Error, err)
+			}
+		},
+	)
 	return results, nil
 }
 
@@ -1012,7 +1067,9 @@ func (a *App) AddWatermarkBatch(requests []models.WatermarkRequest) ([]models.Wa
 func (a *App) ListSystemFonts() ([]string, error) {
 	fonts, err := utils.ListSystemFonts()
 	if err != nil {
-		a.logger.Warn("ListSystemFonts failed: %v", err)
+		if a.logger != nil {
+			a.logger.Warn("ListSystemFonts failed: %v", err)
+		}
 		return []string{}, err
 	}
 	return fonts, nil
@@ -1020,7 +1077,8 @@ func (a *App) ListSystemFonts() ([]string, error) {
 
 // Adjust applies adjustments to an image
 func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.adjusterService == nil {
 		return models.AdjustResult{
 			Success:    false,
@@ -1050,93 +1108,60 @@ func (a *App) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
 
 // AdjustBatch applies adjustments to multiple images concurrently
 func (a *App) AdjustBatch(requests []models.AdjustRequest) ([]models.AdjustResult, error) {
-	a.beginCancelableOperation()
-	n := len(requests)
-	results := make([]models.AdjustResult, n)
-	if n == 0 {
-		return results, nil
+	a.startProcessing()
+	defer a.finishProcessing()
+	if len(requests) == 0 {
+		return []models.AdjustResult{}, nil
 	}
 	if a.adjusterService == nil {
 		errMsg := serviceNotReadyMessage("调整服务")
-		for i, req := range requests {
-			results[i] = models.AdjustResult{
+		return buildBatchResults(requests, func(req models.AdjustRequest) models.AdjustResult {
+			return models.AdjustResult{
 				Success:    false,
 				InputPath:  req.InputPath,
 				OutputPath: req.OutputPath,
 				Error:      errMsg,
 			}
-		}
-		return results, nil
+		}), nil
 	}
 
-	workers := a.settings.MaxConcurrency
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > 32 {
-		workers = 32
-	}
-	if workers > n {
-		workers = n
-	}
-
-	jobs := make(chan int, workers)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				if a.isCancelRequested() {
-					results[idx] = models.AdjustResult{
-						Success:    false,
-						InputPath:  requests[idx].InputPath,
-						OutputPath: requests[idx].OutputPath,
-						Error:      cancelledErrorMessage,
-					}
-					continue
-				}
-				res, err := a.adjusterService.Adjust(requests[idx])
-				if err != nil {
-					res.Success = false
-					if strings.TrimSpace(res.InputPath) == "" {
-						res.InputPath = requests[idx].InputPath
-					}
-					if strings.TrimSpace(res.OutputPath) == "" {
-						res.OutputPath = requests[idx].OutputPath
-					}
-					if isCancelledExecutionError(err) || a.isCancelRequested() {
-						res.Error = cancelledErrorMessage
-					} else {
-						res.Error = mergeOperationError(res.Error, err)
-					}
-				}
-				results[idx] = res
+	results := executeBatch(
+		requests,
+		a.settings.MaxConcurrency,
+		a.isCancelRequested,
+		func(req models.AdjustRequest) models.AdjustResult {
+			return models.AdjustResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      cancelledErrorMessage,
 			}
-		}()
-	}
-	for i := 0; i < n; i++ {
-		if a.isCancelRequested() {
-			for j := i; j < n; j++ {
-				results[j] = models.AdjustResult{
-					Success:    false,
-					InputPath:  requests[j].InputPath,
-					OutputPath: requests[j].OutputPath,
-					Error:      cancelledErrorMessage,
-				}
+		},
+		func(req models.AdjustRequest) (models.AdjustResult, error) {
+			return a.adjusterService.Adjust(req)
+		},
+		func(res *models.AdjustResult, req models.AdjustRequest, err error) {
+			res.Success = false
+			if strings.TrimSpace(res.InputPath) == "" {
+				res.InputPath = req.InputPath
 			}
-			break
-		}
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+			if strings.TrimSpace(res.OutputPath) == "" {
+				res.OutputPath = req.OutputPath
+			}
+			if isCancelledExecutionError(err) || a.isCancelRequested() {
+				res.Error = cancelledErrorMessage
+			} else {
+				res.Error = mergeOperationError(res.Error, err)
+			}
+		},
+	)
 	return results, nil
 }
 
 // ApplyFilter applies a filter to an image
 func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error) {
-	a.beginCancelableOperation()
+	a.startProcessing()
+	defer a.finishProcessing()
 	if a.filterService == nil {
 		return models.FilterResult{
 			Success:    false,
@@ -1166,86 +1191,52 @@ func (a *App) ApplyFilter(req models.FilterRequest) (models.FilterResult, error)
 
 // ApplyFilterBatch applies filters to multiple images concurrently
 func (a *App) ApplyFilterBatch(requests []models.FilterRequest) ([]models.FilterResult, error) {
-	a.beginCancelableOperation()
-	n := len(requests)
-	results := make([]models.FilterResult, n)
-	if n == 0 {
-		return results, nil
+	a.startProcessing()
+	defer a.finishProcessing()
+	if len(requests) == 0 {
+		return []models.FilterResult{}, nil
 	}
 	if a.filterService == nil {
 		errMsg := serviceNotReadyMessage("滤镜服务")
-		for i, req := range requests {
-			results[i] = models.FilterResult{
+		return buildBatchResults(requests, func(req models.FilterRequest) models.FilterResult {
+			return models.FilterResult{
 				Success:    false,
 				InputPath:  req.InputPath,
 				OutputPath: req.OutputPath,
 				Error:      errMsg,
 			}
-		}
-		return results, nil
+		}), nil
 	}
 
-	workers := a.settings.MaxConcurrency
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > 32 {
-		workers = 32
-	}
-	if workers > n {
-		workers = n
-	}
-
-	jobs := make(chan int, workers)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				if a.isCancelRequested() {
-					results[idx] = models.FilterResult{
-						Success:    false,
-						InputPath:  requests[idx].InputPath,
-						OutputPath: requests[idx].OutputPath,
-						Error:      cancelledErrorMessage,
-					}
-					continue
-				}
-				res, err := a.filterService.ApplyFilter(requests[idx])
-				if err != nil {
-					res.Success = false
-					if strings.TrimSpace(res.InputPath) == "" {
-						res.InputPath = requests[idx].InputPath
-					}
-					if strings.TrimSpace(res.OutputPath) == "" {
-						res.OutputPath = requests[idx].OutputPath
-					}
-					if isCancelledExecutionError(err) || a.isCancelRequested() {
-						res.Error = cancelledErrorMessage
-					} else {
-						res.Error = mergeOperationError(res.Error, err)
-					}
-				}
-				results[idx] = res
+	results := executeBatch(
+		requests,
+		a.settings.MaxConcurrency,
+		a.isCancelRequested,
+		func(req models.FilterRequest) models.FilterResult {
+			return models.FilterResult{
+				Success:    false,
+				InputPath:  req.InputPath,
+				OutputPath: req.OutputPath,
+				Error:      cancelledErrorMessage,
 			}
-		}()
-	}
-	for i := 0; i < n; i++ {
-		if a.isCancelRequested() {
-			for j := i; j < n; j++ {
-				results[j] = models.FilterResult{
-					Success:    false,
-					InputPath:  requests[j].InputPath,
-					OutputPath: requests[j].OutputPath,
-					Error:      cancelledErrorMessage,
-				}
+		},
+		func(req models.FilterRequest) (models.FilterResult, error) {
+			return a.filterService.ApplyFilter(req)
+		},
+		func(res *models.FilterResult, req models.FilterRequest, err error) {
+			res.Success = false
+			if strings.TrimSpace(res.InputPath) == "" {
+				res.InputPath = req.InputPath
 			}
-			break
-		}
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+			if strings.TrimSpace(res.OutputPath) == "" {
+				res.OutputPath = req.OutputPath
+			}
+			if isCancelledExecutionError(err) || a.isCancelRequested() {
+				res.Error = cancelledErrorMessage
+			} else {
+				res.Error = mergeOperationError(res.Error, err)
+			}
+		},
+	)
 	return results, nil
 }

@@ -1,6 +1,8 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -233,6 +235,15 @@ func TestSplitGIF_ConvertAnimationPassesOutputFormat(t *testing.T) {
 			if payload["output_format"] != "webp" {
 				t.Fatalf("expected output_format webp, got %#v", payload["output_format"])
 			}
+			if payload["width"] != 512 {
+				t.Fatalf("expected width 512, got %#v", payload["width"])
+			}
+			if payload["height"] != 512 {
+				t.Fatalf("expected height 512, got %#v", payload["height"])
+			}
+			if payload["maintain_aspect"] != true {
+				t.Fatalf("expected maintain_aspect true, got %#v", payload["maintain_aspect"])
+			}
 			res := result.(*models.GIFSplitResult)
 			*res = models.GIFSplitResult{Success: true, OutputPath: "out.webp"}
 			return nil
@@ -245,11 +256,38 @@ func TestSplitGIF_ConvertAnimationPassesOutputFormat(t *testing.T) {
 		InputPath:    "in.gif",
 		OutputPath:   "out.webp",
 		OutputFormat: "webp",
+		Width:        512,
+		Height:       512,
+		MaintainAR:   true,
 	})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 	if !res.Success || res.OutputPath != "out.webp" {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestResolveInputPath_PrefersWorkingDirectoryOverOutputDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputDir := filepath.Join(tmpDir, "out")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("failed to create output dir: %v", err)
+	}
+
+	workingFile := filepath.Join(tmpDir, "sample.png")
+	outputDirFile := filepath.Join(outputDir, "sample.png")
+	if err := os.WriteFile(workingFile, []byte("working"), 0o644); err != nil {
+		t.Fatalf("failed to create working file: %v", err)
+	}
+	if err := os.WriteFile(outputDirFile, []byte("output"), 0o644); err != nil {
+		t.Fatalf("failed to create output-dir file: %v", err)
+	}
+
+	t.Chdir(tmpDir)
+
+	got := resolveInputPath("sample.png", filepath.Join(outputDir, "result.jpg"))
+	if got != workingFile {
+		t.Fatalf("expected working directory path %s, got %s", workingFile, got)
 	}
 }
