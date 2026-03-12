@@ -1,7 +1,12 @@
 import React, { forwardRef, useImperativeHandle } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildGifProcessSuffix, resolveGifAction } from './gifHelpers';
+import {
+    buildGifProcessSuffix,
+    detectAnimatedImagePath,
+    resolveConverterOverwritePath,
+    resolveGifAction,
+} from './gifHelpers';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings } from '../types/wails-api';
 
@@ -82,6 +87,43 @@ describe('buildGifProcessSuffix', () => {
 
     it('returns convert suffix', () => {
         expect(buildGifProcessSuffix('convert_animation', 100, 77, 0, 0, 'WEBP')).toBe('_to_webp');
+    });
+});
+
+describe('resolveConverterOverwritePath', () => {
+    it('在目标格式与源扩展一致时允许原位覆盖', () => {
+        expect(resolveConverterOverwritePath('C:/tmp/sample.png', 'png')).toBe('C:/tmp/sample.png');
+        expect(resolveConverterOverwritePath('C:/tmp/sample.jpg', 'jpeg')).toBe('C:/tmp/sample.jpg');
+    });
+
+    it('在目标格式与源扩展不一致时切换到同目录新扩展名', () => {
+        expect(resolveConverterOverwritePath('C:/tmp/sample.png', 'jpg')).toBe('C:/tmp/sample.jpg');
+        expect(resolveConverterOverwritePath('C:/tmp/sample.webp', 'avif')).toBe('C:/tmp/sample.avif');
+    });
+});
+
+describe('detectAnimatedImagePath', () => {
+    it('对 gif 和 apng 扩展名直接判定为动图', async () => {
+        const probe = vi.fn();
+
+        await expect(detectAnimatedImagePath('C:/tmp/a.gif', probe)).resolves.toBe(true);
+        await expect(detectAnimatedImagePath('C:/tmp/a.apng', probe)).resolves.toBe(true);
+
+        expect(probe).not.toHaveBeenCalled();
+    });
+
+    it('会探测 png 的帧数来识别 apng', async () => {
+        const probe = vi.fn().mockResolvedValue(2);
+
+        await expect(detectAnimatedImagePath('C:/tmp/a.png', probe)).resolves.toBe(true);
+        expect(probe).toHaveBeenCalledWith('C:/tmp/a.png');
+    });
+
+    it('会把单帧 webp 识别为静态图片', async () => {
+        const probe = vi.fn().mockResolvedValue(1);
+
+        await expect(detectAnimatedImagePath('C:/tmp/a.webp', probe)).resolves.toBe(false);
+        expect(probe).toHaveBeenCalledWith('C:/tmp/a.webp');
     });
 });
 

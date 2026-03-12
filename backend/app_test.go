@@ -234,6 +234,37 @@ func TestConvert_SerializesTopLevelProcessing(t *testing.T) {
 	}
 }
 
+func TestConvert_RejectsInPlaceOverwriteWhenFormatChanges(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := newFakeSerializedRunner(0)
+	app := &App{
+		logger:   logger,
+		executor: runner,
+		settings: models.AppSettings{MaxConcurrency: 1},
+	}
+	app.converterService = services.NewConverterService(runner, logger)
+
+	result, err := app.Convert(models.ConvertRequest{
+		InputPath:  "C:/tmp/source.png",
+		OutputPath: "C:/tmp/source.png",
+		Format:     "jpg",
+	})
+	if err != nil {
+		t.Fatalf("expected app.Convert to normalize service error into result, got %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected in-place format change to be rejected")
+	}
+	if !strings.Contains(result.Error, "不能直接覆盖源文件") {
+		t.Fatalf("expected readable overwrite error, got %q", result.Error)
+	}
+}
+
 type fakeCancelableRunner struct {
 	delay    time.Duration
 	cancelCh chan struct{}

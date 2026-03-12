@@ -18,6 +18,25 @@ type ConverterService struct {
 	logger   *utils.Logger
 }
 
+var conversionFormatExtensions = map[string]map[string]struct{}{
+	"jpg": {
+		"jpg":  {},
+		"jpeg": {},
+	},
+	"jpeg": {
+		"jpg":  {},
+		"jpeg": {},
+	},
+	"tif": {
+		"tif":  {},
+		"tiff": {},
+	},
+	"tiff": {
+		"tif":  {},
+		"tiff": {},
+	},
+}
+
 // NewConverterService creates a new converter service
 func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *ConverterService {
 	return &ConverterService{
@@ -29,6 +48,14 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 // Convert converts an image to a different format
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
 	req.InputPath = resolveInputPath(req.InputPath, req.OutputPath)
+	if err := validateInPlaceConversion(req.InputPath, req.OutputPath, req.Format); err != nil {
+		return models.ConvertResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	if strings.EqualFold(strings.TrimSpace(req.Format), "ico") {
 		if len(req.ICOSizes) == 0 && len(req.ICOSizesAlt) > 0 {
 			req.ICOSizes = req.ICOSizesAlt
@@ -105,6 +132,40 @@ func resolveInputPath(inputPath, outputPath string) string {
 		return abs
 	}
 	return cleaned
+}
+
+func isSameFilePath(left, right string) bool {
+	if strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+		return false
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func isTargetFormatCompatibleWithPath(formatName, path string) bool {
+	formatName = strings.ToLower(strings.TrimSpace(formatName))
+	if formatName == "" {
+		return true
+	}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	if ext == "" {
+		return false
+	}
+	allowed, ok := conversionFormatExtensions[formatName]
+	if !ok {
+		return ext == formatName
+	}
+	_, exists := allowed[ext]
+	return exists
+}
+
+func validateInPlaceConversion(inputPath, outputPath, formatName string) error {
+	if !isSameFilePath(inputPath, outputPath) {
+		return nil
+	}
+	if isTargetFormatCompatibleWithPath(formatName, inputPath) {
+		return nil
+	}
+	return fmt.Errorf("目标格式会改变文件扩展名，不能直接覆盖源文件，请另存为新文件")
 }
 
 func normalizeICOSizes(sizes []int) []int {

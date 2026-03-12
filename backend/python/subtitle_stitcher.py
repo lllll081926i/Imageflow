@@ -161,6 +161,11 @@ def handle_request(input_data):
 
             if idx == 0 and header_keep_full:
                 blocks.append(frame)
+                if dedup_enabled:
+                    header_strip_height = max(minimum_strip_height, int(round(frame.height * crop_ratio)))
+                    header_strip_height = max(1, min(frame.height, header_strip_height))
+                    header_strip = frame.crop((0, frame.height - header_strip_height, frame.width, frame.height))
+                    last_strip_hash = _dhash(header_strip)
                 continue
 
             current_strip_height = max(minimum_strip_height, int(round(frame.height * crop_ratio)))

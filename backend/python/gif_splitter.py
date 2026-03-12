@@ -814,12 +814,13 @@ def handle_request(input_data):
             return _error_response("GIF_BAD_REQUEST", "Missing input_path")
         try:
             with Image.open(input_path) as gif:
-                if gif.format != "GIF":
-                    raise ValueError("Input file is not a GIF")
+                image_format = str(gif.format or "").upper()
+                if image_format not in {"GIF", "PNG", "WEBP"}:
+                    raise ValueError("Input file is not a supported animated image")
                 return {
                     "success": True,
                     "input_path": input_path,
-                    "frame_count": tool._get_frame_count(gif),
+                    "frame_count": int(getattr(gif, "n_frames", 1) or 1),
                 }
         except Exception as exc:
             return _error_response("GIF_GET_FRAME_COUNT_FAILED", str(exc))

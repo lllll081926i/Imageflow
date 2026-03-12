@@ -81,8 +81,8 @@ class GifSplitterTests(unittest.TestCase):
         )
         return path
 
-    def _make_apng(self):
-        path = self._path("sample.apng")
+    def _make_apng(self, name="sample.apng"):
+        path = self._path(name)
         frames = [
             Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
             Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
@@ -101,8 +101,8 @@ class GifSplitterTests(unittest.TestCase):
         )
         return path
 
-    def _make_webp_animation(self):
-        path = self._path("sample.webp")
+    def _make_webp_animation(self, name="sample.webp"):
+        path = self._path(name)
         frames = [
             Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
             Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
@@ -189,6 +189,19 @@ class GifSplitterTests(unittest.TestCase):
         result = handle_request({"action": "get_frame_count", "input_path": gif_path})
         self.assertTrue(result.get("success"))
         self.assertEqual(result.get("frame_count"), 2)
+
+    def test_get_frame_count_supports_apng_with_png_extension(self):
+        apng_path = self._make_apng("sample.png")
+        result = handle_request({"action": "get_frame_count", "input_path": apng_path})
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("frame_count"), 2)
+
+    def test_get_frame_count_returns_one_for_static_webp(self):
+        static_path = self._path("still.webp")
+        Image.new("RGBA", (12, 12), (255, 0, 0, 255)).save(static_path, format="WEBP", lossless=True, method=6)
+        result = handle_request({"action": "get_frame_count", "input_path": static_path})
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("frame_count"), 1)
 
     def test_compress_gif_success(self):
         gif_path = self._make_gif()

@@ -4,7 +4,12 @@ import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
 import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone, ProgressBar } from './Controls';
-import { buildGifProcessSuffix, resolveGifAction } from './gifHelpers';
+import {
+    buildGifProcessSuffix,
+    detectAnimatedImagePath,
+    resolveConverterOverwritePath,
+    resolveGifAction,
+} from './gifHelpers';
 import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
@@ -3423,6 +3428,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                                     date: batchTime,
                                 });
                                 output_path = await resolveUniquePath(joinPath(outDir, rel));
+                            } else {
+                                const overwritePath = resolveConverterOverwritePath(input_path, format);
+                                if (normalizePath(overwritePath) !== input_path) {
+                                    output_path = await resolveUniquePath(overwritePath);
+                                }
                             }
 
                             chunk.push({
@@ -3931,13 +3941,28 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
 
-                const isAnimatedFile = (path: string) => {
-                    const ext = extname(path);
-                    return ext === 'gif' || ext === 'apng' || ext === 'webp';
+                const probeAnimatedFrameCount = async (inputPath: string) => {
+                    try {
+                        const res = await appAny.SplitGIF({
+                            action: 'get_frame_count',
+                            input_path: normalizePath(inputPath),
+                            maintain_aspect: true,
+                        });
+                        if (!res?.success) {
+                            return null;
+                        }
+                        const frameCount = Number(res.frame_count);
+                        return Number.isFinite(frameCount) ? frameCount : null;
+                    } catch {
+                        return null;
+                    }
                 };
-                const animatedFiles = files.filter(f => isAnimatedFile(f.input_path));
+                const animatedFlags = await Promise.all(
+                    files.map((file) => detectAnimatedImagePath(file.input_path, probeAnimatedFrameCount))
+                );
+                const animatedFiles = files.filter((_, index) => animatedFlags[index]);
                 const pureGifFiles = animatedFiles.filter((f) => extname(f.input_path) === 'gif');
-                const otherFiles = files.filter(f => !isAnimatedFile(f.input_path));
+                const otherFiles = files.filter((_, index) => !animatedFlags[index]);
 
                 if (gifMode === '导出') {
                     if (animatedFiles.length > 0 && otherFiles.length > 0) {

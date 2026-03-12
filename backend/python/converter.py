@@ -70,6 +70,28 @@ def _normalize_paths(input_path, output_path):
     return input_abs, output_abs or output_path
 
 
+def _format_extensions(format_type: str):
+    normalized = str(format_type or "").strip().lower()
+    groups = {
+        "jpg": {"jpg", "jpeg"},
+        "jpeg": {"jpg", "jpeg"},
+        "tif": {"tif", "tiff"},
+        "tiff": {"tif", "tiff"},
+    }
+    return groups.get(normalized, {normalized} if normalized else set())
+
+
+def _can_convert_in_place(input_path: str, output_path: str, format_type: str) -> bool:
+    if not input_path or not output_path:
+        return True
+    if os.path.abspath(input_path) != os.path.abspath(output_path):
+        return True
+    current_ext = Path(input_path).suffix.lower().lstrip(".")
+    if not current_ext:
+        return False
+    return current_ext in _format_extensions(format_type)
+
+
 class ImageConverter:
     """Handles image format conversion operations."""
     
@@ -317,6 +339,11 @@ class ImageConverter:
                 return {
                     'success': False,
                     'error': f'[UNSUPPORTED_FORMAT] Unsupported output format: {format_type}'
+                }
+            if not _can_convert_in_place(input_path, output_path, format_type):
+                return {
+                    'success': False,
+                    'error': '[BAD_INPUT] 目标格式会改变文件扩展名，不能直接覆盖源文件，请另存为新文件'
                 }
 
             total_start = time.perf_counter() if _PROFILE_ENABLED else 0.0
