@@ -58,6 +58,10 @@ export function GeneratePDF(arg1) {
   return window['go']['main']['App']['GeneratePDF'](arg1);
 }
 
+export function GenerateSubtitleLongImage(arg1) {
+  return window['go']['main']['App']['GenerateSubtitleLongImage'](arg1);
+}
+
 export function GetImagePreview(arg1) {
   return window['go']['main']['App']['GetImagePreview'](arg1);
 }

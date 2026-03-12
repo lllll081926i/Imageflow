@@ -1,5 +1,5 @@
 export namespace models {
-
+	
 	export class AdjustRequest {
 	    input_path: string;
 	    output_path: string;
@@ -15,11 +15,11 @@ export namespace models {
 	    sharpness: number;
 	    crop_ratio: string;
 	    crop_mode: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AdjustRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.input_path = source["input_path"];
@@ -43,7 +43,7 @@ export namespace models {
 	    input_path: string;
 	    output_path: string;
 	    error?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AdjustResult(source);
 	    }
@@ -573,9 +573,11 @@ export namespace models {
 	export class RecentPathsUpdateRequest {
 	    input_dir: string;
 	    output_dir: string;
+	
 	    static createFrom(source: any = {}) {
 	        return new RecentPathsUpdateRequest(source);
 	    }
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.input_dir = source["input_dir"];
@@ -611,6 +613,58 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
 	        this.output_path = source["output_path"];
+	        this.error = source["error"];
+	    }
+	}
+	export class SubtitleStitchRequest {
+	    input_paths: string[];
+	    output_path: string;
+	    subtitle_crop_ratio: number;
+	    header_keep_full: boolean;
+	    dedup_enabled: boolean;
+	    dedup_threshold: number;
+	    minimum_strip_height: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleStitchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input_paths = source["input_paths"];
+	        this.output_path = source["output_path"];
+	        this.subtitle_crop_ratio = source["subtitle_crop_ratio"];
+	        this.header_keep_full = source["header_keep_full"];
+	        this.dedup_enabled = source["dedup_enabled"];
+	        this.dedup_threshold = source["dedup_threshold"];
+	        this.minimum_strip_height = source["minimum_strip_height"];
+	    }
+	}
+	export class SubtitleStitchResult {
+	    success: boolean;
+	    output_path?: string;
+	    input_count?: number;
+	    kept_count?: number;
+	    skipped_count?: number;
+	    strip_height?: number;
+	    error_code?: string;
+	    error_detail?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubtitleStitchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.output_path = source["output_path"];
+	        this.input_count = source["input_count"];
+	        this.kept_count = source["kept_count"];
+	        this.skipped_count = source["skipped_count"];
+	        this.strip_height = source["strip_height"];
+	        this.error_code = source["error_code"];
+	        this.error_detail = source["error_detail"];
 	        this.error = source["error"];
 	    }
 	}
@@ -678,3 +732,4 @@ export namespace models {
 	}
 
 }
+

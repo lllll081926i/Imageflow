@@ -30,6 +30,8 @@ export function ExpandDroppedPaths(arg1:Array<string>):Promise<models.ExpandDrop
 
 export function GeneratePDF(arg1:models.PDFRequest):Promise<models.PDFResult>;
 
+export function GenerateSubtitleLongImage(arg1:models.SubtitleStitchRequest):Promise<models.SubtitleStitchResult>;
+
 export function GetImagePreview(arg1:models.PreviewRequest):Promise<models.PreviewResult>;
 
 export function GetInfo(arg1:models.InfoRequest):Promise<models.InfoResult>;
