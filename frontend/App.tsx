@@ -5,6 +5,7 @@ import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
 import DetailView from './components/DetailView';
 import SettingsView from './components/SettingsView';
+import SubtitleStitchPage from './components/SubtitleStitchPage';
 import { ViewState, Theme, FeatureId } from './types';
 import { FEATURES } from './constants';
 
@@ -298,12 +299,19 @@ const App: React.FC = () => {
                                 </div>
                                 {visibleFeatureViews.map((viewId) => (
                                     <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
-                                        <DetailView
-                                            id={viewId}
-                                            isActive={activeView === viewId}
-                                            onBack={handleBack}
-                                            onTaskFailure={handleTaskFailure}
-                                        />
+                                        {viewId === 'subtitle_stitch' ? (
+                                            <SubtitleStitchPage
+                                                isActive={activeView === viewId}
+                                                onTaskFailure={handleTaskFailure}
+                                            />
+                                        ) : (
+                                            <DetailView
+                                                id={viewId}
+                                                isActive={activeView === viewId}
+                                                onBack={handleBack}
+                                                onTaskFailure={handleTaskFailure}
+                                            />
+                                        )}
                                     </div>
                                 ))}
                             </div>

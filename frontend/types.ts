@@ -15,6 +15,7 @@ export type FeatureId =
     | 'compressor'
     | 'pdf'
     | 'gif'
+    | 'subtitle_stitch'
     | 'info'
     | 'watermark'
     | 'adjust'

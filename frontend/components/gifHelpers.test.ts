@@ -9,6 +9,7 @@ import {
 } from './gifHelpers';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings } from '../types/wails-api';
+import { FEATURES } from '../constants';
 
 vi.mock('../types/wails-api', () => ({
     getAppBindings: vi.fn(),
@@ -195,5 +196,15 @@ describe('useGifResizeState', () => {
             renderer?.unmount();
             await flushMicrotasks();
         });
+    });
+});
+
+describe('FEATURES', () => {
+    it('保留 GIF 工具并单独提供字幕拼接入口', () => {
+        const gifFeature = FEATURES.find((feature) => feature.id === 'gif');
+        const subtitleFeature = FEATURES.find((feature) => feature.id === 'subtitle_stitch');
+
+        expect(gifFeature?.title).toBe('GIF 工具');
+        expect(subtitleFeature?.title).toBe('字幕拼接');
     });
 });
