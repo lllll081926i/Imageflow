@@ -3,6 +3,7 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -77,6 +78,61 @@ func TestHasEmbeddedPythonRuntime(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestExtractEmbeddedPythonRuntimeFallsBackToCacheRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("embedded runtime extraction test only applies to Windows payloads")
+	}
+
+	tmpRoot := t.TempDir()
+	t.Setenv(embeddedCacheRootEnv, tmpRoot)
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("failed to resolve executable path: %v", err)
+	}
+
+	blockingPath := filepath.Join(filepath.Dir(exe), "runtime")
+	if err := os.WriteFile(blockingPath, []byte("block"), 0o644); err != nil {
+		t.Fatalf("failed to create blocking runtime path: %v", err)
+	}
+	defer os.Remove(blockingPath)
+
+	embedded := fstest.MapFS{
+		"embedded_python_runtime/python.exe":             &fstest.MapFile{Data: []byte("exe")},
+		"embedded_python_runtime/python311.dll":          &fstest.MapFile{Data: []byte("dll")},
+		"embedded_python_runtime/Lib/site.py":            &fstest.MapFile{Data: []byte("print('site')")},
+		"embedded_python_runtime/.keep":                  &fstest.MapFile{Data: []byte("")},
+		"embedded_python_runtime/Scripts/tool.exe":       &fstest.MapFile{Data: []byte("tool")},
+		"embedded_python_runtime/Lib/module/__init__.py": &fstest.MapFile{Data: []byte("value = 1")},
+	}
+
+	dest, err := ExtractEmbeddedPythonRuntime(embedded, "embedded_python_runtime")
+	if err != nil {
+		t.Fatalf("ExtractEmbeddedPythonRuntime returned error: %v", err)
+	}
+
+	expected := filepath.Join(tmpRoot, "runtime")
+	if filepath.Clean(dest) != filepath.Clean(expected) {
+		t.Fatalf("expected runtime extraction path %s, got %s", expected, dest)
+	}
+
+	for _, relative := range []string{
+		"python.exe",
+		"python311.dll",
+		"Lib/site.py",
+		"Scripts/tool.exe",
+		"Lib/module/__init__.py",
+	} {
+		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("expected extracted runtime file %s: %v", relative, err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, ".keep")); !os.IsNotExist(err) {
+		t.Fatalf("expected .keep to be skipped, got err=%v", err)
 	}
 }
 

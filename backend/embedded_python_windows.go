@@ -4,7 +4,7 @@ package main
 
 import "embed"
 
-// 仅嵌入运行必需 Python 脚本；运行时依赖由安装包和便携包落地到 runtime 目录。
-//go:embed python/*.py python/requirements.txt
+// Windows 单文件构建同时嵌入 Python 脚本和完整运行时，启动时再解压到本地目录。
+//
+//go:embed python/*.py python/requirements.txt embedded_python_runtime
 var embeddedPythonFS embed.FS
-

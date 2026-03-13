@@ -68,6 +68,16 @@
     animation: fadeScale 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   }
 
+  .animate-page-enter-forward {
+    animation: pageEnterForward 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
+  .animate-page-enter-backward {
+    animation: pageEnterBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
   @keyframes fadeIn {
     from {
       opacity: 0;
@@ -110,5 +120,38 @@
       opacity: 1;
       transform: scale(1);
     }
+  }
+
+  @keyframes pageEnterForward {
+    from {
+      opacity: 0;
+      transform: translate3d(10px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes pageEnterBackward {
+    from {
+      opacity: 0;
+      transform: translate3d(-10px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-enter,
+  .animate-enter-right,
+  .animate-enter-left,
+  .animate-fade-scale,
+  .animate-page-enter-forward,
+  .animate-page-enter-backward {
+    animation: none !important;
   }
 }

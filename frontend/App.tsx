@@ -31,6 +31,7 @@ const App: React.FC = () => {
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const closeNotificationTimerRef = useRef<number | null>(null);
     const notificationContainerRef = useRef<HTMLDivElement | null>(null);
+    const pageTransitionRef = useRef<HTMLDivElement | null>(null);
     const isSecondaryView = activeView !== 'dashboard';
     const isFeatureView = isFeatureId(activeView);
     const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
@@ -67,6 +68,15 @@ const App: React.FC = () => {
         if (!isFeatureView) return;
         setLoadedFeatureViews((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]));
     }, [activeView, isFeatureView]);
+
+    useEffect(() => {
+        const container = pageTransitionRef.current;
+        if (!container) return;
+        const enterClass = direction === 'left' ? 'animate-page-enter-backward' : 'animate-page-enter-forward';
+        container.classList.remove('animate-page-enter-forward', 'animate-page-enter-backward');
+        void container.offsetWidth;
+        container.classList.add(enterClass);
+    }, [activeView, direction]);
 
     const toggleTheme = () => {
         if (theme === 'light') {
@@ -290,7 +300,7 @@ const App: React.FC = () => {
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
                     <div className={`flex-1 overflow-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
                         <div className="max-w-full mx-auto h-full">
-                            <div className="h-full animate-fade-scale flex flex-col">
+                            <div ref={pageTransitionRef} className="h-full flex flex-col">
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
                                     <Dashboard onSelect={handleNavigate} onPreload={handlePreload} />
                                 </div>

@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -614,5 +616,14 @@ func TestUpdateRecentPaths_PersistsIncrementallyWithoutOverwritingOtherSettings(
 	}
 	if reloaded.RecentInputDirs[0] != "D:/Shots/New" {
 		t.Fatalf("expected latest recent input dir to persist, got %q", reloaded.RecentInputDirs[0])
+	}
+}
+
+func TestEmbeddedPythonRuntimeIsBundledOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("embedded runtime is only bundled on Windows builds")
+	}
+	if _, err := fs.Stat(embeddedPythonFS, "embedded_python_runtime/python.exe"); err != nil {
+		t.Fatalf("expected embedded python runtime payload, got error: %v", err)
 	}
 }

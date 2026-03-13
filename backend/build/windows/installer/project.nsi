@@ -49,6 +49,11 @@ VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 ManifestDPIAware true
 
 !include "MUI.nsh"
+!include "LogicLib.nsh"
+!include "nsDialogs.nsh"
+
+Var UninstallRemoveUserDataCheckbox
+Var UninstallRemoveUserDataState
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
@@ -62,6 +67,7 @@ ManifestDPIAware true
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
+UninstPage custom un.ConfirmRemoveUserData un.ConfirmRemoveUserDataLeave
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
 !insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
@@ -79,6 +85,31 @@ Function .onInit
    !insertmacro wails.checkArchitecture
 FunctionEnd
 
+Function un.onInit
+    StrCpy $UninstallRemoveUserDataState ${BST_CHECKED}
+FunctionEnd
+
+Function un.ConfirmRemoveUserData
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $0 == error
+        Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 0 0 100% 24u "Choose whether to remove user settings and caches when uninstalling ${INFO_PRODUCTNAME}."
+    Pop $0
+
+    ${NSD_CreateCheckbox} 0 34u 100% 12u "Remove user settings and caches"
+    Pop $UninstallRemoveUserDataCheckbox
+    ${NSD_Check} $UninstallRemoveUserDataCheckbox
+
+    nsDialogs::Show
+FunctionEnd
+
+Function un.ConfirmRemoveUserDataLeave
+    ${NSD_GetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserDataState
+FunctionEnd
+
 Section
     !insertmacro wails.setShellContext
 
@@ -87,11 +118,6 @@ Section
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
-
-    # Install Python runtime to $INSTDIR\runtime
-    # Source directory: backend/embedded_python_runtime (relative: ..\..\..)
-    SetOutPath "$INSTDIR\runtime"
-    File /r "..\..\..\embedded_python_runtime\*"
 
     SetOutPath $INSTDIR
 
@@ -107,9 +133,14 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+    ${If} $UninstallRemoveUserDataState == ${BST_CHECKED}
+        RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+        RMDir /r "$AppData\imageflow"
+        RMDir /r "$AppData\ImageFlow"
+        RMDir /r "$LocalAppData\imageflow"
+        RMDir /r "$LocalAppData\ImageFlow"
+    ${EndIf}
 
-    RMDir /r "$INSTDIR\runtime"
     RMDir /r $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
