@@ -1235,6 +1235,24 @@ const InfoSettings = memo(({
     const [editingKey, setEditingKey] = useState<string | null>(null);
     const [editingValue, setEditingValue] = useState('');
 
+    const buildRowsFromFields = (fields?: any[]) => {
+        if (!Array.isArray(fields)) return [];
+        return fields
+            .map((field) => {
+                const source = typeof field?.source === 'string' ? field.source : '';
+                const rawLabel = typeof field?.label === 'string' ? field.label : '';
+                const displayLabel = source === 'container' ? rawLabel : translateMetaLabel(rawLabel);
+                return {
+                    rawKey: typeof field?.key === 'string' ? field.key : rawLabel,
+                    label: displayLabel || rawLabel || String(field?.key || ''),
+                    value: String(field?.value ?? ''),
+                    editKey: source === 'piexif' ? rawLabel : '',
+                    editable: Boolean(field?.editable) && source === 'piexif' && !rawLabel.toLowerCase().includes('thumbnail'),
+                };
+            })
+            .filter((row) => row.value !== '' && row.value !== 'undefined' && row.value !== 'null');
+    };
+
     const buildRowsFromMap = (data?: Record<string, any>, editableKeys?: Set<string>) => {
         if (!data) return [];
         return Object.keys(data)
@@ -1357,11 +1375,15 @@ const InfoSettings = memo(({
 
         return { ...basic, ...merged };
     };
-    const flatMeta = buildFlatMetadata();
-    let rows = buildRowsFromMap(flatMeta, editableKeys);
+    const structuredRows = buildRowsFromFields(info?.fields);
+    const flatMeta = structuredRows.length === 0 ? buildFlatMetadata() : null;
+    let rows = structuredRows.length > 0 ? structuredRows : buildRowsFromMap(flatMeta || {}, editableKeys);
     if (!info?.success && info?.error) {
         rows = [{ rawKey: '错误', label: '错误', value: String(info.error), editKey: '', editable: false }];
     }
+    const warnings = Array.isArray(info?.warnings)
+        ? info.warnings.filter((item) => item && (item.message || item.code))
+        : [];
 
     const name = filePath ? filePath.replace(/\\/g, '/').split('/').pop() || filePath : '';
     const isEmpty = rows.length === 0;
@@ -1388,6 +1410,20 @@ const InfoSettings = memo(({
                 <span>全部元数据</span>
                 <span className="text-xs text-gray-400 font-normal">{name || '-'}</span>
             </div>
+            {warnings.length > 0 && (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                    {warnings.map((item: any, index: number) => {
+                        const code = typeof item?.code === 'string' ? item.code.trim() : '';
+                        const message = typeof item?.message === 'string' ? item.message.trim() : '';
+                        const text = [code, message].filter(Boolean).join('：');
+                        return (
+                            <div key={`${code || 'warning'}-${index}`} className={index > 0 ? 'mt-1' : ''}>
+                                {text || '读取过程中出现告警'}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
             <div className="bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 overflow-hidden text-sm flex-1 overflow-y-auto no-scrollbar">
                 {isEmpty ? (
                     <div className="p-4 text-xs text-gray-500 dark:text-gray-400">
@@ -3164,7 +3200,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     setPreviewLoadError('');
                 } else {
                     setPreviewDataUrl('');
-                    const msg = typeof res?.error === 'string' && res.error.trim() ? res.error.trim() : '预览加载失败';
+                    const rawError = typeof res?.error === 'string' ? res.error.trim() : '';
+                    const msg = rawError === 'PREVIEW_SKIPPED'
+                        ? '当前文件暂不支持预览'
+                        : (rawError || '预览加载失败');
                     setPreviewLoadError(msg);
                 }
             } catch (err) {

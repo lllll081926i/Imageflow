@@ -374,6 +374,90 @@ export namespace models {
 	        this.error = source["error"];
 	    }
 	}
+	export class InfoBasic {
+	    path?: string;
+	    file_name?: string;
+	    extension?: string;
+	    format?: string;
+	    mime_type?: string;
+	    mode?: string;
+	    width?: number;
+	    height?: number;
+	    bit_depth?: number;
+	    file_size?: number;
+	    modified?: number;
+	    orientation?: string;
+	    has_alpha?: boolean;
+	    is_animated?: boolean;
+	    frame_count?: number;
+	    duration_ms?: number;
+	    loop_count?: number;
+	    dpi_x?: number;
+	    dpi_y?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new InfoBasic(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.file_name = source["file_name"];
+	        this.extension = source["extension"];
+	        this.format = source["format"];
+	        this.mime_type = source["mime_type"];
+	        this.mode = source["mode"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.bit_depth = source["bit_depth"];
+	        this.file_size = source["file_size"];
+	        this.modified = source["modified"];
+	        this.orientation = source["orientation"];
+	        this.has_alpha = source["has_alpha"];
+	        this.is_animated = source["is_animated"];
+	        this.frame_count = source["frame_count"];
+	        this.duration_ms = source["duration_ms"];
+	        this.loop_count = source["loop_count"];
+	        this.dpi_x = source["dpi_x"];
+	        this.dpi_y = source["dpi_y"];
+	    }
+	}
+	export class InfoField {
+	    key: string;
+	    label: string;
+	    value: string;
+	    group?: string;
+	    source?: string;
+	    editable?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new InfoField(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.value = source["value"];
+	        this.group = source["group"];
+	        this.source = source["source"];
+	        this.editable = source["editable"];
+	    }
+	}
+	export class InfoWarning {
+	    code?: string;
+	    message?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InfoWarning(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.message = source["message"];
+	    }
+	}
 	export class InfoRequest {
 	    input_path: string;
 	
@@ -399,6 +483,10 @@ export namespace models {
 	    modified?: number;
 	    exif?: Record<string, string>;
 	    metadata?: Record<string, any>;
+	    basic?: InfoBasic;
+	    format_details?: Record<string, string>;
+	    fields?: InfoField[];
+	    warnings?: InfoWarning[];
 	    histogram?: Record<string, Array<number>>;
 	    error?: string;
 	
@@ -420,9 +508,31 @@ export namespace models {
 	        this.modified = source["modified"];
 	        this.exif = source["exif"];
 	        this.metadata = source["metadata"];
+	        this.basic = this.convertValues(source["basic"], InfoBasic);
+	        this.format_details = source["format_details"];
+	        this.fields = this.convertValues(source["fields"], InfoField);
+	        this.warnings = this.convertValues(source["warnings"], InfoWarning);
 	        this.histogram = source["histogram"];
 	        this.error = source["error"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class MetadataEditRequest {
 	    input_path: string;
@@ -732,4 +842,3 @@ export namespace models {
 	}
 
 }
-
