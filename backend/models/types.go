@@ -144,6 +144,42 @@ type InfoRequest struct {
 	InputPath string `json:"input_path"`
 }
 
+type InfoBasic struct {
+	Path       string  `json:"path,omitempty"`
+	FileName   string  `json:"file_name,omitempty"`
+	Extension  string  `json:"extension,omitempty"`
+	Format     string  `json:"format,omitempty"`
+	MimeType   string  `json:"mime_type,omitempty"`
+	Mode       string  `json:"mode,omitempty"`
+	Width      int     `json:"width,omitempty"`
+	Height     int     `json:"height,omitempty"`
+	BitDepth   int     `json:"bit_depth,omitempty"`
+	FileSize   int64   `json:"file_size,omitempty"`
+	Modified   int64   `json:"modified,omitempty"`
+	Orientation string `json:"orientation,omitempty"`
+	HasAlpha   bool    `json:"has_alpha,omitempty"`
+	IsAnimated bool    `json:"is_animated,omitempty"`
+	FrameCount int     `json:"frame_count,omitempty"`
+	DurationMS int     `json:"duration_ms,omitempty"`
+	LoopCount  int     `json:"loop_count,omitempty"`
+	DPIX       float64 `json:"dpi_x,omitempty"`
+	DPIY       float64 `json:"dpi_y,omitempty"`
+}
+
+type InfoField struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Value    string `json:"value"`
+	Group    string `json:"group,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Editable bool   `json:"editable,omitempty"`
+}
+
+type InfoWarning struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 // InfoResult represents image information
 type InfoResult struct {
 	Success   bool                         `json:"success"`
@@ -158,6 +194,10 @@ type InfoResult struct {
 	Modified  int64                        `json:"modified,omitempty"`
 	EXIF      map[string]string            `json:"exif,omitempty"`
 	Metadata  map[string]map[string]string `json:"metadata,omitempty"`
+	Basic     *InfoBasic                   `json:"basic,omitempty"`
+	FormatDetails map[string]string        `json:"format_details,omitempty"`
+	Fields    []InfoField                  `json:"fields,omitempty"`
+	Warnings  []InfoWarning                `json:"warnings,omitempty"`
 	Histogram map[string][]int             `json:"histogram,omitempty"`
 	Error     string                       `json:"error,omitempty"`
 }

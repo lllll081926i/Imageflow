@@ -41,6 +41,20 @@ func TestDetectPreviewMimeType_Fallback(t *testing.T) {
 	}
 }
 
+func TestDetectPreviewMimeType_HEICAndHEIFFallback(t *testing.T) {
+	data := []byte{0x00, 0x01, 0x02}
+
+	heic := detectPreviewMimeType(data, "sample.heic")
+	if heic != "image/heic" {
+		t.Fatalf("expected image/heic, got %s", heic)
+	}
+
+	heif := detectPreviewMimeType(data, "sample.heif")
+	if heif != "image/heif" {
+		t.Fatalf("expected image/heif, got %s", heif)
+	}
+}
+
 func TestBuildDataURL(t *testing.T) {
 	data := []byte("abc")
 	got := buildDataURL(data, "image/png")
@@ -53,6 +67,37 @@ func TestGetPreviewCacheCap_Default(t *testing.T) {
 	t.Setenv("IMAGEFLOW_PREVIEW_CACHE_ENTRIES", "")
 	if got := getPreviewCacheCap(); got != defaultPreviewCacheCap {
 		t.Fatalf("expected default cache cap %d, got %d", defaultPreviewCacheCap, got)
+	}
+}
+
+func TestPreviewCache_EvictsWhenTotalByteBudgetExceeded(t *testing.T) {
+	t.Setenv("IMAGEFLOW_PREVIEW_CACHE_MAX_BYTES", "100")
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "sample.png")
+	if err := os.WriteFile(path, []byte("png"), 0o644); err != nil {
+		t.Fatalf("failed to write sample file: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat sample file: %v", err)
+	}
+
+	app := &App{}
+	app.setPreviewCacheEntry("a", info, strings.Repeat("a", 70))
+	if len(app.previewCache) != 1 {
+		t.Fatalf("expected first cache entry to be stored, got %d", len(app.previewCache))
+	}
+
+	app.setPreviewCacheEntry("b", info, strings.Repeat("b", 70))
+	if len(app.previewCache) != 1 {
+		t.Fatalf("expected cache to evict oldest entry when byte budget exceeded, got %d entries", len(app.previewCache))
+	}
+	if _, ok := app.previewCache["a"]; ok {
+		t.Fatalf("expected oldest cache entry to be evicted")
+	}
+	if _, ok := app.previewCache["b"]; !ok {
+		t.Fatalf("expected newest cache entry to be retained")
 	}
 }
 
@@ -72,6 +117,128 @@ func TestGetImagePreview_EmptyInputUsesReadableChinese(t *testing.T) {
 	}
 	if result.Error != "输入路径为空" {
 		t.Fatalf("expected readable chinese error, got %q", result.Error)
+	}
+}
+
+func TestGetImagePreview_RejectsNonImageFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "notes.txt")
+	if err := os.WriteFile(path, []byte("plain text"), 0o644); err != nil {
+		t.Fatalf("failed to write sample text file: %v", err)
+	}
+
+	app := &App{}
+	result, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
+	if err == nil {
+		t.Fatalf("expected preview request to reject non-image file")
+	}
+	if result.Success {
+		t.Fatalf("expected preview result to fail for non-image file")
+	}
+	if !strings.Contains(result.Error, "不支持预览") {
+		t.Fatalf("expected readable unsupported preview error, got %q", result.Error)
+	}
+}
+
+func TestGetImagePreview_RejectsSpoofedImageExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "fake.png")
+	if err := os.WriteFile(path, []byte("this is not a real png"), 0o644); err != nil {
+		t.Fatalf("failed to write spoofed image file: %v", err)
+	}
+
+	app := &App{}
+	result, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
+	if err == nil {
+		t.Fatalf("expected preview request to reject spoofed image file")
+	}
+	if result.Success {
+		t.Fatalf("expected preview result to fail for spoofed image file")
+	}
+	if !strings.Contains(result.Error, "不支持预览") {
+		t.Fatalf("expected readable unsupported preview error, got %q", result.Error)
+	}
+}
+
+type fakePreviewConversionRunner struct {
+	convertCalls int32
+}
+
+func (r *fakePreviewConversionRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakePreviewConversionRunner) StartWorker() error { return nil }
+
+func (r *fakePreviewConversionRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakePreviewConversionRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	if scriptName != "converter.py" {
+		return errors.New("unexpected script name")
+	}
+
+	req, ok := input.(models.ConvertRequest)
+	if !ok {
+		return errors.New("unexpected convert request payload")
+	}
+	if err := os.WriteFile(req.OutputPath, []byte{
+		0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00,
+	}, 0o644); err != nil {
+		return err
+	}
+	atomic.AddInt32(&r.convertCalls, 1)
+
+	out, ok := result.(*models.ConvertResult)
+	if !ok {
+		return errors.New("unexpected convert result type")
+	}
+	*out = models.ConvertResult{
+		Success:    true,
+		InputPath:  req.InputPath,
+		OutputPath: req.OutputPath,
+	}
+	return nil
+}
+
+func (r *fakePreviewConversionRunner) CancelActiveTask() {}
+
+func (r *fakePreviewConversionRunner) StopWorker() {}
+
+func TestGetImagePreview_ConvertsSmallHEICToJPEGPreview(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "sample.heic")
+	if err := os.WriteFile(path, []byte{
+		0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c', 0x00, 0x00, 0x00, 0x00,
+	}, 0o644); err != nil {
+		t.Fatalf("failed to write sample heic file: %v", err)
+	}
+
+	runner := &fakePreviewConversionRunner{}
+	app := &App{
+		logger:   logger,
+		executor: runner,
+		settings: models.AppSettings{MaxConcurrency: 1},
+	}
+	app.converterService = services.NewConverterService(runner, logger)
+
+	result, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
+	if err != nil {
+		t.Fatalf("expected preview generation to succeed, got %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected preview generation to succeed, got %+v", result)
+	}
+	if !strings.HasPrefix(result.DataURL, "data:image/jpeg;base64,") {
+		t.Fatalf("expected HEIC preview to be converted to JPEG data url, got %q", result.DataURL)
+	}
+	if atomic.LoadInt32(&runner.convertCalls) != 1 {
+		t.Fatalf("expected converter to be used once, got %d", runner.convertCalls)
 	}
 }
 
@@ -137,6 +304,49 @@ func TestGetImagePreview_CacheHitAndInvalidation(t *testing.T) {
 	}
 }
 
+func TestGetImagePreview_CacheHitSkipsHeaderRead(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "sample.png")
+	if err := os.WriteFile(path, []byte{
+		0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03,
+	}, 0o644); err != nil {
+		t.Fatalf("failed to write sample png file: %v", err)
+	}
+
+	originalReadPreviewHeaderFn := readPreviewHeaderFn
+	var headerReads int32
+	readPreviewHeaderFn = func(inputPath string) (string, error) {
+		atomic.AddInt32(&headerReads, 1)
+		return originalReadPreviewHeaderFn(inputPath)
+	}
+	defer func() {
+		readPreviewHeaderFn = originalReadPreviewHeaderFn
+	}()
+
+	app := &App{}
+	first, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
+	if err != nil {
+		t.Fatalf("first preview failed: %v", err)
+	}
+	if !first.Success || first.DataURL == "" {
+		t.Fatalf("expected first preview to succeed")
+	}
+	if got := atomic.LoadInt32(&headerReads); got != 1 {
+		t.Fatalf("expected first preview to read header once, got %d", got)
+	}
+
+	second, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
+	if err != nil {
+		t.Fatalf("second preview failed: %v", err)
+	}
+	if !second.Success || second.DataURL == "" {
+		t.Fatalf("expected second preview to succeed")
+	}
+	if got := atomic.LoadInt32(&headerReads); got != 1 {
+		t.Fatalf("expected cached preview to skip header reread, got %d reads", got)
+	}
+}
+
 type fakeSerializedRunner struct {
 	delay      time.Duration
 	running    int32
@@ -187,7 +397,7 @@ func (r *fakeSerializedRunner) CancelActiveTask() {}
 
 func (r *fakeSerializedRunner) StopWorker() {}
 
-func TestConvert_SerializesTopLevelProcessing(t *testing.T) {
+func TestConvert_AllowsConcurrentTopLevelProcessing(t *testing.T) {
 	logger, err := utils.NewLogger(utils.ErrorLevel, false)
 	if err != nil {
 		t.Fatalf("failed to create logger: %v", err)
@@ -231,8 +441,8 @@ func TestConvert_SerializesTopLevelProcessing(t *testing.T) {
 		}
 	}
 
-	if got := atomic.LoadInt32(&runner.maxRunning); got != 1 {
-		t.Fatalf("expected top-level processing to be serialized, max concurrent executions = %d", got)
+	if got := atomic.LoadInt32(&runner.maxRunning); got < 2 {
+		t.Fatalf("expected top-level processing to allow concurrency, max concurrent executions = %d", got)
 	}
 }
 
@@ -355,6 +565,235 @@ func (r *fakeCancelableRunner) CancelActiveTask() {
 }
 
 func (r *fakeCancelableRunner) StopWorker() {}
+
+type fakeIdleCancelRunner struct {
+	mu          sync.Mutex
+	delay       time.Duration
+	active      bool
+	cancelCh    chan struct{}
+	staleCancel bool
+	startedCh   chan struct{}
+}
+
+func newFakeIdleCancelRunner(delay time.Duration) *fakeIdleCancelRunner {
+	return &fakeIdleCancelRunner{
+		delay:     delay,
+		startedCh: make(chan struct{}, 1),
+	}
+}
+
+func (r *fakeIdleCancelRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakeIdleCancelRunner) StartWorker() error { return nil }
+
+func (r *fakeIdleCancelRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakeIdleCancelRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	r.mu.Lock()
+	if r.staleCancel {
+		r.staleCancel = false
+		r.mu.Unlock()
+		return errors.New(cancelledErrorMessage)
+	}
+	cancelCh := make(chan struct{})
+	r.cancelCh = cancelCh
+	r.active = true
+	r.mu.Unlock()
+
+	select {
+	case r.startedCh <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-time.After(r.delay):
+	case <-cancelCh:
+		r.mu.Lock()
+		r.active = false
+		r.cancelCh = nil
+		r.mu.Unlock()
+		return errors.New(cancelledErrorMessage)
+	}
+
+	r.mu.Lock()
+	r.active = false
+	r.cancelCh = nil
+	r.mu.Unlock()
+
+	out, ok := result.(*models.ConvertResult)
+	if !ok {
+		return errors.New("unexpected convert result type")
+	}
+	req, ok := input.(models.ConvertRequest)
+	if !ok {
+		return errors.New("unexpected convert request payload")
+	}
+	*out = models.ConvertResult{
+		Success:    true,
+		InputPath:  req.InputPath,
+		OutputPath: req.OutputPath,
+	}
+	return nil
+}
+
+func (r *fakeIdleCancelRunner) CancelActiveTask() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active && r.cancelCh != nil {
+		close(r.cancelCh)
+		return
+	}
+	r.staleCancel = true
+}
+
+func (r *fakeIdleCancelRunner) StopWorker() {}
+
+type fakeSaveSettingsRunner struct {
+	delay              time.Duration
+	allowFinish        chan struct{}
+	startedCh          chan struct{}
+	mu                 sync.Mutex
+	active             bool
+	stopCount          int
+	stoppedWhileActive bool
+}
+
+func newFakeSaveSettingsRunner(delay time.Duration) *fakeSaveSettingsRunner {
+	return &fakeSaveSettingsRunner{
+		delay:       delay,
+		allowFinish: make(chan struct{}),
+		startedCh:   make(chan struct{}, 1),
+	}
+}
+
+func (r *fakeSaveSettingsRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakeSaveSettingsRunner) StartWorker() error { return nil }
+
+func (r *fakeSaveSettingsRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakeSaveSettingsRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	r.mu.Lock()
+	r.active = true
+	r.mu.Unlock()
+
+	select {
+	case r.startedCh <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-r.allowFinish:
+	case <-time.After(r.delay):
+	}
+
+	r.mu.Lock()
+	r.active = false
+	r.mu.Unlock()
+
+	out, ok := result.(*models.ConvertResult)
+	if !ok {
+		return errors.New("unexpected convert result type")
+	}
+	req, ok := input.(models.ConvertRequest)
+	if !ok {
+		return errors.New("unexpected convert request payload")
+	}
+	*out = models.ConvertResult{
+		Success:    true,
+		InputPath:  req.InputPath,
+		OutputPath: req.OutputPath,
+	}
+	return nil
+}
+
+func (r *fakeSaveSettingsRunner) CancelActiveTask() {}
+
+func (r *fakeSaveSettingsRunner) StopWorker() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopCount++
+	if r.active {
+		r.stoppedWhileActive = true
+	}
+}
+
+func (r *fakeSaveSettingsRunner) snapshot() (stopCount int, stoppedWhileActive bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopCount, r.stoppedWhileActive
+}
+
+type fakeMetadataRunner struct {
+	scriptName string
+	payload    map[string]interface{}
+	result     models.MetadataStripResult
+	err        error
+}
+
+func (r *fakeMetadataRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakeMetadataRunner) StartWorker() error { return nil }
+
+func (r *fakeMetadataRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakeMetadataRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	r.scriptName = scriptName
+	payload, ok := input.(map[string]interface{})
+	if !ok {
+		return errors.New("unexpected metadata input payload")
+	}
+	r.payload = payload
+	if r.err != nil {
+		return r.err
+	}
+
+	out, ok := result.(*models.MetadataStripResult)
+	if !ok {
+		return errors.New("unexpected metadata result type")
+	}
+	*out = r.result
+	return nil
+}
+
+func (r *fakeMetadataRunner) CancelActiveTask() {}
+
+func (r *fakeMetadataRunner) StopWorker() {}
+
+type fakeInfoRunner struct {
+	result models.InfoResult
+	err    error
+}
+
+func (r *fakeInfoRunner) SetTimeout(timeout time.Duration) {}
+
+func (r *fakeInfoRunner) StartWorker() error { return nil }
+
+func (r *fakeInfoRunner) Execute(scriptName string, input interface{}) ([]byte, error) {
+	return nil, errors.New("not implemented in fake runner")
+}
+
+func (r *fakeInfoRunner) ExecuteAndParse(scriptName string, input interface{}, result interface{}) error {
+	if r.err != nil {
+		return r.err
+	}
+	out, ok := result.(*models.InfoResult)
+	if !ok {
+		return errors.New("unexpected info result type")
+	}
+	*out = r.result
+	return nil
+}
+
+func (r *fakeInfoRunner) CancelActiveTask() {}
+
+func (r *fakeInfoRunner) StopWorker() {}
 
 func setupCancelableApp(t *testing.T) *App {
 	t.Helper()
@@ -487,6 +926,320 @@ func TestApplyFilterBatch_RespectsCancellation(t *testing.T) {
 		t.Fatalf("expected %d results, got %d", len(requests), len(results))
 	}
 	assertContainsCancelledResult(t, results)
+}
+
+func TestCancelProcessing_DoesNotCancelFutureWorkOnIdleRunner(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := newFakeIdleCancelRunner(30 * time.Millisecond)
+	app := &App{
+		logger:   logger,
+		executor: runner,
+		settings: models.AppSettings{MaxConcurrency: 1},
+	}
+	app.converterService = services.NewConverterService(runner, logger)
+
+	if !app.CancelProcessing() {
+		t.Fatalf("expected cancel request to return true")
+	}
+
+	result, err := app.Convert(models.ConvertRequest{
+		InputPath:  "future.jpg",
+		OutputPath: "future.png",
+		Format:     "png",
+	})
+	if err != nil {
+		t.Fatalf("expected future convert request to complete, got %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected future convert request to succeed, got %+v", result)
+	}
+	if result.Error != "" {
+		t.Fatalf("expected no cancellation error for future request, got %q", result.Error)
+	}
+}
+
+func TestSaveSettings_DefersStoppingOldRunnerUntilActiveWorkFinishes(t *testing.T) {
+	tmpConfig := t.TempDir()
+	t.Setenv("APPDATA", tmpConfig)
+
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	oldRunner := newFakeSaveSettingsRunner(2 * time.Second)
+	newRunner := newFakeSaveSettingsRunner(0)
+	app := &App{
+		logger:     logger,
+		scriptsDir: t.TempDir(),
+		executor:   oldRunner,
+		settings: models.AppSettings{
+			MaxConcurrency:   1,
+			OutputPrefix:     "OLD",
+			OutputTemplate:   "{basename}",
+			ConflictStrategy: "rename",
+		},
+	}
+	app.converterService = services.NewConverterService(oldRunner, logger)
+
+	if _, err := saveAppSettings(app.settings); err != nil {
+		t.Fatalf("failed to seed settings: %v", err)
+	}
+
+	previousBuilder := buildRunnerForSettingsFn
+	buildRunnerForSettingsFn = func(_ string, _ *utils.Logger, settings models.AppSettings) (utils.PythonRunner, error) {
+		if settings.MaxConcurrency != 2 {
+			t.Fatalf("expected rebuild with max concurrency 2, got %d", settings.MaxConcurrency)
+		}
+		return newRunner, nil
+	}
+	defer func() {
+		buildRunnerForSettingsFn = previousBuilder
+	}()
+
+	convertDone := make(chan error, 1)
+	go func() {
+		_, convertErr := app.Convert(models.ConvertRequest{
+			InputPath:  "busy.jpg",
+			OutputPath: "busy.png",
+			Format:     "png",
+		})
+		convertDone <- convertErr
+	}()
+
+	select {
+	case <-oldRunner.startedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for convert to start on old runner")
+	}
+
+	next := app.settings
+	next.MaxConcurrency = 2
+	if _, err := app.SaveSettings(next); err != nil {
+		t.Fatalf("expected SaveSettings to succeed, got %v", err)
+	}
+
+	if stopCount, stoppedWhileActive := oldRunner.snapshot(); stopCount != 0 || stoppedWhileActive {
+		t.Fatalf("expected old runner to remain alive during active request, stopCount=%d stoppedWhileActive=%v", stopCount, stoppedWhileActive)
+	}
+
+	close(oldRunner.allowFinish)
+	select {
+	case err := <-convertDone:
+		if err != nil {
+			t.Fatalf("expected convert to finish cleanly, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for convert to finish")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if stopCount, stoppedWhileActive := oldRunner.snapshot(); stopCount == 1 && !stoppedWhileActive {
+			break
+		}
+		if time.Now().After(deadline) {
+			stopCount, stoppedWhileActive := oldRunner.snapshot()
+			t.Fatalf("expected old runner to stop after active request completed, stopCount=%d stoppedWhileActive=%v", stopCount, stoppedWhileActive)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStripMetadata_ForwardsRequestToMetadataTool(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := &fakeMetadataRunner{
+		result: models.MetadataStripResult{
+			Success:    true,
+			InputPath:  "C:/tmp/source.jpg",
+			OutputPath: "C:/tmp/output.jpg",
+		},
+	}
+	app := &App{
+		logger:   logger,
+		executor: runner,
+	}
+	app.metadataService = services.NewMetadataService(runner, logger)
+
+	req := models.MetadataStripRequest{
+		InputPath:  "C:/tmp/source.jpg",
+		OutputPath: "C:/tmp/output.jpg",
+		Overwrite:  false,
+	}
+	result, err := app.StripMetadata(req)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected successful strip result, got %+v", result)
+	}
+	if runner.scriptName != "metadata_tool.py" {
+		t.Fatalf("expected metadata tool script, got %q", runner.scriptName)
+	}
+	if got := runner.payload["action"]; got != "strip_metadata" {
+		t.Fatalf("expected action strip_metadata, got %#v", got)
+	}
+	if got := runner.payload["input_path"]; got != req.InputPath {
+		t.Fatalf("expected input path %q, got %#v", req.InputPath, got)
+	}
+	if got := runner.payload["output_path"]; got != req.OutputPath {
+		t.Fatalf("expected output path %q, got %#v", req.OutputPath, got)
+	}
+	if got := runner.payload["overwrite"]; got != req.Overwrite {
+		t.Fatalf("expected overwrite %v, got %#v", req.Overwrite, got)
+	}
+}
+
+func TestGetInfo_PreservesStructuredImageData(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := &fakeInfoRunner{
+		result: models.InfoResult{
+			Success:   true,
+			InputPath: "C:/tmp/sample.png",
+			FileName:  "sample.png",
+			Format:    "PNG",
+			Mode:      "RGBA",
+			Width:     120,
+			Height:    80,
+			BitDepth:  32,
+			FileSize:  4096,
+			Basic: &models.InfoBasic{
+				Path:       "C:/tmp/sample.png",
+				Format:     "PNG",
+				Width:      120,
+				Height:     80,
+				HasAlpha:   true,
+				IsAnimated: false,
+			},
+			FormatDetails: map[string]string{
+				"png.color_type": "RGBA",
+			},
+			Fields: []models.InfoField{
+				{Key: "basic.format", Label: "格式", Value: "PNG", Group: "basic", Source: "container", Editable: false},
+				{Key: "png.text.Author", Label: "作者", Value: "UnitTest", Group: "png_text", Source: "png_text", Editable: false},
+			},
+			Warnings: []models.InfoWarning{
+				{Code: "LIMITED_METADATA", Message: "未检测到 EXIF"},
+			},
+		},
+	}
+
+	app := &App{
+		logger:   logger,
+		executor: runner,
+	}
+	app.infoViewerService = services.NewInfoViewerService(runner, logger)
+
+	result, err := app.GetInfo(models.InfoRequest{InputPath: "C:/tmp/sample.png"})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected info result to succeed, got %+v", result)
+	}
+	if result.Basic == nil || result.Basic.Format != "PNG" {
+		t.Fatalf("expected structured basic info to be preserved, got %+v", result.Basic)
+	}
+	if result.FormatDetails["png.color_type"] != "RGBA" {
+		t.Fatalf("expected format details to be preserved, got %+v", result.FormatDetails)
+	}
+	if len(result.Fields) != 2 || result.Fields[1].Source != "png_text" {
+		t.Fatalf("expected structured field list to be preserved, got %+v", result.Fields)
+	}
+	if len(result.Warnings) != 1 || result.Warnings[0].Code != "LIMITED_METADATA" {
+		t.Fatalf("expected warnings to be preserved, got %+v", result.Warnings)
+	}
+}
+
+func TestStripMetadata_PreservesToolFailureMessage(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := &fakeMetadataRunner{
+		result: models.MetadataStripResult{
+			Success: false,
+			Error:   "[BAD_INPUT] missing output_path",
+		},
+	}
+	app := &App{
+		logger:   logger,
+		executor: runner,
+	}
+	app.metadataService = services.NewMetadataService(runner, logger)
+
+	req := models.MetadataStripRequest{
+		InputPath:  "C:/tmp/source.jpg",
+		OutputPath: "",
+		Overwrite:  false,
+	}
+	result, err := app.StripMetadata(req)
+	if err != nil {
+		t.Fatalf("expected app.StripMetadata to normalize service error into result, got %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected strip metadata to fail")
+	}
+	if result.Error != "[BAD_INPUT] missing output_path" {
+		t.Fatalf("expected tool failure detail to be preserved, got %q", result.Error)
+	}
+}
+
+func TestStripMetadata_NormalizesExecutorErrorAndPreservesRequestPaths(t *testing.T) {
+	logger, err := utils.NewLogger(utils.ErrorLevel, false)
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer logger.Close()
+
+	runner := &fakeMetadataRunner{
+		err: errors.New("python worker crashed"),
+	}
+	app := &App{
+		logger:   logger,
+		executor: runner,
+	}
+	app.metadataService = services.NewMetadataService(runner, logger)
+
+	req := models.MetadataStripRequest{
+		InputPath:  "C:/tmp/source.jpg",
+		OutputPath: "C:/tmp/output.jpg",
+		Overwrite:  false,
+	}
+	result, err := app.StripMetadata(req)
+	if err != nil {
+		t.Fatalf("expected app.StripMetadata to normalize service error into result, got %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected strip metadata to fail")
+	}
+	if result.InputPath != req.InputPath {
+		t.Fatalf("expected input path %q, got %q", req.InputPath, result.InputPath)
+	}
+	if result.OutputPath != req.OutputPath {
+		t.Fatalf("expected output path %q, got %q", req.OutputPath, result.OutputPath)
+	}
+	if result.Error != "python worker crashed" {
+		t.Fatalf("expected executor error to be preserved, got %q", result.Error)
+	}
 }
 
 func TestSaveSettings_DoesNotPersistWhenRunnerRebuildFails(t *testing.T) {
