@@ -24,10 +24,25 @@ func NewAdjusterService(executor utils.PythonRunner, logger *utils.Logger) *Adju
 
 // Adjust applies adjustments to an image
 func (s *AdjusterService) Adjust(req models.AdjustRequest) (models.AdjustResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.AdjustResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.AdjustResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if err := rejectGIFPath(req.InputPath); err != nil {
+		return models.AdjustResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	s.logger.Info("Adjusting image: %s -> %s", req.InputPath, req.OutputPath)
 
 	var result models.AdjustResult
-	err := s.executor.ExecuteAndParse("adjuster.py", req, &result)
+	err = s.executor.ExecuteAndParse("adjuster.py", req, &result)
 	if err != nil {
 		s.logger.Error("Image adjustment failed: %v", err)
 		return models.AdjustResult{Success: false, Error: err.Error()}, err

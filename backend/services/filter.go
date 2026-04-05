@@ -24,6 +24,21 @@ func NewFilterService(executor utils.PythonRunner, logger *utils.Logger) *Filter
 
 // ApplyFilter applies a filter to an image
 func (s *FilterService) ApplyFilter(req models.FilterRequest) (models.FilterResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.FilterResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.FilterResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if err := rejectGIFPath(req.InputPath); err != nil {
+		return models.FilterResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	s.logger.Info("Applying filter to image: %s -> %s (filter: %s)", req.InputPath, req.OutputPath, req.FilterType)
 
 	payload := map[string]interface{}{
@@ -36,7 +51,7 @@ func (s *FilterService) ApplyFilter(req models.FilterRequest) (models.FilterResu
 	}
 
 	var result models.FilterResult
-	err := s.executor.ExecuteAndParse("filter.py", payload, &result)
+	err = s.executor.ExecuteAndParse("filter.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Filter application failed: %v", err)
 		return models.FilterResult{Success: false, Error: err.Error()}, err

@@ -3,6 +3,7 @@ package utils
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,41 @@ func TestResolveOutputPath_NoExt(t *testing.T) {
 	want := filepath.Join(dir, "output_01")
 	if got != want {
 		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestNormalizeUserSuppliedPath_NormalizesSafeRelativePath(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+
+	got, err := NormalizeUserSuppliedPath(filepath.Join("testdata", "sample.png"))
+	if err != nil {
+		t.Fatalf("expected safe relative path to be allowed, got %v", err)
+	}
+	want := filepath.Join(wd, "testdata", "sample.png")
+	if got != want {
+		t.Fatalf("expected normalized path %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeUserSuppliedPath_RejectsParentTraversal(t *testing.T) {
+	_, err := NormalizeUserSuppliedPath(filepath.Join("..", "secret.png"))
+	if err == nil {
+		t.Fatal("expected parent traversal path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "父级目录") {
+		t.Fatalf("expected parent traversal error, got %q", err.Error())
+	}
+}
+
+func TestNormalizeUserSuppliedPath_RejectsNULByte(t *testing.T) {
+	_, err := NormalizeUserSuppliedPath("bad\x00path.png")
+	if err == nil {
+		t.Fatal("expected NUL byte path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "空字符") {
+		t.Fatalf("expected NUL byte error, got %q", err.Error())
 	}
 }

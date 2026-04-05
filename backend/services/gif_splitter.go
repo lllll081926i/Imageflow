@@ -24,6 +24,19 @@ func NewGIFSplitterService(executor utils.PythonRunner, logger *utils.Logger) *G
 
 // SplitGIF processes animation actions (export_frames, reverse, change_speed, build_gif, compress, resize, convert_animation)
 func (s *GIFSplitterService) SplitGIF(req models.GIFSplitRequest) (models.GIFSplitResult, error) {
+	var err error
+	if req.InputPath, err = validateOptionalPath(req.InputPath, "输入文件"); err != nil {
+		return models.GIFSplitResult{Success: false, Error: err.Error()}, err
+	}
+	if req.InputPaths, err = validateOptionalPaths(req.InputPaths, "输入文件"); err != nil {
+		return models.GIFSplitResult{Success: false, Error: err.Error()}, err
+	}
+	if req.OutputDir, err = validateOptionalPath(req.OutputDir, "输出目录"); err != nil {
+		return models.GIFSplitResult{Success: false, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateOptionalPath(req.OutputPath, "输出文件"); err != nil {
+		return models.GIFSplitResult{Success: false, Error: err.Error()}, err
+	}
 	action := strings.ToLower(strings.TrimSpace(req.Action))
 	if action == "" {
 		action = "export_frames"
@@ -98,7 +111,7 @@ func (s *GIFSplitterService) SplitGIF(req models.GIFSplitRequest) (models.GIFSpl
 	s.logger.Info("Processing GIF action: %s", action)
 
 	var result models.GIFSplitResult
-	err := s.executor.ExecuteAndParse("gif_splitter.py", payload, &result)
+	err = s.executor.ExecuteAndParse("gif_splitter.py", payload, &result)
 	if err != nil {
 		s.logger.Error("GIF processing failed: %v", err)
 		return models.GIFSplitResult{Success: false, Error: err.Error()}, err

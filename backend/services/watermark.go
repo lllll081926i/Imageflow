@@ -24,6 +24,24 @@ func NewWatermarkService(executor utils.PythonRunner, logger *utils.Logger) *Wat
 
 // AddWatermark adds a watermark to an image
 func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.WatermarkResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.WatermarkResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.WatermarkResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.ImagePath, err = validateOptionalPath(req.ImagePath, "水印文件"); err != nil {
+		return models.WatermarkResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if err := rejectGIFPath(req.InputPath); err != nil {
+		return models.WatermarkResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	s.logger.Info("Adding watermark to image: %s -> %s (type: %s)", req.InputPath, req.OutputPath, req.WatermarkType)
 
 	position := req.Position
@@ -68,7 +86,7 @@ func (s *WatermarkService) AddWatermark(req models.WatermarkRequest) (models.Wat
 	}
 
 	var result models.WatermarkResult
-	err := s.executor.ExecuteAndParse("watermark.py", payload, &result)
+	err = s.executor.ExecuteAndParse("watermark.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Watermark application failed: %v", err)
 		return models.WatermarkResult{Success: false, Error: err.Error()}, err

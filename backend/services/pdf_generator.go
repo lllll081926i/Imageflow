@@ -24,6 +24,20 @@ func NewPDFGeneratorService(executor utils.PythonRunner, logger *utils.Logger) *
 
 // GeneratePDF generates a PDF from multiple images
 func (s *PDFGeneratorService) GeneratePDF(req models.PDFRequest) (models.PDFResult, error) {
+	var err error
+	if req.ImagePaths, err = validateRequiredPaths(req.ImagePaths, "输入文件"); err != nil {
+		return models.PDFResult{Success: false, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.PDFResult{Success: false, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if err := rejectGIFPaths(req.ImagePaths); err != nil {
+		return models.PDFResult{
+			Success:    false,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	s.logger.Info("Generating PDF from %d images -> %s", len(req.ImagePaths), req.OutputPath)
 
 	portrait := true
@@ -40,20 +54,20 @@ func (s *PDFGeneratorService) GeneratePDF(req models.PDFRequest) (models.PDFResu
 	}
 
 	payload := map[string]interface{}{
-		"images":      req.ImagePaths,
-		"output_path": req.OutputPath,
-		"page_size":   req.PageSize,
-		"margin":      margin,
-		"title":       req.Title,
-		"author":      req.Author,
-		"portrait":    portrait,
-		"layout":      "single",
+		"images":            req.ImagePaths,
+		"output_path":       req.OutputPath,
+		"page_size":         req.PageSize,
+		"margin":            margin,
+		"title":             req.Title,
+		"author":            req.Author,
+		"portrait":          portrait,
+		"layout":            "single",
 		"compression_level": req.CompressionLevel,
-		"fit_mode":   fitMode,
+		"fit_mode":          fitMode,
 	}
 
 	var result models.PDFResult
-	err := s.executor.ExecuteAndParse("pdf_generator.py", payload, &result)
+	err = s.executor.ExecuteAndParse("pdf_generator.py", payload, &result)
 	if err != nil {
 		s.logger.Error("PDF generation failed: %v", err)
 		return models.PDFResult{Success: false, Error: err.Error()}, err

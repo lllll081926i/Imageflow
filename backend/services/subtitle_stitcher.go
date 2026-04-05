@@ -24,6 +24,13 @@ func NewSubtitleStitchService(executor utils.PythonRunner, logger *utils.Logger)
 
 // Generate performs "first full frame + subtitle strips" stitching.
 func (s *SubtitleStitchService) Generate(req models.SubtitleStitchRequest) (models.SubtitleStitchResult, error) {
+	var err error
+	if req.InputPaths, err = validateRequiredPaths(req.InputPaths, "输入文件"); err != nil {
+		return models.SubtitleStitchResult{Success: false, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.SubtitleStitchResult{Success: false, Error: err.Error()}, err
+	}
 	payload := map[string]interface{}{
 		"action":               "subtitle_stitch",
 		"input_paths":          req.InputPaths,
@@ -38,7 +45,7 @@ func (s *SubtitleStitchService) Generate(req models.SubtitleStitchRequest) (mode
 	s.logger.Info("Processing subtitle stitch: %d input(s)", len(req.InputPaths))
 
 	var result models.SubtitleStitchResult
-	err := s.executor.ExecuteAndParse("subtitle_stitcher.py", payload, &result)
+	err = s.executor.ExecuteAndParse("subtitle_stitcher.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Subtitle stitch failed: %v", err)
 		return models.SubtitleStitchResult{Success: false, Error: err.Error()}, err

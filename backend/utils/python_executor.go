@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,15 +33,18 @@ type PythonExecutor struct {
 	workerDone    chan struct{}
 	workerRunning bool
 	cancelFlag    uint32
+	taskRunning   uint32
 }
 
 var (
-	pythonResolveOnce   sync.Once
-	pythonLogOnce       sync.Once
-	cachedPythonCmd     string
-	cachedPythonArgs    []string
-	cachedPythonDisplay string
-	cachedPythonErr     error
+	ErrPythonCancelled = errors.New("operation cancelled")
+
+	pythonResolveMu      sync.Mutex
+	pythonLogOnce        sync.Once
+	cachedPythonCmd      string
+	cachedPythonArgs     []string
+	cachedPythonDisplay  string
+	cachedPythonOverride string
 )
 
 func NewPythonExecutor(scriptsDir string, logger *Logger) (*PythonExecutor, error) {
@@ -165,6 +169,9 @@ func (e *PythonExecutor) StopWorker() {
 }
 
 func (e *PythonExecutor) CancelActiveTask() {
+	if atomic.LoadUint32(&e.taskRunning) == 0 {
+		return
+	}
 	atomic.StoreUint32(&e.cancelFlag, 1)
 	e.procMu.Lock()
 	proc := e.currentProc
@@ -226,7 +233,10 @@ func (e *PythonExecutor) Execute(scriptName string, input interface{}) ([]byte, 
 	}
 	if atomic.SwapUint32(&e.cancelFlag, 0) == 1 {
 		e.stopWorkerLocked()
-		return nil, fmt.Errorf("[PY_CANCELLED] operation cancelled")
+		if restartErr := e.startWorkerLocked(); restartErr != nil && e.logger != nil {
+			e.logger.Warn("Python worker restart after cancellation failed: %v", restartErr)
+		}
+		return nil, ErrPythonCancelled
 	}
 	if !workerErr {
 		return nil, err
@@ -257,6 +267,8 @@ func (e *PythonExecutor) executeOnceLocked(scriptName string, input interface{})
 	if !e.workerRunning || e.workerCmd == nil || e.workerStdin == nil || e.workerStdout == nil {
 		return nil, true, fmt.Errorf("[PY_WORKER_NOT_RUNNING] python worker is not running")
 	}
+	atomic.StoreUint32(&e.taskRunning, 1)
+	defer atomic.StoreUint32(&e.taskRunning, 0)
 
 	cmd := map[string]interface{}{
 		"script": scriptName,
@@ -285,15 +297,19 @@ func (e *PythonExecutor) readLineLocked(timeout time.Duration) ([]byte, error) {
 		line []byte
 		err  error
 	}
+	reader := e.workerStdout
+	if reader == nil {
+		return nil, fmt.Errorf("[PY_WORKER_NOT_RUNNING] python worker is not running")
+	}
 	ch := make(chan readResult, 1)
 
-	go func() {
-		line, err := e.workerStdout.ReadBytes('\n')
+	go func(r *bufio.Reader) {
+		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
 			line = bytes.TrimSpace(line)
 		}
 		ch <- readResult{line: line, err: err}
-	}()
+	}(reader)
 
 	select {
 	case res := <-ch:
@@ -394,10 +410,42 @@ func findPython() (string, []string, string, error) {
 }
 
 func resolvePython() (string, []string, string, error) {
-	pythonResolveOnce.Do(func() {
-		cachedPythonCmd, cachedPythonArgs, cachedPythonDisplay, cachedPythonErr = findPython()
-	})
-	return cachedPythonCmd, cachedPythonArgs, cachedPythonDisplay, cachedPythonErr
+	currentOverride := strings.TrimSpace(os.Getenv("IMAGEFLOW_PYTHON_EXE"))
+
+	pythonResolveMu.Lock()
+	defer pythonResolveMu.Unlock()
+
+	if cachedPythonCmd != "" && cachedPythonDisplay != "" && cachedPythonOverride == currentOverride {
+		return cachedPythonCmd, append([]string(nil), cachedPythonArgs...), cachedPythonDisplay, nil
+	}
+
+	pythonCmd, pythonArgs, pythonDisplay, err := findPython()
+	if err != nil {
+		return "", nil, "", err
+	}
+
+	cachedPythonCmd = pythonCmd
+	cachedPythonArgs = append([]string(nil), pythonArgs...)
+	cachedPythonDisplay = pythonDisplay
+	cachedPythonOverride = currentOverride
+	return cachedPythonCmd, append([]string(nil), cachedPythonArgs...), cachedPythonDisplay, nil
+}
+
+func resetResolvedPythonCacheForTests() {
+	pythonResolveMu.Lock()
+	defer pythonResolveMu.Unlock()
+
+	cachedPythonCmd = ""
+	cachedPythonArgs = nil
+	cachedPythonDisplay = ""
+	cachedPythonOverride = ""
+}
+
+func IsPythonCancelled(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrPythonCancelled) || strings.Contains(err.Error(), "[PY_CANCELLED]")
 }
 
 func isPython3Executable(pythonPath string) bool {

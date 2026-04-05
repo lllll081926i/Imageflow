@@ -47,7 +47,7 @@ func NewLogger(level LogLevel, enableFile bool) (*Logger, error) {
 		timestamp := time.Now().Format("20060102_150405")
 		logPath := filepath.Join(logsDir, fmt.Sprintf("imageflow_%s.log", timestamp))
 
-		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			fmt.Printf("[WARN] failed to open log file %s: %v\n", logPath, err)
 			return logger, nil

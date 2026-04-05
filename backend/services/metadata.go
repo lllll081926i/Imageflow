@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
+	"strings"
 )
 
 type MetadataService struct {
@@ -19,6 +20,15 @@ func NewMetadataService(executor utils.PythonRunner, logger *utils.Logger) *Meta
 }
 
 func (s *MetadataService) StripMetadata(req models.MetadataStripRequest) (models.MetadataStripResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.MetadataStripResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.Overwrite && strings.TrimSpace(req.OutputPath) == "" {
+		req.OutputPath = req.InputPath
+	} else if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.MetadataStripResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
 	s.logger.Info("Stripping metadata: %s -> %s (overwrite=%v)", req.InputPath, req.OutputPath, req.Overwrite)
 
 	payload := map[string]interface{}{
@@ -29,7 +39,7 @@ func (s *MetadataService) StripMetadata(req models.MetadataStripRequest) (models
 	}
 
 	var result models.MetadataStripResult
-	err := s.executor.ExecuteAndParse("metadata_tool.py", payload, &result)
+	err = s.executor.ExecuteAndParse("metadata_tool.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Metadata strip failed: %v", err)
 		return models.MetadataStripResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
@@ -43,4 +53,3 @@ func (s *MetadataService) StripMetadata(req models.MetadataStripRequest) (models
 	s.logger.Info("Metadata stripped successfully")
 	return result, nil
 }
-

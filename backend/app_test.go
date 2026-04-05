@@ -160,6 +160,50 @@ func TestGetImagePreview_RejectsSpoofedImageExtension(t *testing.T) {
 	}
 }
 
+func TestGetImagePreview_RejectsParentTraversalPath(t *testing.T) {
+	app := &App{}
+	result, err := app.GetImagePreview(models.PreviewRequest{InputPath: "../secret.png"})
+	if err == nil {
+		t.Fatal("expected parent traversal preview path to be rejected")
+	}
+	if result.Success {
+		t.Fatalf("expected preview to fail for traversal path, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "父级目录") {
+		t.Fatalf("expected traversal error, got %q", result.Error)
+	}
+}
+
+func TestReadPreviewHeader_EmptyFileReturnsReadableError(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "empty.png")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("failed to create empty file: %v", err)
+	}
+
+	_, err := readPreviewHeader(path)
+	if err == nil {
+		t.Fatal("expected empty preview file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "文件为空") {
+		t.Fatalf("expected empty file error, got %q", err.Error())
+	}
+}
+
+func TestResolveOutputPath_RejectsParentTraversalBasePath(t *testing.T) {
+	app := &App{}
+	result, err := app.ResolveOutputPath(models.ResolveOutputPathRequest{BasePath: "../out.png"})
+	if err == nil {
+		t.Fatal("expected traversal base path to be rejected")
+	}
+	if result.Success {
+		t.Fatalf("expected resolve output path to fail, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "父级目录") {
+		t.Fatalf("expected traversal error, got %q", result.Error)
+	}
+}
+
 type fakePreviewConversionRunner struct {
 	convertCalls int32
 }
@@ -313,17 +357,13 @@ func TestGetImagePreview_CacheHitSkipsHeaderRead(t *testing.T) {
 		t.Fatalf("failed to write sample png file: %v", err)
 	}
 
-	originalReadPreviewHeaderFn := readPreviewHeaderFn
+	app := NewApp()
+	originalReadPreviewHeaderFn := app.readPreviewHeaderFn
 	var headerReads int32
-	readPreviewHeaderFn = func(inputPath string) (string, error) {
+	app.readPreviewHeaderFn = func(inputPath string) (string, error) {
 		atomic.AddInt32(&headerReads, 1)
 		return originalReadPreviewHeaderFn(inputPath)
 	}
-	defer func() {
-		readPreviewHeaderFn = originalReadPreviewHeaderFn
-	}()
-
-	app := &App{}
 	first, err := app.GetImagePreview(models.PreviewRequest{InputPath: path})
 	if err != nil {
 		t.Fatalf("first preview failed: %v", err)
@@ -988,19 +1028,19 @@ func TestSaveSettings_DefersStoppingOldRunnerUntilActiveWorkFinishes(t *testing.
 	}
 	app.converterService = services.NewConverterService(oldRunner, logger)
 
-	if _, err := saveAppSettings(app.settings); err != nil {
+	if _, err := utils.SaveSettings(app.settings); err != nil {
 		t.Fatalf("failed to seed settings: %v", err)
 	}
 
-	previousBuilder := buildRunnerForSettingsFn
-	buildRunnerForSettingsFn = func(_ string, _ *utils.Logger, settings models.AppSettings) (utils.PythonRunner, error) {
+	previousBuilder := app.buildRunnerFn
+	app.buildRunnerFn = func(_ string, _ *utils.Logger, settings models.AppSettings) (utils.PythonRunner, error) {
 		if settings.MaxConcurrency != 2 {
 			t.Fatalf("expected rebuild with max concurrency 2, got %d", settings.MaxConcurrency)
 		}
 		return newRunner, nil
 	}
 	defer func() {
-		buildRunnerForSettingsFn = previousBuilder
+		app.buildRunnerFn = previousBuilder
 	}()
 
 	convertDone := make(chan error, 1)
@@ -1167,7 +1207,7 @@ func TestGetInfo_PreservesStructuredImageData(t *testing.T) {
 	}
 }
 
-func TestStripMetadata_PreservesToolFailureMessage(t *testing.T) {
+func TestStripMetadata_RejectsMissingOutputPathBeforeInvokingTool(t *testing.T) {
 	logger, err := utils.NewLogger(utils.ErrorLevel, false)
 	if err != nil {
 		t.Fatalf("failed to create logger: %v", err)
@@ -1193,13 +1233,16 @@ func TestStripMetadata_PreservesToolFailureMessage(t *testing.T) {
 	}
 	result, err := app.StripMetadata(req)
 	if err != nil {
-		t.Fatalf("expected app.StripMetadata to normalize service error into result, got %v", err)
+		t.Fatalf("expected app.StripMetadata to normalize validation error into result, got %v", err)
 	}
 	if result.Success {
 		t.Fatalf("expected strip metadata to fail")
 	}
-	if result.Error != "[BAD_INPUT] missing output_path" {
-		t.Fatalf("expected tool failure detail to be preserved, got %q", result.Error)
+	if result.Error != "输出文件路径无效: 路径不能为空" {
+		t.Fatalf("expected service validation error, got %q", result.Error)
+	}
+	if runner.scriptName != "" {
+		t.Fatalf("expected metadata tool not to be invoked, got %q", runner.scriptName)
 	}
 }
 
@@ -1253,7 +1296,7 @@ func TestSaveSettings_DoesNotPersistWhenRunnerRebuildFails(t *testing.T) {
 		PreserveFolderStructure: true,
 		ConflictStrategy:        "rename",
 	}
-	if _, err := saveAppSettings(original); err != nil {
+	if _, err := utils.SaveSettings(original); err != nil {
 		t.Fatalf("failed to seed settings: %v", err)
 	}
 
@@ -1269,12 +1312,12 @@ func TestSaveSettings_DoesNotPersistWhenRunnerRebuildFails(t *testing.T) {
 		settings:   original,
 	}
 
-	previousBuilder := buildRunnerForSettingsFn
-	buildRunnerForSettingsFn = func(_ string, _ *utils.Logger, _ models.AppSettings) (utils.PythonRunner, error) {
+	previousBuilder := app.buildRunnerFn
+	app.buildRunnerFn = func(_ string, _ *utils.Logger, _ models.AppSettings) (utils.PythonRunner, error) {
 		return nil, errors.New("runner rebuild failed")
 	}
 	defer func() {
-		buildRunnerForSettingsFn = previousBuilder
+		app.buildRunnerFn = previousBuilder
 	}()
 
 	next := original
@@ -1311,7 +1354,7 @@ func TestUpdateRecentPaths_PersistsIncrementallyWithoutOverwritingOtherSettings(
 		RecentInputDirs:         []string{"D:/OldInput"},
 		RecentOutputDirs:        []string{"D:/OldOutput"},
 	}
-	if _, err := saveAppSettings(original); err != nil {
+	if _, err := utils.SaveSettings(original); err != nil {
 		t.Fatalf("failed to seed settings: %v", err)
 	}
 

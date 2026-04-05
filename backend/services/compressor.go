@@ -23,10 +23,25 @@ func NewCompressorService(executor utils.PythonRunner, logger *utils.Logger) *Co
 
 // Compress compresses an image
 func (s *CompressorService) Compress(req models.CompressRequest) (models.CompressResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.CompressResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.CompressResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if err := rejectGIFPath(req.InputPath); err != nil {
+		return models.CompressResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	s.logger.Info("Compressing image: %s -> %s (level: %d)", req.InputPath, req.OutputPath, req.Level)
 
 	var result models.CompressResult
-	err := s.executor.ExecuteAndParse("compressor.py", req, &result)
+	err = s.executor.ExecuteAndParse("compressor.py", req, &result)
 	if err != nil {
 		s.logger.Error("Compression failed: %v", err)
 		return models.CompressResult{Success: false, Error: err.Error()}, err

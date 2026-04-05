@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -24,6 +25,58 @@ var supportedExtensions = map[string]bool{
 	".heic": true,
 	".heif": true,
 	".svg":  true,
+}
+
+func ValidateUserSuppliedPath(path string, allowEmpty bool) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		if allowEmpty {
+			return nil
+		}
+		return errors.New("路径不能为空")
+	}
+	if strings.ContainsRune(trimmed, '\x00') {
+		return errors.New("路径包含非法空字符")
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	if hasLeadingParentTraversal(cleaned) {
+		return errors.New("不允许使用父级目录跳转路径")
+	}
+	return nil
+}
+
+func NormalizeUserSuppliedPath(path string) (string, error) {
+	return normalizeUserSuppliedPath(path, false)
+}
+
+func NormalizeOptionalUserSuppliedPath(path string) (string, error) {
+	return normalizeUserSuppliedPath(path, true)
+}
+
+func normalizeUserSuppliedPath(path string, allowEmpty bool) (string, error) {
+	if err := ValidateUserSuppliedPath(path, allowEmpty); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	abs, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func hasLeadingParentTraversal(path string) bool {
+	if filepath.IsAbs(path) {
+		return false
+	}
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	return normalized == ".." || strings.HasPrefix(normalized, "../")
 }
 
 func isImageFile(path string) bool {

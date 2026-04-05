@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/imageflow/backend/models"
 	"github.com/imageflow/backend/utils"
+	"strings"
 )
 
 // InfoViewerService handles image information retrieval
@@ -22,6 +23,10 @@ func NewInfoViewerService(executor utils.PythonRunner, logger *utils.Logger) *In
 
 // GetInfo retrieves image information including metadata
 func (s *InfoViewerService) GetInfo(req models.InfoRequest) (models.InfoResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.InfoResult{Success: false, Error: err.Error()}, err
+	}
 	s.logger.Info("Getting info for image: %s", req.InputPath)
 
 	var result models.InfoResult
@@ -29,7 +34,7 @@ func (s *InfoViewerService) GetInfo(req models.InfoRequest) (models.InfoResult, 
 		"action":     "get_info",
 		"input_path": req.InputPath,
 	}
-	err := s.executor.ExecuteAndParse("info_viewer.py", payload, &result)
+	err = s.executor.ExecuteAndParse("info_viewer.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Info retrieval failed: %v", err)
 		return models.InfoResult{Success: false, Error: err.Error()}, err
@@ -46,6 +51,15 @@ func (s *InfoViewerService) GetInfo(req models.InfoRequest) (models.InfoResult, 
 
 // EditMetadata updates EXIF metadata using piexif
 func (s *InfoViewerService) EditMetadata(req models.MetadataEditRequest) (models.MetadataEditResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.MetadataEditResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.Overwrite && strings.TrimSpace(req.OutputPath) == "" {
+		req.OutputPath = req.InputPath
+	} else if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.MetadataEditResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
 	s.logger.Info("Editing metadata: %s -> %s (overwrite=%v)", req.InputPath, req.OutputPath, req.Overwrite)
 
 	var result models.MetadataEditResult
@@ -57,7 +71,7 @@ func (s *InfoViewerService) EditMetadata(req models.MetadataEditRequest) (models
 		"overwrite":   req.Overwrite,
 	}
 
-	err := s.executor.ExecuteAndParse("info_viewer.py", payload, &result)
+	err = s.executor.ExecuteAndParse("info_viewer.py", payload, &result)
 	if err != nil {
 		s.logger.Error("Metadata edit failed: %v", err)
 		return models.MetadataEditResult{Success: false, Error: err.Error()}, err

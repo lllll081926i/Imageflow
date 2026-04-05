@@ -47,7 +47,22 @@ func NewConverterService(executor utils.PythonRunner, logger *utils.Logger) *Con
 
 // Convert converts an image to a different format
 func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertResult, error) {
+	var err error
+	if req.InputPath, err = validateRequiredPath(req.InputPath, "输入文件"); err != nil {
+		return models.ConvertResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
+	if req.OutputPath, err = validateRequiredPath(req.OutputPath, "输出文件"); err != nil {
+		return models.ConvertResult{Success: false, InputPath: req.InputPath, OutputPath: req.OutputPath, Error: err.Error()}, err
+	}
 	req.InputPath = resolveInputPath(req.InputPath, req.OutputPath)
+	if err := rejectGIFPath(req.InputPath); err != nil {
+		return models.ConvertResult{
+			Success:    false,
+			InputPath:  req.InputPath,
+			OutputPath: req.OutputPath,
+			Error:      err.Error(),
+		}, err
+	}
 	if err := validateInPlaceConversion(req.InputPath, req.OutputPath, req.Format); err != nil {
 		return models.ConvertResult{
 			Success:    false,
@@ -87,7 +102,7 @@ func (s *ConverterService) Convert(req models.ConvertRequest) (models.ConvertRes
 	}
 
 	var result models.ConvertResult
-	err := s.executor.ExecuteAndParse("converter.py", req, &result)
+	err = s.executor.ExecuteAndParse("converter.py", req, &result)
 	if err != nil {
 		s.logger.Error("Conversion failed: %v", err)
 		return models.ConvertResult{Success: false, Error: err.Error()}, err
