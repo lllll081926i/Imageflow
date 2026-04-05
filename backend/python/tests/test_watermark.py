@@ -55,6 +55,23 @@ class WatermarkTests(unittest.TestCase):
         self.assertTrue(result.get("success"))
         self.assertTrue(os.path.exists(out))
 
+    def test_image_watermark_requires_existing_watermark_path(self):
+        src = self._path("base3.png")
+        Image.new("RGB", (24, 24), (40, 80, 120)).save(src, format="PNG")
+
+        out = self._path("missing_out.png")
+        applier = WatermarkApplier()
+        result = applier.apply(
+            watermark_type="image",
+            input_path=src,
+            output_path=out,
+            watermark_path=self._path("missing.png"),
+        )
+
+        self.assertFalse(result.get("success"))
+        self.assertIn("File not found:", result.get("error", ""))
+        self.assertFalse(os.path.exists(out))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,61 @@ if SCRIPTS_DIR not in sys.path:
 
 _CONVERTER_MODULE = None
 _PRELOAD_DONE = False
+_INCLUDE_TRACEBACKS = os.getenv("IMAGEFLOW_DEBUG_TRACEBACK") == "1"
+
+
+def _with_optional_traceback(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if _INCLUDE_TRACEBACKS:
+        payload["traceback"] = traceback.format_exc()[-4000:]
+    return payload
+
+
+def _has_leading_parent_traversal(path: str) -> bool:
+    if os.path.isabs(path):
+        return False
+    normalized = path.replace("\\", "/")
+    return normalized == ".." or normalized.startswith("../")
+
+
+def _normalize_user_path(value: Any, allow_empty: bool = False) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        if allow_empty:
+            return ""
+        raise ValueError("路径不能为空")
+    if "\x00" in text:
+        raise ValueError("路径包含非法空字符")
+
+    cleaned = os.path.normpath(text)
+    if _has_leading_parent_traversal(cleaned):
+        raise ValueError("不允许使用父级目录跳转路径")
+    return os.path.abspath(cleaned)
+
+
+def _normalize_user_paths(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError("路径列表格式无效")
+    return [_normalize_user_path(item) for item in values]
+
+
+def _normalize_command_paths(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(input_data)
+
+    single_path_fields = ("input_path", "output_path", "output_dir", "watermark_path")
+    for field in single_path_fields:
+        if field not in normalized:
+            continue
+        normalized[field] = _normalize_user_path(normalized.get(field), allow_empty=True)
+
+    list_path_fields = ("input_paths", "image_paths", "images")
+    for field in list_path_fields:
+        if field not in normalized:
+            continue
+        normalized[field] = _normalize_user_paths(normalized.get(field))
+
+    return normalized
 
 
 def _get_converter_module():
@@ -42,11 +97,10 @@ def _run_converter_in_process(input_data: Dict[str, Any]) -> Dict[str, Any]:
             return result
         return {"success": False, "error": "converter returned non-object result"}
     except Exception as e:
-        return {
+        return _with_optional_traceback({
             "success": False,
             "error": f"converter failed: {e}",
-            "traceback": traceback.format_exc()[-4000:],
-        }
+        })
 
 
 def _preload_modules() -> None:
@@ -98,6 +152,11 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
         if input_data is None:
             return {'success': False, 'error': 'Missing input data'}
 
+        try:
+            input_data = _normalize_command_paths(input_data)
+        except ValueError as e:
+            return {"success": False, "error": f"[BAD_INPUT] {e}"}
+
         if script_name == "converter.py":
             return _run_converter_in_process(input_data)
 
@@ -117,11 +176,10 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
     except ImportError as e:
         return {'success': False, 'error': f'Failed to import script: {str(e)}'}
     except Exception as e:
-        return {
+        return _with_optional_traceback({
             'success': False,
             'error': f'Processing failed: {str(e)}',
-            'traceback': traceback.format_exc()
-        }
+        })
 
 
 def main():
@@ -167,11 +225,10 @@ def main():
             error_result = {'success': False, 'error': f'Invalid JSON: {str(e)}'}
             print(json.dumps(error_result), flush=True)
         except Exception as e:
-            error_result = {
+            error_result = _with_optional_traceback({
                 'success': False,
                 'error': f'Worker error: {str(e)}',
-                'traceback': traceback.format_exc()
-            }
+            })
             print(json.dumps(error_result), flush=True)
 
 

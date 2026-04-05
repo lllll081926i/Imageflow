@@ -72,6 +72,19 @@ class WatermarkApplier:
             dict: Watermark application result
         """
         try:
+            if watermark_type == 'image':
+                watermark_path = str(watermark_path or '').strip()
+                if not watermark_path:
+                    return {
+                        'success': False,
+                        'error': 'Missing required parameter: watermark_path'
+                    }
+                if not os.path.exists(watermark_path):
+                    return {
+                        'success': False,
+                        'error': f'File not found: {watermark_path}'
+                    }
+
             # Open input image
             logger.info(f"Opening image: {input_path}")
             with Image.open(input_path) as base_img:
