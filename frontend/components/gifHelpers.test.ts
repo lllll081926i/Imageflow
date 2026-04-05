@@ -1,5 +1,6 @@
-import React, { forwardRef, useImperativeHandle } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+// @vitest-environment jsdom
+import React, { act, forwardRef, useImperativeHandle } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildGifProcessSuffix,
@@ -7,13 +8,19 @@ import {
     resolveConverterOverwritePath,
     resolveGifAction,
 } from './gifHelpers';
+import { CustomSelect } from './Controls';
 import { useGifResizeState } from './hooks/useGifResizeState';
-import { getAppBindings } from '../types/wails-api';
+import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
 import { FEATURES } from '../constants';
+import { shouldPreventWindowDragEvent } from '../App';
 
-vi.mock('../types/wails-api', () => ({
-    getAppBindings: vi.fn(),
-}));
+vi.mock('../types/wails-api', async () => {
+    const actual = await vi.importActual<typeof import('../types/wails-api')>('../types/wails-api');
+    return {
+        ...actual,
+        getAppBindings: vi.fn(),
+    };
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,8 +46,82 @@ const flushMicrotasks = async () => {
     await Promise.resolve();
 };
 
+const renderElement = async (element: React.ReactElement) => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+        root.render(element);
+        await flushMicrotasks();
+    });
+    return { container, root };
+};
+
 afterEach(() => {
     vi.clearAllMocks();
+    document.body.innerHTML = '';
+});
+
+describe('resolveSelectedFilePaths', () => {
+    it('优先返回 File 对象自带的本地路径', async () => {
+        const files = [
+            { path: 'C:/tmp/a.png', name: 'a.png' },
+            { path: 'C:/tmp/b.png', name: 'b.png' },
+        ] as any;
+
+        await expect(resolveSelectedFilePaths(files)).resolves.toEqual(['C:/tmp/a.png', 'C:/tmp/b.png']);
+    });
+
+    it('在没有直接路径时会使用运行时解析本地路径', async () => {
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(true),
+            ResolveFilePaths: vi.fn().mockResolvedValue(['D:/resolved/a.png']),
+        };
+        const files = [{ name: 'a.png' }] as any;
+
+        await expect(resolveSelectedFilePaths(files, runtime as any)).resolves.toEqual(['D:/resolved/a.png']);
+        expect(runtime.ResolveFilePaths).toHaveBeenCalledWith(files);
+    });
+
+    it('在既没有直接路径也没有运行时解析能力时返回空数组，而不是文件名', async () => {
+        const files = [{ name: 'a.png' }, { name: 'b.png' }] as any;
+
+        await expect(resolveSelectedFilePaths(files)).resolves.toEqual([]);
+    });
+
+    it('在运行时明确声明无法解析文件路径时直接返回空数组', async () => {
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(false),
+            ResolveFilePaths: vi.fn(),
+        };
+        const files = [{ name: 'a.png' }] as any;
+
+        await expect(resolveSelectedFilePaths(files, runtime as any)).resolves.toEqual([]);
+        expect(runtime.ResolveFilePaths).not.toHaveBeenCalled();
+    });
+
+    it('在运行时返回非数组结果时回退为空数组', async () => {
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(true),
+            ResolveFilePaths: vi.fn().mockResolvedValue('D:/resolved/a.png'),
+        };
+        const files = [{ name: 'a.png' }] as any;
+
+        await expect(resolveSelectedFilePaths(files, runtime as any)).resolves.toEqual([]);
+    });
+
+    it('在运行时抛错时回退为空数组', async () => {
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(true),
+            ResolveFilePaths: vi.fn().mockRejectedValue(new Error('boom')),
+        };
+        const files = [{ name: 'a.png' }] as any;
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(resolveSelectedFilePaths(files, runtime as any)).resolves.toEqual([]);
+
+        errorSpy.mockRestore();
+    });
 });
 
 describe('resolveGifAction', () => {
@@ -135,9 +216,12 @@ describe('useGifResizeState', () => {
         mockedGetAppBindings.mockReturnValue({ GetInfo: getInfo } as any);
 
         const ref = React.createRef<HookSnapshot>();
-        let renderer: ReactTestRenderer | null = null;
+        let root: Root | null = null;
         await act(async () => {
-            renderer = create(React.createElement(GifResizeStateProbe, { ref, featureId: 'gif', files: [{ input_path: 'C:/tmp/a.gif' }] }));
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+            root = createRoot(container);
+            root.render(React.createElement(GifResizeStateProbe, { ref, featureId: 'gif', files: [{ input_path: 'C:/tmp/a.gif' }] }));
             await flushMicrotasks();
         });
 
@@ -146,7 +230,7 @@ describe('useGifResizeState', () => {
         expect(ref.current?.gifResizeHeight).toBe(160);
         expect(ref.current?.gifOriginalSize).toEqual({ width: 320, height: 160 });
         await act(async () => {
-            renderer?.unmount();
+            root?.unmount();
             await flushMicrotasks();
         });
     });
@@ -158,9 +242,12 @@ describe('useGifResizeState', () => {
         } as any);
 
         const ref = React.createRef<HookSnapshot>();
-        let renderer: ReactTestRenderer | null = null;
+        let root: Root | null = null;
         await act(async () => {
-            renderer = create(React.createElement(GifResizeStateProbe, { ref, featureId: 'gif', files: [{ input_path: 'C:/tmp/a.gif' }] }));
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+            root = createRoot(container);
+            root.render(React.createElement(GifResizeStateProbe, { ref, featureId: 'gif', files: [{ input_path: 'C:/tmp/a.gif' }] }));
             await flushMicrotasks();
         });
 
@@ -172,7 +259,7 @@ describe('useGifResizeState', () => {
         expect(ref.current?.gifResizeWidth).toBe(600);
         expect(ref.current?.gifResizeHeight).toBe(300);
         await act(async () => {
-            renderer?.unmount();
+            root?.unmount();
             await flushMicrotasks();
         });
     });
@@ -183,9 +270,12 @@ describe('useGifResizeState', () => {
         mockedGetAppBindings.mockReturnValue({ GetInfo: getInfo } as any);
 
         const ref = React.createRef<HookSnapshot>();
-        let renderer: ReactTestRenderer | null = null;
+        let root: Root | null = null;
         await act(async () => {
-            renderer = create(React.createElement(GifResizeStateProbe, { ref, featureId: 'converter', files: [{ input_path: 'C:/tmp/a.gif' }] }));
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+            root = createRoot(container);
+            root.render(React.createElement(GifResizeStateProbe, { ref, featureId: 'converter', files: [{ input_path: 'C:/tmp/a.gif' }] }));
             await flushMicrotasks();
         });
 
@@ -193,7 +283,7 @@ describe('useGifResizeState', () => {
         expect(ref.current?.gifResizeWidth).toBe(0);
         expect(ref.current?.gifResizeHeight).toBe(0);
         await act(async () => {
-            renderer?.unmount();
+            root?.unmount();
             await flushMicrotasks();
         });
     });
@@ -206,5 +296,58 @@ describe('FEATURES', () => {
 
         expect(gifFeature?.title).toBe('GIF 工具');
         expect(subtitleFeature?.title).toBe('字幕拼接');
+    });
+});
+
+describe('shouldPreventWindowDragEvent', () => {
+    it('仅拦截文件拖拽，不拦截普通文本或链接拖拽', () => {
+        expect(shouldPreventWindowDragEvent({ types: ['Files'] } as any)).toBe(true);
+        expect(shouldPreventWindowDragEvent({ types: ['text/plain'] } as any)).toBe(false);
+        expect(shouldPreventWindowDragEvent(null)).toBe(false);
+    });
+});
+
+describe('CustomSelect', () => {
+    it('提供 listbox 语义并支持键盘选择', async () => {
+        const onChange = vi.fn();
+        const { container, root } = await renderElement(
+            React.createElement(CustomSelect, {
+                label: '目标格式',
+                options: ['PNG', 'JPG', 'WEBP'],
+                value: 'PNG',
+                onChange,
+            })
+        );
+
+        const trigger = container.querySelector('button');
+        expect(trigger).toBeTruthy();
+        expect(trigger?.getAttribute('aria-haspopup')).toBe('listbox');
+
+        await act(async () => {
+            trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            await flushMicrotasks();
+        });
+
+        const listbox = document.body.querySelector('[role="listbox"]');
+        expect(listbox).toBeTruthy();
+        expect(trigger?.getAttribute('aria-expanded')).toBe('true');
+
+        const options = Array.from(document.body.querySelectorAll('[role="option"]'));
+        expect(options).toHaveLength(3);
+        expect(options[0]?.getAttribute('aria-selected')).toBe('true');
+
+        await act(async () => {
+            trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            await flushMicrotasks();
+        });
+
+        expect(onChange).toHaveBeenCalledWith('JPG');
+        expect(document.body.querySelector('[role="listbox"]')).toBeNull();
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
     });
 });

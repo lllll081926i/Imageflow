@@ -1492,6 +1492,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [isProcessing, setIsProcessing] = useState(false);
     const [cancelRequested, setCancelRequested] = useState(false);
     const cancelRequestedRef = useRef(false);
+    const infoRequestIdRef = useRef(0);
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
@@ -1619,12 +1620,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
     const normalizePath = useCallback((p: string) => p.replace(/\\/g, '/').replace(/\/+$/, ''), []);
-    const dirname = (p: string) => {
+    const dirname = useCallback((p: string) => {
         const normalized = p.replace(/\\/g, '/');
         const idx = normalized.lastIndexOf('/');
         if (idx <= 0) return '';
         return normalized.slice(0, idx);
-    };
+    }, []);
     const rememberRecentDirs = useCallback(async (payload: { inputDir?: string; outputDir?: string }) => {
         try {
             await updateRecentPaths(payload);
@@ -3221,13 +3222,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         };
     }, [previewPath, isPreviewFeature]);
 
-    const loadInfoForPath = async (p: string) => {
+    const loadInfoForPath = useCallback(async (p: string) => {
         const appAny = getAppBindings();
         if (!appAny?.GetInfo) {
             setLastMessage('未检测到 Wails 运行环境');
             return;
         }
         const normalized = normalizePath(p);
+        const requestId = ++infoRequestIdRef.current;
         setIsProcessing(true);
         setProgress(0);
         setLastMessage('');
@@ -3235,22 +3237,59 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         setInfoPreview(null);
         try {
             const info = await appAny.GetInfo({ input_path: normalized });
+            if (infoRequestIdRef.current !== requestId) {
+                return;
+            }
             setInfoPreview(info);
             if (info?.success) {
-                setLastMessage(`信息读取完成：${basename(normalized)}`);
+                const fileName = normalized.split('/').pop() || normalized;
+                setLastMessage(`信息读取完成：${fileName}`);
             } else {
                 setLastMessage(info?.error || '信息读取失败');
             }
         } catch (err: any) {
+            if (infoRequestIdRef.current !== requestId) {
+                return;
+            }
             console.error(`Failed to get info ${p}:`, err);
             const msg = typeof err?.message === 'string' ? err.message : '信息读取失败';
             setInfoPreview({ success: false, error: msg });
             setLastMessage(msg);
         } finally {
-            setProgress(100);
-            setIsProcessing(false);
+            if (infoRequestIdRef.current === requestId) {
+                setProgress(100);
+                setIsProcessing(false);
+            }
         }
-    };
+    }, [normalizePath]);
+
+    const handlePathsExpanded = useCallback((result: ExpandDroppedPathsResult) => {
+        setDropResult(result);
+        const firstFile = result?.files?.[0];
+        const inputDirForHistory = result?.has_directory
+            ? (firstFile?.source_root || '')
+            : dirname(firstFile?.input_path || '');
+        if (inputDirForHistory) {
+            void rememberRecentDirs({ inputDir: inputDirForHistory });
+        }
+        if (id !== 'info') {
+            setLastMessage('');
+            setProgress(0);
+            return;
+        }
+        const selected = infoFilePath
+            ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
+            : false;
+        if (selected) return;
+        const selectedFirst = result?.files?.[0];
+        if (selectedFirst?.input_path) {
+            void loadInfoForPath(selectedFirst.input_path);
+            return;
+        }
+        setInfoFilePath('');
+        setInfoPreview(null);
+        setLastMessage('');
+    }, [dirname, id, infoFilePath, loadInfoForPath, normalizePath, rememberRecentDirs]);
 
     const requestCancelProcessing = useCallback(async () => {
         if (!isProcessing) return;
@@ -4461,37 +4500,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         <FileDropZone 
             isActive={isActive}
             onFilesSelected={handleFilesSelected}
-            onPathsExpanded={(result) => {
-                setDropResult(result);
-                const firstFile = result?.files?.[0];
-                const inputDirForHistory = result?.has_directory
-                    ? (firstFile?.source_root || '')
-                    : dirname(firstFile?.input_path || '');
-                if (inputDirForHistory) {
-                    void rememberRecentDirs({ inputDir: inputDirForHistory });
-                }
-                if (id !== 'info') {
-                    setLastMessage('');
-                    setProgress(0);
-                    return;
-                }
-                const selected = infoFilePath
-                    ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
-                    : false;
-                if (selected) return;
-                const selectedFirst = result?.files?.[0];
-                if (selectedFirst?.input_path) {
-                    loadInfoForPath(selectedFirst.input_path);
-                    return;
-                }
-                setInfoFilePath('');
-                setInfoPreview(null);
-                setLastMessage('');
-            }}
+            onPathsExpanded={handlePathsExpanded}
             onItemSelect={(file) => {
                 if (!file?.input_path) return;
                 if (id === 'info') {
-                    loadInfoForPath(file.input_path);
+                    void loadInfoForPath(file.input_path);
                     return;
                 }
                 if (isPreviewFeature) {

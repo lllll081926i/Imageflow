@@ -2,6 +2,11 @@ import type * as AppModule from '../wailsjs/go/main/App';
 
 export type AppBindings = typeof AppModule;
 
+type FilePathRuntime = {
+    CanResolveFilePaths?: () => boolean;
+    ResolveFilePaths?: (files: File[]) => Promise<unknown> | unknown;
+};
+
 export type AppSettingsSnapshot = {
     max_concurrency: number;
     output_prefix: string;
@@ -126,4 +131,43 @@ export function getAppBindings(): Partial<AppBindings> | null {
     const app = window.go?.main?.App;
     if (!app) return null;
     return app as Partial<AppBindings>;
+}
+
+export async function resolveSelectedFilePaths(
+    files: Array<File | { path?: string | null }>,
+    runtimeApi?: FilePathRuntime | null,
+): Promise<string[]> {
+    const directPaths = files
+        .map((file) => {
+            const maybePath = typeof (file as { path?: string | null })?.path === 'string'
+                ? (file as { path?: string | null }).path
+                : '';
+            return normalizeSavedPath(maybePath);
+        })
+        .filter((path) => path !== '');
+
+    if (directPaths.length === files.length) {
+        return directPaths;
+    }
+
+    const runtime = runtimeApi ?? ((globalThis as { window?: { runtime?: FilePathRuntime } }).window?.runtime ?? null);
+    if (!runtime?.ResolveFilePaths) {
+        return [];
+    }
+    if (runtime.CanResolveFilePaths && !runtime.CanResolveFilePaths()) {
+        return [];
+    }
+
+    try {
+        const resolved = await runtime.ResolveFilePaths(files as File[]);
+        if (!Array.isArray(resolved)) {
+            return [];
+        }
+        return resolved
+            .map((item) => normalizeSavedPath(item))
+            .filter((path) => path !== '');
+    } catch (error) {
+        console.error('Failed to resolve selected file paths:', error);
+        return [];
+    }
 }

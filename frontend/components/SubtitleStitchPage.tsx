@@ -4,6 +4,7 @@ import { StyledSlider, Switch } from './Controls';
 import {
     getAppBindings,
     loadAppSettings,
+    resolveSelectedFilePaths,
     updateRecentPaths,
 } from '../types/wails-api';
 
@@ -213,21 +214,17 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
     const handleFileInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(event.target.files || []);
         if (files.length === 0) return;
-        const resolvedPaths = files
-            .map((file) => {
-                const maybePath = (file as any).path;
-                if (typeof maybePath === 'string' && maybePath.trim()) {
-                    return maybePath.trim();
-                }
-                return '';
-            })
-            .filter((path) => path !== '');
-        if (resolvedPaths.length > 0) {
+        void (async () => {
+            const resolvedPaths = await resolveSelectedFilePaths(files);
+            if (resolvedPaths.length === 0) {
+                setError('当前环境无法解析所选文件的本地路径，请优先使用桌面端原生文件选择器。');
+                return;
+            }
             setInputPaths(resolvedPaths);
             setMessage('');
             setError('');
             void updateRecentPaths({ inputDir: dirname(resolvedPaths[0]) });
-        }
+        })();
     }, []);
 
     const handleRemoveInput = useCallback((targetPath: string) => {

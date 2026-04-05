@@ -246,4 +246,4 @@ export function OnFileDropOff() :void
 export function CanResolveFilePaths(): boolean;
 
 // Resolves file paths for an array of files
-export function ResolveFilePaths(files: File[]): void
+export function ResolveFilePaths(files: File[]): Promise<string[]>

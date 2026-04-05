@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useId, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
-import { getAppBindings } from '../types/wails-api';
+import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
 
 // --- Reusable UI Components ---
 
@@ -145,37 +145,126 @@ type SelectOption = string | { label: string; value: string };
 
 export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; value: string; onChange: (val: string) => void }> = memo(({ label, options, value, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [activeIndex, setActiveIndex] = useState(-1);
     const buttonRef = useRef<HTMLButtonElement>(null);
+    const listboxId = useId();
     const [menuStyle, setMenuStyle] = useState<{top: number, left: number, width: number} | null>(null);
     const normalizedOptions = useMemo(() => options.map((opt) => (
         typeof opt === 'string' ? { label: opt, value: opt } : opt
     )), [options]);
+    const selectedIndex = useMemo(() => normalizedOptions.findIndex((opt) => opt.value === value), [normalizedOptions, value]);
     const selectedLabel = useMemo(() => {
         const matched = normalizedOptions.find((opt) => opt.value === value);
         return matched?.label ?? value;
     }, [normalizedOptions, value]);
 
-    const handleToggle = () => {
-        if (!isOpen && buttonRef.current) {
+    const openMenu = useCallback((nextActiveIndex = selectedIndex >= 0 ? selectedIndex : 0) => {
+        if (buttonRef.current) {
             const rect = buttonRef.current.getBoundingClientRect();
             setMenuStyle({
                 top: rect.bottom + 6,
                 left: rect.left,
                 width: rect.width
             });
-            setIsOpen(true);
-        } else {
-            setIsOpen(false);
         }
-    };
+        const maxIndex = Math.max(0, normalizedOptions.length - 1);
+        setActiveIndex(Math.min(Math.max(nextActiveIndex, 0), maxIndex));
+        setIsOpen(true);
+    }, [normalizedOptions.length, selectedIndex]);
+
+    const closeMenu = useCallback(() => {
+        setIsOpen(false);
+        setActiveIndex(-1);
+    }, []);
+
+    const handleToggle = useCallback(() => {
+        if (!isOpen) {
+            openMenu();
+            return;
+        }
+        closeMenu();
+    }, [closeMenu, isOpen, openMenu]);
+
+    const selectOptionAtIndex = useCallback((index: number) => {
+        const option = normalizedOptions[index];
+        if (!option) {
+            return;
+        }
+        onChange(option.value);
+        closeMenu();
+    }, [closeMenu, normalizedOptions, onChange]);
+
+    const moveActiveIndex = useCallback((delta: number) => {
+        if (!normalizedOptions.length) {
+            return;
+        }
+        const start = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
+        const next = (start + delta + normalizedOptions.length) % normalizedOptions.length;
+        setActiveIndex(next);
+    }, [activeIndex, normalizedOptions.length, selectedIndex]);
+
+    const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+        if (!normalizedOptions.length) {
+            if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+            }
+            if (event.key === 'Escape' && isOpen) {
+                event.preventDefault();
+                closeMenu();
+            }
+            return;
+        }
+
+        switch (event.key) {
+            case 'ArrowDown':
+                event.preventDefault();
+                if (!isOpen) {
+                    openMenu(selectedIndex >= 0 ? (selectedIndex + 1) % normalizedOptions.length : 0);
+                    return;
+                }
+                moveActiveIndex(1);
+                return;
+            case 'ArrowUp':
+                event.preventDefault();
+                if (!isOpen) {
+                    const fallbackIndex = selectedIndex >= 0
+                        ? (selectedIndex - 1 + normalizedOptions.length) % normalizedOptions.length
+                        : Math.max(0, normalizedOptions.length - 1);
+                    openMenu(fallbackIndex);
+                    return;
+                }
+                moveActiveIndex(-1);
+                return;
+            case 'Enter':
+            case ' ':
+                event.preventDefault();
+                if (isOpen) {
+                    const nextIndex = activeIndex >= 0 ? activeIndex : selectedIndex;
+                    if (nextIndex >= 0) {
+                        selectOptionAtIndex(nextIndex);
+                    }
+                    return;
+                }
+                openMenu();
+                return;
+            case 'Escape':
+                if (isOpen) {
+                    event.preventDefault();
+                    closeMenu();
+                }
+                return;
+            default:
+                return;
+        }
+    }, [activeIndex, closeMenu, isOpen, moveActiveIndex, normalizedOptions.length, openMenu, selectOptionAtIndex, selectedIndex]);
 
     useEffect(() => {
         if (!isOpen) return;
         const controller = new AbortController();
-        const handleClose = () => setIsOpen(false);
+        const handleClose = () => closeMenu();
         const handleWindowClick = (e: MouseEvent) => {
             if (buttonRef.current && !buttonRef.current.contains(e.target as Node)) {
-                setIsOpen(false);
+                closeMenu();
             }
         };
         window.addEventListener('scroll', handleClose, { capture: true, signal: controller.signal });
@@ -192,6 +281,9 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
         
         const menu = (
             <div 
+                id={listboxId}
+                role="listbox"
+                aria-label={label || '下拉选项'}
                 className="fixed z-[9999] bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-white/10 rounded-xl shadow-xl shadow-black/10 max-h-60 overflow-y-auto no-scrollbar animate-enter p-1.5 origin-top"
                 style={{ 
                     top: menuStyle.top, 
@@ -203,12 +295,19 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
                 {normalizedOptions.map((opt, i) => (
                     <button
                         key={i}
+                        type="button"
+                        role="option"
+                        aria-selected={opt.value === value}
                         onClick={(e) => { 
-                            onChange(opt.value); 
-                            setIsOpen(false); 
+                            e.preventDefault();
+                            selectOptionAtIndex(i);
                         }}
                         className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors mb-0.5 last:mb-0 ${
-                            opt.value === value ? 'bg-[#007AFF]/10 text-[#007AFF] font-medium' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
+                            i === activeIndex
+                                ? 'bg-[#007AFF]/12 text-[#007AFF] font-medium'
+                                : opt.value === value
+                                    ? 'bg-[#007AFF]/10 text-[#007AFF] font-medium'
+                                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
                         }`}
                     >
                         {opt.label}
@@ -224,7 +323,12 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
             {label && <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
             <button
                 ref={buttonRef}
+                type="button"
                 onClick={handleToggle}
+                onKeyDown={handleKeyDown}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? listboxId : undefined}
                 className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-white/5 dark:hover:bg-white/10 border text-sm transition-all duration-200 outline-none ${
                     isOpen ? 'border-[#007AFF] ring-2 ring-[#007AFF]/20 bg-white dark:bg-white/10' : 'border-gray-200 dark:border-white/10'
                 }`}
@@ -515,6 +619,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     isActive = true,
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
+    const [selectionError, setSelectionError] = useState('');
     const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [sortKey, setSortKey] = useState<SortKey>('name');
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
@@ -548,17 +653,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             onPathsExpanded?.(mergedSnapshot);
         }
     }, [onPathsExpanded]);
-    const resolveFilePaths = (files: File[]) => {
-        const direct = files.map((file) => {
-            const anyFile = file as any;
-            return typeof anyFile.path === 'string' && anyFile.path ? anyFile.path : '';
-        }).filter(Boolean);
-        return direct;
-    };
     const expandPathsFromFiles = async (files: File[]) => {
         const app = getAppBindings();
         if (!app?.ExpandDroppedPaths) return null;
-        const paths = resolveFilePaths(files);
+        const paths = await resolveSelectedFilePaths(files);
         if (!paths.length) return null;
         try {
             const result = await app.ExpandDroppedPaths(paths);
@@ -570,17 +668,26 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     };
     const applyFileSelection = async (files: File[]) => {
         onFilesSelected(files);
+        setSelectionError('');
         const expanded = await expandPathsFromFiles(files);
         if (expanded) {
             mergeAndPublishResult(expanded);
             return;
         }
 
+        const resolvedPaths = await resolveSelectedFilePaths(files);
+        if (!resolvedPaths.length) {
+            setSelectionError('当前环境无法解析所选文件的本地路径，请优先使用桌面端原生文件选择器或直接拖入文件。');
+            return;
+        }
+
         const result: ExpandDroppedPathsResult = {
             has_directory: files.some((f) => Boolean(f.webkitRelativePath)),
-            files: files.map((f: File) => {
+            files: files.map((f: File, index: number) => {
                 const anyFile = f as any;
-                const inputPath = typeof anyFile.path === 'string' && anyFile.path ? anyFile.path : f.name;
+                const inputPath = typeof anyFile.path === 'string' && anyFile.path
+                    ? anyFile.path
+                    : (resolvedPaths[index] || '');
                 const relative = f.webkitRelativePath || f.name;
                 const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
                 return {
@@ -959,6 +1066,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
                         {subTitle}
                     </p>
+                    {selectionError && (
+                        <div className="mt-3 text-xs text-red-500 dark:text-red-300 text-center px-6 relative z-10">
+                            {selectionError}
+                        </div>
+                    )}
                     <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         <button
                             type="button"

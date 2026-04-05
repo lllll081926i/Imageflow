@@ -21,6 +21,13 @@ type TaskFailureNotification = {
     createdAt: number;
 };
 
+export function shouldPreventWindowDragEvent(dataTransfer: Pick<DataTransfer, 'types'> | null | undefined): boolean {
+    if (!dataTransfer?.types) {
+        return false;
+    }
+    return Array.from(dataTransfer.types).includes('Files');
+}
+
 const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
@@ -41,6 +48,9 @@ const App: React.FC = () => {
     useEffect(() => {
         // Prevent default drag behaviors to stop opening files in browser
         const preventDefault = (e: DragEvent) => {
+            if (!shouldPreventWindowDragEvent(e.dataTransfer)) {
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
         };
