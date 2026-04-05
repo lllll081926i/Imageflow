@@ -1,6 +1,6 @@
 [project]
 name = "imageflow-python"
-version = "0.0.0"
+version = "1.0.11"
 requires-python = ">=3.10"
 dependencies = [
   "pillow>=10.0.0",
