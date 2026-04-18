@@ -1,0 +1,563 @@
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from PIL import Image, ImageSequence
+
+ENGINE_DIR = Path(__file__).resolve().parents[2] / "engines"
+if str(ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENGINE_DIR))
+
+import gif_splitter
+
+handle_request = gif_splitter.handle_request
+
+
+class GifSplitterTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _path(self, name):
+        return os.path.join(self.temp_dir.name, name)
+
+    def _make_gif(self):
+        path = self._path("sample.gif")
+        frames = [
+            Image.new("RGB", (12, 12), (255, 0, 0)),
+            Image.new("RGB", (12, 12), (0, 255, 0)),
+        ]
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=100,
+            loop=0,
+        )
+        return path
+
+    def _make_rect_gif(self, size=(20, 10)):
+        path = self._path("sample_rect.gif")
+        frames = [
+            Image.new("RGB", size, (255, 0, 0)),
+            Image.new("RGB", size, (0, 255, 0)),
+        ]
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=100,
+            loop=0,
+        )
+        return path
+
+    def _make_short_delay_gif(self, frame_count=6, duration=20):
+        path = self._path("sample_short_delay.gif")
+        frames = [
+            Image.new("RGB", (16, 16), ((idx * 40) % 255, 32, 128))
+            for idx in range(frame_count)
+        ]
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[duration] * frame_count,
+            loop=0,
+        )
+        return path
+
+    def _make_png(self, name, color):
+        path = self._path(name)
+        Image.new("RGB", (12, 12), color).save(path, format="PNG")
+        return path
+
+    def _make_transparent_gif(self):
+        path = self._path("sample_transparent.gif")
+        frames = []
+        for idx in range(4):
+            frame = Image.new("RGBA", (24, 24), (0, 0, 0, 0))
+            x0 = 2 + idx * 4
+            x1 = x0 + 8
+            for x in range(x0, min(x1, 24)):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (255, 0, 0, 255))
+            frames.append(frame)
+        frames[0].save(
+            path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[90] * len(frames),
+            loop=0,
+            disposal=2,
+        )
+        return path
+
+    def _make_apng(self, name="sample.apng"):
+        path = self._path(name)
+        frames = [
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+        ]
+        for idx, frame in enumerate(frames):
+            for x in range(4 + idx * 8, 12 + idx * 8):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (0, 128, 255, 255))
+        frames[0].save(
+            path,
+            format="PNG",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[80, 140],
+            loop=0,
+        )
+        return path
+
+    def _make_webp_animation(self, name="sample.webp"):
+        path = self._path(name)
+        frames = [
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+            Image.new("RGBA", (24, 24), (0, 0, 0, 0)),
+        ]
+        for idx, frame in enumerate(frames):
+            for x in range(3 + idx * 9, 11 + idx * 9):
+                for y in range(8, 16):
+                    frame.putpixel((x, y), (255, 165, 0, 255))
+        frames[0].save(
+            path,
+            format="WEBP",
+            save_all=True,
+            append_images=frames[1:],
+            duration=[70, 130],
+            loop=0,
+            lossless=True,
+            method=6,
+        )
+        return path
+
+    def _ensure_webp_anim_support(self):
+        probe_path = self._path("webp_anim_probe.webp")
+        try:
+            frames = [
+                Image.new("RGBA", (4, 4), (255, 0, 0, 255)),
+                Image.new("RGBA", (4, 4), (0, 255, 0, 255)),
+            ]
+            frames[0].save(
+                probe_path,
+                format="WEBP",
+                save_all=True,
+                append_images=frames[1:],
+                duration=[50, 50],
+                loop=0,
+                lossless=True,
+                method=6,
+            )
+            with Image.open(probe_path) as probe:
+                if getattr(probe, "n_frames", 1) <= 1:
+                    self.skipTest("Pillow build does not support animated WebP")
+        except Exception:
+            self.skipTest("Pillow build does not support animated WebP")
+
+    def _assert_durations_close(self, expected, actual, tolerance=25):
+        self.assertEqual(len(expected), len(actual))
+        for exp, got in zip(expected, actual):
+            self.assertLessEqual(abs(int(exp) - int(got)), tolerance)
+
+    def test_export_frames_png(self):
+        gif_path = self._make_gif()
+        out_dir = self._path("frames")
+        result = handle_request(
+            {
+                "action": "export_frames",
+                "input_path": gif_path,
+                "output_dir": out_dir,
+                "output_format": "png",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("export_count"), 2)
+        for frame_path in result.get("frame_paths", []):
+            self.assertTrue(os.path.exists(frame_path))
+            with Image.open(frame_path) as img:
+                self.assertEqual(img.format, "PNG")
+
+    def test_export_frames_jpg_request_rejected(self):
+        gif_path = self._make_gif()
+        out_dir = self._path("frames_jpg_rejected")
+        result = handle_request(
+            {
+                "action": "export_frames",
+                "input_path": gif_path,
+                "output_dir": out_dir,
+                "output_format": "jpg",
+            }
+        )
+        self.assertFalse(result.get("success"))
+        self.assertIn("Unsupported output format: jpg", result.get("error", ""))
+        self.assertEqual(result.get("error_code"), "GIF_EXPORT_UNSUPPORTED_FORMAT")
+
+    def test_get_frame_count_success(self):
+        gif_path = self._make_gif()
+        result = handle_request({"action": "get_frame_count", "input_path": gif_path})
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("frame_count"), 2)
+
+    def test_get_frame_count_supports_apng_with_png_extension(self):
+        apng_path = self._make_apng("sample.png")
+        result = handle_request({"action": "get_frame_count", "input_path": apng_path})
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("frame_count"), 2)
+
+    def test_get_frame_count_returns_one_for_static_webp(self):
+        static_path = self._path("still.webp")
+        Image.new("RGBA", (12, 12), (255, 0, 0, 255)).save(static_path, format="WEBP", lossless=True, method=6)
+        result = handle_request({"action": "get_frame_count", "input_path": static_path})
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("frame_count"), 1)
+
+    def test_compress_gif_success(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_compress.gif")
+        result = handle_request(
+            {
+                "action": "compress",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "quality": 90,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("quality"), 90)
+        self.assertTrue(os.path.exists(output_path))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+
+    def test_compress_gif_quality_clamped(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_compress_clamped.gif")
+        result = handle_request(
+            {
+                "action": "compress",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "quality": 999,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("quality"), 100)
+
+    def test_compress_gif_quality_invalid_defaults_to_90(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_compress_default.gif")
+        result = handle_request(
+            {
+                "action": "compress_gif",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "quality": "abc",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("quality"), 90)
+
+    def test_compress_gif_preserves_transparent_background(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("sample_transparent_compress.gif")
+        result = handle_request(
+            {
+                "action": "compress",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "quality": 75,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            for frame in ImageSequence.Iterator(img):
+                rgba = frame.convert("RGBA")
+                self.assertEqual(rgba.getpixel((0, 0))[3], 0)
+
+    def test_reverse_gif_success(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_reverse.gif")
+        result = handle_request(
+            {
+                "action": "reverse",
+                "input_path": gif_path,
+                "output_path": output_path,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertTrue(os.path.exists(output_path))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            first_frame = img.convert("RGB")
+            self.assertEqual(first_frame.getpixel((0, 0)), (0, 255, 0))
+
+    def test_change_speed_success(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_speed.gif")
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 0.5,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("speed_factor"), 0.5)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.info.get("duration"), 200)
+
+    def test_change_speed_supports_up_to_three_times(self):
+        gif_path = self._make_gif()
+        output_path = self._path("sample_speed_fast.gif")
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 3.0,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("speed_factor"), 3.0)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.info.get("duration"), 30)
+
+    def test_change_speed_preserves_transparent_background(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("sample_speed_transparent.gif")
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 1.5,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([60, 60, 60, 60], durations)
+            for frame in ImageSequence.Iterator(img):
+                rgba = frame.convert("RGBA")
+                self.assertEqual(rgba.getpixel((0, 0))[3], 0)
+
+    def test_change_speed_does_not_bloat_transparent_gif_size(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("sample_speed_transparent_size.gif")
+        input_size = os.path.getsize(gif_path)
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 2.0,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        output_size = os.path.getsize(output_path)
+        self.assertLessEqual(output_size, int(input_size * 1.25), (input_size, output_size))
+
+    def test_change_speed_merges_frames_when_target_delay_falls_below_gif_granularity(self):
+        gif_path = self._make_short_delay_gif(frame_count=6, duration=20)
+        output_path = self._path("sample_speed_short_delay.gif")
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 3.0,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertLess(getattr(img, "n_frames", 1), 6)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self.assertTrue(all(int(duration) >= 20 for duration in durations), durations)
+            self._assert_durations_close([20, 20], durations, tolerance=10)
+
+    def test_build_gif_success(self):
+        p1 = self._make_png("frame1.png", (255, 0, 0))
+        p2 = self._make_png("frame2.png", (0, 0, 255))
+        output_path = self._path("built.gif")
+        result = handle_request(
+            {
+                "action": "build_gif",
+                "input_paths": [p1, p2],
+                "output_path": output_path,
+                "fps": 5,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("frame_count"), 2)
+        self.assertEqual(result.get("fps"), 5.0)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+
+    def test_resize_gif_keep_aspect_by_width(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_width.gif")
+        result = handle_request(
+            {
+                "action": "resize",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "width": 10,
+                "maintain_aspect": True,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("width"), 10)
+        self.assertEqual(result.get("height"), 5)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.size, (10, 5))
+
+    def test_resize_gif_keep_aspect_in_box(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_box.gif")
+        result = handle_request(
+            {
+                "action": "resize_gif",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "width": 16,
+                "height": 16,
+                "maintain_aspect": True,
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("width"), 16)
+        self.assertEqual(result.get("height"), 8)
+        with Image.open(output_path) as img:
+            self.assertEqual(img.size, (16, 8))
+
+    def test_resize_gif_requires_width_or_height(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_missing.gif")
+        result = handle_request(
+            {
+                "action": "resize",
+                "input_path": gif_path,
+                "output_path": output_path,
+            }
+        )
+        self.assertFalse(result.get("success"))
+        self.assertIn("Missing width or height", result.get("error", ""))
+        self.assertEqual(result.get("error_code"), "GIF_RESIZE_INVALID_SIZE")
+
+    def test_resize_gif_returns_memory_limit_error_code(self):
+        gif_path = self._make_rect_gif((20, 10))
+        output_path = self._path("sample_resize_oom.gif")
+        original_budget = gif_splitter.MAX_FRAME_PIXEL_BUDGET
+        gif_splitter.MAX_FRAME_PIXEL_BUDGET = 10
+        try:
+            result = handle_request(
+                {
+                    "action": "resize",
+                    "input_path": gif_path,
+                    "output_path": output_path,
+                    "width": 20,
+                }
+            )
+        finally:
+            gif_splitter.MAX_FRAME_PIXEL_BUDGET = original_budget
+        self.assertFalse(result.get("success"))
+        self.assertEqual(result.get("error_code"), "GIF_MEMORY_LIMIT")
+
+    def test_unsupported_action_returns_error_code(self):
+        result = handle_request({"action": "unknown_action"})
+        self.assertFalse(result.get("success"))
+        self.assertEqual(result.get("error_code"), "GIF_UNSUPPORTED_ACTION")
+
+    def test_convert_gif_to_apng_preserves_timing_and_alpha(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("converted.apng")
+        result = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "output_format": "apng",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("output_format"), "apng")
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "PNG")
+            self.assertEqual(getattr(img, "n_frames", 1), 4)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([90, 90, 90, 90], durations)
+            for frame in ImageSequence.Iterator(img):
+                self.assertEqual(frame.convert("RGBA").getpixel((0, 0))[3], 0)
+
+    def test_convert_apng_to_webp_preserves_timing_and_alpha(self):
+        self._ensure_webp_anim_support()
+        apng_path = self._make_apng()
+        webp_output_path = self._path("apng_to_webp.webp")
+        result_webp = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": apng_path,
+                "output_path": webp_output_path,
+                "output_format": "webp",
+            }
+        )
+        self.assertTrue(result_webp.get("success"))
+        self.assertEqual(result_webp.get("output_format"), "webp")
+        with Image.open(webp_output_path) as img:
+            self.assertEqual(img.format, "WEBP")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+
+        gif_output_path = self._path("apng_to_webp_to_gif.gif")
+        result_gif = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": webp_output_path,
+                "output_path": gif_output_path,
+                "output_format": "gif",
+            }
+        )
+        self.assertTrue(result_gif.get("success"))
+        with Image.open(gif_output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([80, 140], durations)
+
+    def test_convert_webp_to_gif_preserves_frame_count_and_alpha(self):
+        self._ensure_webp_anim_support()
+        webp_path = self._make_webp_animation()
+        output_path = self._path("webp_to_gif.gif")
+        result = handle_request(
+            {
+                "action": "convert_animation",
+                "input_path": webp_path,
+                "output_path": output_path,
+                "output_format": "gif",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("output_format"), "gif")
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "GIF")
+            self.assertEqual(getattr(img, "n_frames", 1), 2)
+            durations = [frame.info.get("duration", 0) for frame in ImageSequence.Iterator(img)]
+            self._assert_durations_close([70, 130], durations)
+
+
+if __name__ == "__main__":
+    unittest.main()

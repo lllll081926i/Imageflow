@@ -59,5 +59,9 @@ backend/frontend/dist/
 backend/embedded_python/
 backend/embedded_python_runtime/
 
+# Release outputs
+artifacts/
+build/release/
+
 # Test outputs & local fixtures
 test/

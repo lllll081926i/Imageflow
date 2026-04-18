@@ -7,6 +7,7 @@ import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, Fil
 import {
     buildGifProcessSuffix,
     detectAnimatedImagePath,
+    planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
 } from './gifHelpers';
@@ -19,7 +20,7 @@ import {
     loadAppSettings,
     updateRecentPaths,
 } from '../types/wails-api';
-import type { models } from '../wailsjs/go/models';
+import type { models } from '../types/backend-models';
 
 interface DetailViewProps {
     id: ViewState;
@@ -2171,6 +2172,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         }
     }, [gifInputType, gifMode]);
 
+    useEffect(() => {
+        const normalized = clampNumber(Math.round(Number(gifSpeedPercent) || 100), 50, 300);
+        if (normalized !== gifSpeedPercent) {
+            setGifSpeedPercent(normalized);
+        }
+    }, [gifSpeedPercent]);
+
     const renderSettings = () => {
         switch(id) {
             case 'converter':
@@ -2840,7 +2848,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             if (typeof payload.gifMode === 'string') setGifMode(payload.gifMode);
             if (typeof payload.gifExportFormat === 'string') setGifExportFormat(payload.gifExportFormat);
             if (typeof payload.gifConvertFormat === 'string') setGifConvertFormat(payload.gifConvertFormat);
-            if (typeof payload.gifSpeedPercent === 'number') setGifSpeedPercent(payload.gifSpeedPercent);
+            if (typeof payload.gifSpeedPercent === 'number') {
+                setGifSpeedPercent(clampNumber(Math.round(payload.gifSpeedPercent), 50, 300));
+            }
             if (typeof payload.gifCompressQuality === 'number') setGifCompressQuality(payload.gifCompressQuality);
             if (typeof payload.gifBuildFps === 'number') setGifBuildFps(payload.gifBuildFps);
             if (typeof payload.gifResizeWidth === 'number') handleGifResizeWidthChange(payload.gifResizeWidth);
@@ -3402,10 +3412,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const quality = convQuality;
                 const compress_level = convCompressLevel;
                 const ico_sizes = convIcoSizes;
-                const effectiveIcoSizes = (ico_sizes || []).filter((s) => typeof s === 'number' && s > 0);
-                const finalIcoSizes = effectiveIcoSizes.length ? effectiveIcoSizes : [16];
-                const icoSizeTasks = isIcoFormat ? finalIcoSizes : [0];
-                const totalTasks = isIcoFormat ? files.length * icoSizeTasks.length : total;
+                const icoSizeGroups = isIcoFormat ? planIcoConversionSizes(ico_sizes || [], convOverwriteSource) : [[]];
+                const totalTasks = isIcoFormat ? files.length * icoSizeGroups.length : total;
                 const resizeModeMap: Record<string, string> = {
                     '原图尺寸': 'original',
                     '按比例': 'percent',
@@ -3423,13 +3431,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     for (const f of group) {
                         if (cancelRequestedRef.current) break;
                         const input_path = normalizePath(f.input_path);
-                        for (const icoSize of icoSizeTasks) {
+                        for (const icoSizeGroup of icoSizeGroups) {
                             if (cancelRequestedRef.current) break;
                             const canOverwrite = convOverwriteSource && !isIcoFormat;
                             let output_path = input_path;
 
                             if (isIcoFormat) {
-                                const suffix = `_ico${icoSize}`;
+                                const suffix = convOverwriteSource && icoSizeGroup.length === 1
+                                    ? `_ico${icoSizeGroup[0]}`
+                                    : '';
                                 if (convOverwriteSource) {
                                     const sourceFile = basename(input_path);
                                     const sourceBase = stripExtension(sourceFile).replace(/_ico\d+(?:-\d+)*$/i, '');
@@ -3476,8 +3486,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                                 format,
                                 quality,
                                 compress_level,
-                                ico_sizes: isIcoFormat ? [icoSize] : [],
-                                icoSizes: isIcoFormat ? [icoSize] : [],
+                                ico_sizes: isIcoFormat ? icoSizeGroup : [],
+                                icoSizes: isIcoFormat ? icoSizeGroup : [],
                                 width: resize_mode === 'fixed' ? convFixedWidth : 0,
                                 height: resize_mode === 'fixed' ? convFixedHeight : 0,
                                 maintain_ar: convMaintainAR,
@@ -4208,7 +4218,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 }
 
                 const action = resolveGifAction(gifMode);
-                const speedFactor = gifSpeedPercent / 100;
+                const speedFactor = clampNumber(gifSpeedPercent / 100, 0.5, 3);
                 const resizeWidth = Math.max(0, Math.round(Number(gifResizeWidth) || 0));
                 const resizeHeight = Math.max(0, Math.round(Number(gifResizeHeight) || 0));
                 if (action === 'resize' && resizeWidth <= 0 && resizeHeight <= 0) {
@@ -4318,184 +4328,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
 
     const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
-    const previewLabel = previewPath ? previewPath.replace(/\\/g, '/').split('/').pop() || '' : '';
-    const outputNamePreview = useMemo(() => {
-        const list = dropResult?.files || [];
-        if (list.length === 0) return [] as string[];
-        const template = outputSettings.output_template || defaultOutputSettings.output_template;
-        const prefix = outputSettings.output_prefix || defaultOutputSettings.output_prefix;
-        const preserveStructure = Boolean(outputSettings.preserve_folder_structure);
-        const now = new Date();
-        const sample = list.slice(0, 3);
-
-        if (id === 'pdf') {
-            const pdfBase = normalizePdfFileName(pdfFileName) || 'output';
-            const name = buildOutputName(pdfBase, {
-                template,
-                prefix,
-                seq: 1,
-                op: 'pdf',
-                date: now,
-            });
-            return [`${name}.pdf`];
-        }
-
-        if (id === 'gif' && gifMode === '导出') {
-            if (sample.every((f) => isGifPath(f.input_path))) {
-                return sample.map((f, idx) => {
-                    const name = basename(f.input_path).replace(/\.[^.]+$/, '');
-                    const rel = getRelPath(f, preserveStructure);
-                    const relDir = getRelDir(rel);
-                    const folderName = buildOutputName(`${name}_frames`, {
-                        template,
-                        prefix,
-                        seq: idx + 1,
-                        op: 'gif_frames',
-                        date: now,
-                    });
-                    const folder = relDir ? `${relDir}/${folderName}` : folderName;
-                    return `${folder}/[frame].${gifExportFormat.toLowerCase()}`;
-                });
-            }
-            const combined = buildOutputName('output_combined', {
-                template,
-                prefix,
-                seq: 1,
-                op: 'gif_build',
-                date: now,
-            });
-            return [`${combined}.gif`];
-        }
-
-        if (id === 'gif' && gifMode === '互转') {
-            const targetExtMap: Record<string, string> = {
-                GIF: 'gif',
-                APNG: 'apng',
-                WEBP: 'webp',
-            };
-            const targetLabel = (gifConvertFormat || 'WEBP').toUpperCase();
-            const targetExt = targetExtMap[targetLabel] || 'webp';
-            return sample.map((f, idx) => {
-                const seq = idx + 1;
-                return buildOutputRelPath(f, {
-                    suffix: buildGifProcessSuffix(
-                        'convert_animation',
-                        gifSpeedPercent,
-                        gifCompressQuality,
-                        gifResizeWidth,
-                        gifResizeHeight,
-                        targetLabel,
-                    ),
-                    seq,
-                    op: 'gif_convert',
-                    ext: targetExt,
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            });
-        }
-
-        return sample.map((f, idx) => {
-            const seq = idx + 1;
-            if (id === 'converter') {
-                return buildOutputRelPath(f, {
-                    ext: convFormat.toLowerCase(),
-                    seq,
-                    op: 'converter',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            if (id === 'compressor') {
-                return buildOutputRelPath(f, {
-                    seq,
-                    op: 'compressor',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            if (id === 'watermark') {
-                return buildOutputRelPath(f, {
-                    suffix: '_watermark',
-                    seq,
-                    op: 'watermark',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            if (id === 'adjust') {
-                return buildOutputRelPath(f, {
-                    suffix: '_adjusted',
-                    seq,
-                    op: 'adjust',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            if (id === 'filter') {
-                return buildOutputRelPath(f, {
-                    suffix: '_filtered',
-                    seq,
-                    op: 'filter',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            if (id === 'gif') {
-                const action = resolveGifAction(gifMode);
-                const suffix = buildGifProcessSuffix(
-                    action,
-                    gifSpeedPercent,
-                    gifCompressQuality,
-                    gifResizeWidth,
-                    gifResizeHeight,
-                    gifConvertFormat,
-                );
-                return buildOutputRelPath(f, {
-                    suffix,
-                    seq,
-                    op: 'gif',
-                    template,
-                    prefix,
-                    preserveStructure,
-                    date: now,
-                });
-            }
-            return buildOutputRelPath(f, {
-                seq,
-                op: id,
-                template,
-                prefix,
-                preserveStructure,
-                date: now,
-            });
-        });
-    }, [
-        convFormat,
-        dropResult,
-        gifCompressQuality,
-        gifConvertFormat,
-        gifExportFormat,
-        gifMode,
-        gifResizeHeight,
-        gifResizeWidth,
-        gifSpeedPercent,
-        id,
-        outputSettings,
-        pdfFileName,
-    ]);
     const dropZone = (
         <FileDropZone 
             isActive={isActive}
@@ -4606,17 +4438,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                                 </button>
                             </div>
                         </div>
-                    )}
-                </div>
-            )}
-            {id !== 'info' && outputNamePreview.length > 0 && (
-                <div className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 space-y-1">
-                    <div className="text-gray-500 dark:text-gray-400">输出命名预览</div>
-                    {outputNamePreview.map((name, idx) => (
-                        <div key={`${name}-${idx}`} className="font-mono break-all">{name}</div>
-                    ))}
-                    {(dropResult?.files?.length || 0) > outputNamePreview.length && (
-                        <div className="text-gray-400">... 共 {dropResult?.files?.length} 项</div>
                     )}
                 </div>
             )}
@@ -4813,11 +4634,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             <div className="flex items-center justify-between mb-4 gap-3">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
                 <div className="flex items-center gap-2">
-                    {previewLabel && (
-                        <span className="text-[11px] text-gray-400 font-mono truncate max-w-[180px]">
-                            {previewLabel}
-                        </span>
-                    )}
                     <button
                         type="button"
                         disabled={!previewSrc}

@@ -1,6 +1,5 @@
-import type * as AppModule from '../wailsjs/go/main/App';
-
-export type AppBindings = typeof AppModule;
+import type { AppBindings } from './backend-bindings';
+import { getDesktopBindings } from './desktop-api';
 
 type FilePathRuntime = {
     CanResolveFilePaths?: () => boolean;
@@ -128,20 +127,21 @@ export async function updateRecentPaths(payload: { inputDir?: string; outputDir?
 }
 
 export function getAppBindings(): Partial<AppBindings> | null {
-    const app = window.go?.main?.App;
+    const app = getDesktopBindings();
     if (!app) return null;
     return app as Partial<AppBindings>;
 }
 
 export async function resolveSelectedFilePaths(
-    files: Array<File | { path?: string | null }>,
+    files: Array<File | { path?: string | null; pywebviewFullPath?: string | null }>,
     runtimeApi?: FilePathRuntime | null,
 ): Promise<string[]> {
     const directPaths = files
         .map((file) => {
-            const maybePath = typeof (file as { path?: string | null })?.path === 'string'
-                ? (file as { path?: string | null }).path
-                : '';
+            const candidate = file as { path?: string | null; pywebviewFullPath?: string | null };
+            const maybePath = typeof candidate?.path === 'string' && candidate.path
+                ? candidate.path
+                : (typeof candidate?.pywebviewFullPath === 'string' ? candidate.pywebviewFullPath : '');
             return normalizeSavedPath(maybePath);
         })
         .filter((path) => path !== '');

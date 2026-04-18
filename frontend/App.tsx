@@ -203,7 +203,7 @@ const App: React.FC = () => {
         <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
             {/* Custom Title Bar */}
             <div 
-                className="h-11 flex items-center justify-between px-4 bg-[#F5F5F7] dark:bg-[#1E1E1E] select-none shrink-0 z-50 relative"
+                className="h-11 flex items-center gap-3 px-4 bg-[#F5F5F7] dark:bg-[#1E1E1E] select-none shrink-0 z-50 relative"
                 style={{ ['--wails-draggable' as any]: 'drag' }}
             >
                 {/* Logo & Title */}
@@ -220,8 +220,10 @@ const App: React.FC = () => {
                     <span className="text-sm font-semibold tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-[#007AFF] via-[#5856D6] to-[#AF52DE]">ImageFlow</span>
                 </button>
 
+                <div className="pywebview-drag-region flex-1 h-full min-w-0" aria-hidden="true" />
+
                 {/* Window Controls */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                     <div
                         ref={notificationContainerRef}
                         className="relative"

@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { Switch, StyledSlider, CustomSelect, SegmentedControl } from './Controls';
+import { getGifModesForInputKind, type GifInputKind } from './gifHelpers';
 
 export type GifSettingsPanelProps = {
     mode: string;
@@ -12,7 +13,7 @@ export type GifSettingsPanelProps = {
     setSpeedPercent: (v: number) => void;
     compressQuality: number;
     setCompressQuality: (v: number) => void;
-    sourceType: 'gif' | 'images' | 'mixed' | 'empty';
+    sourceType: GifInputKind;
     buildFps: number;
     setBuildFps: (v: number) => void;
     resizeWidth: number;
@@ -48,6 +49,8 @@ const GifSettingsPanel = memo(({
     originalWidth,
     originalHeight,
 }: GifSettingsPanelProps) => {
+    const modeOptions = getGifModesForInputKind(sourceType);
+
     if (sourceType === 'images') {
         return (
             <div className="space-y-6">
@@ -78,11 +81,17 @@ const GifSettingsPanel = memo(({
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
                 <SegmentedControl
-                    options={['导出', '互转', '倒放', '修改帧率', '压缩', '缩放']}
+                    options={modeOptions}
                     value={mode}
                     onChange={setMode}
                 />
             </div>
+
+            {sourceType === 'animated' && (
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-xs text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-500/10">
+                    当前输入包含 APNG 或 Animated WebP，仅支持导出帧与互转；倒放、调速、压缩、缩放仅支持 GIF。
+                </div>
+            )}
 
             {mode === '导出' && (
                 <div className="space-y-3 animate-enter">
@@ -115,14 +124,14 @@ const GifSettingsPanel = memo(({
             {mode === '修改帧率' && (
                 <div className="animate-enter space-y-3">
                     <StyledSlider
-                        label="帧率倍数 (10%-200%)"
+                        label="播放速度 (0.5x-3x)"
                         value={speedPercent}
-                        min={10}
-                        max={200}
+                        min={50}
+                        max={300}
                         onChange={setSpeedPercent}
                     />
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                        10% 表示 10 倍慢，200% 表示 2 倍快。
+                        50% 为 0.5 倍速，100% 为原速，300% 为 3 倍速。
                     </div>
                 </div>
             )}
@@ -188,7 +197,7 @@ const GifSettingsPanel = memo(({
 
             {sourceType === 'mixed' && (
                 <div className="text-xs text-red-500">
-                    请只选择 GIF 或图片序列，混合输入会导致操作失败。
+                    请不要混合动图和静态图输入，否则当前模式会处理失败。
                 </div>
             )}
         </div>

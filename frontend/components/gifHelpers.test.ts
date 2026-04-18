@@ -5,8 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     buildGifProcessSuffix,
     detectAnimatedImagePath,
+    getGifModesForInputKind,
+    getPreferredGifModeForInputKind,
+    planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
+    summarizeGifInputPaths,
 } from './gifHelpers';
 import { CustomSelect } from './Controls';
 import { useGifResizeState } from './hooks/useGifResizeState';
@@ -70,6 +74,15 @@ describe('resolveSelectedFilePaths', () => {
         ] as any;
 
         await expect(resolveSelectedFilePaths(files)).resolves.toEqual(['C:/tmp/a.png', 'C:/tmp/b.png']);
+    });
+
+    it('支持 pywebview 拖拽事件提供的 pywebviewFullPath', async () => {
+        const files = [
+            { pywebviewFullPath: 'D:/drop/a.png', name: 'a.png' },
+            { pywebviewFullPath: 'D:/drop/b.png', name: 'b.png' },
+        ] as any;
+
+        await expect(resolveSelectedFilePaths(files)).resolves.toEqual(['D:/drop/a.png', 'D:/drop/b.png']);
     });
 
     it('在没有直接路径时会使用运行时解析本地路径', async () => {
@@ -184,6 +197,20 @@ describe('resolveConverterOverwritePath', () => {
     });
 });
 
+describe('planIcoConversionSizes', () => {
+    it('在未选择尺寸时保留空数组，让后端决定默认尺寸集', () => {
+        expect(planIcoConversionSizes([], false)).toEqual([[]]);
+    });
+
+    it('在非覆盖模式下为一个 ICO 请求保留多尺寸', () => {
+        expect(planIcoConversionSizes([64, 16, 32, 32], false)).toEqual([[16, 32, 64]]);
+    });
+
+    it('在覆盖源文件模式下拆成多个单尺寸任务，避免同一路径冲突', () => {
+        expect(planIcoConversionSizes([64, 16, 32], true)).toEqual([[16], [32], [64]]);
+    });
+});
+
 describe('detectAnimatedImagePath', () => {
     it('对 gif 和 apng 扩展名直接判定为动图', async () => {
         const probe = vi.fn();
@@ -206,6 +233,66 @@ describe('detectAnimatedImagePath', () => {
 
         await expect(detectAnimatedImagePath('C:/tmp/a.webp', probe)).resolves.toBe(false);
         expect(probe).toHaveBeenCalledWith('C:/tmp/a.webp');
+    });
+});
+
+describe('summarizeGifInputPaths', () => {
+    it('会把带 png 扩展名的 APNG 归类为 animated，而不是 images', async () => {
+        const probe = vi.fn().mockResolvedValue(4);
+
+        await expect(summarizeGifInputPaths(['C:/tmp/sample.png'], probe)).resolves.toMatchObject({
+            kind: 'animated',
+            hasAnimated: true,
+            hasStatic: false,
+            hasGif: false,
+            hasNonGifAnimated: true,
+        });
+    });
+
+    it('会把单帧 webp 归类为 images', async () => {
+        const probe = vi.fn().mockResolvedValue(1);
+
+        await expect(summarizeGifInputPaths(['C:/tmp/still.webp'], probe)).resolves.toMatchObject({
+            kind: 'images',
+            hasAnimated: false,
+            hasStatic: true,
+            hasGif: false,
+            hasNonGifAnimated: false,
+        });
+    });
+
+    it('会把 gif 与 apng 混合输入归类为 animated，以允许导出和互转', async () => {
+        const probe = vi.fn().mockResolvedValue(3);
+
+        await expect(summarizeGifInputPaths(['C:/tmp/a.gif', 'C:/tmp/b.png'], probe)).resolves.toMatchObject({
+            kind: 'animated',
+            hasAnimated: true,
+            hasStatic: false,
+            hasGif: true,
+            hasNonGifAnimated: true,
+        });
+    });
+
+    it('会把动图和静态图混合输入归类为 mixed', async () => {
+        const probe = vi.fn().mockResolvedValue(2);
+
+        await expect(summarizeGifInputPaths(['C:/tmp/a.png', 'C:/tmp/b.jpg'], probe)).resolves.toMatchObject({
+            kind: 'mixed',
+            hasAnimated: true,
+            hasStatic: true,
+        });
+    });
+});
+
+describe('GIF 输入模式选项', () => {
+    it('animated 输入仅开放导出和互转', () => {
+        expect(getGifModesForInputKind('animated')).toEqual(['导出', '互转']);
+        expect(getPreferredGifModeForInputKind('animated')).toBe('互转');
+    });
+
+    it('gif 输入保留全部模式', () => {
+        expect(getGifModesForInputKind('gif')).toEqual(['导出', '互转', '倒放', '修改帧率', '压缩', '缩放']);
+        expect(getPreferredGifModeForInputKind('gif')).toBe('导出');
     });
 });
 

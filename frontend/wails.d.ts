@@ -1,4 +1,4 @@
-import type { AppBindings } from './types/wails-api';
+import type { AppBindings } from './types/backend-bindings';
 
 export {};
 
@@ -27,6 +27,8 @@ type WailsRuntimeBridge = {
   OnFileDropOff?: () => void;
   OpenFileDialog?: (options?: RuntimeOpenFileDialogOptions) => Promise<string | string[] | null | undefined>;
   OpenDirectoryDialog?: (options?: RuntimeOpenDirectoryDialogOptions) => Promise<string | null | undefined>;
+  ResolveFilePaths?: (files: File[]) => Promise<unknown> | unknown;
+  CanResolveFilePaths?: () => boolean;
 };
 
 declare global {
@@ -35,6 +37,17 @@ declare global {
     go?: {
       main?: {
         App?: Partial<AppBindings>;
+      };
+    };
+    pywebview?: {
+      api?: Partial<AppBindings> & {
+        OpenFileDialog?: (options?: RuntimeOpenFileDialogOptions) => Promise<string | string[] | null | undefined>;
+        OpenDirectoryDialog?: (options?: RuntimeOpenDirectoryDialogOptions) => Promise<string | null | undefined>;
+        Quit?: () => void | Promise<void>;
+        WindowMinimise?: () => void | Promise<void>;
+        WindowToggleMaximise?: () => void | Promise<void>;
+        ResolveFilePaths?: (files: File[]) => Promise<unknown> | unknown;
+        CanResolveFilePaths?: () => boolean;
       };
     };
   }

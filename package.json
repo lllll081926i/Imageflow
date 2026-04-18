@@ -1,0 +1,14 @@
+{
+  "name": "imageflow-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:portable": "npm run build:frontend && uv run python -m backend.packaging.release_builder portable",
+    "build:installer": "npm run build:frontend && uv run python -m backend.packaging.release_builder installer",
+    "build:release": "npm run build:frontend && uv run python -m backend.packaging.release_builder all",
+    "test:backend": "uv run python -m unittest discover -s backend/tests -v",
+    "test:backend:engines": "uv run python -m unittest discover -s backend/tests/engines -v"
+  }
+}

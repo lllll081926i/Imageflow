@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Wails-v2.11.0-0f172a?style=for-the-badge&logo=go" alt="Wails" />
-  <img src="https://img.shields.io/badge/Go-1.24-00ADD8?style=for-the-badge&logo=go" alt="Go" />
+  <img src="https://img.shields.io/badge/pywebview-6.2-0f172a?style=for-the-badge&logo=python" alt="pywebview" />
+  <img src="https://img.shields.io/badge/uv-managed-111827?style=for-the-badge&logo=python" alt="uv" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111827" alt="React" />
   <img src="https://img.shields.io/badge/Python-%3E%3D3.10-3776AB?style=for-the-badge&logo=python&logoColor=ffdd54" alt="Python" />
   <img src="https://img.shields.io/badge/License-MIT-16a34a?style=for-the-badge" alt="MIT" />
@@ -20,11 +20,13 @@
 
 ## 项目定位
 
-ImageFlow 采用 **Go + Python + React + Wails** 混合架构：
-- **Go**：负责桌面应用生命周期、任务调度、并发执行、错误恢复。
-- **Python**：负责图像算法和文件处理（Pillow/ReportLab/piexif 等）。
-- **React**：负责可视化交互界面与实时进度反馈。
-- **Wails**：负责前后端桥接，形成桌面端一体化体验。
+ImageFlow 当前采用 **纯 Python 后端 + React 前端 + pywebview 宿主** 架构：
+- **backend/main.py**：桌面应用入口，负责窗口启动与宿主生命周期。
+- **backend/api/**：统一对前端暴露的桌面 API，保持原有调用面兼容。
+- **backend/application/**：任务管理、批处理、预览与执行编排。
+- **backend/engines/**：图像能力引擎，负责转换、压缩、GIF、PDF、水印、调色、滤镜、元数据等核心处理。
+- **React**：保留原有前端界面与交互。
+- **pywebview**：提供桌面窗口、原生对话框与拖拽桥接。
 
 适用场景：
 - 批量格式转换与压缩
@@ -39,13 +41,13 @@ ImageFlow 采用 **Go + Python + React + Wails** 混合架构：
 
 ```mermaid
 flowchart LR
-    UI[React + TypeScript 前端] --> Bridge[Wails JS Bridge]
-    Bridge --> App[Go App 层]
-    App --> Services[Service 层<br/>Converter/Compressor/PDF/GIF/Info/Watermark/Adjust/Filter/Metadata]
-    Services --> Runner[PythonExecutor / ExecutorPool]
-    Runner --> Worker[worker.py 长驻进程]
-    Worker --> Scripts[converter.py / compressor.py / ...]
-    Scripts --> Libs[Pillow + ReportLab + piexif + exifread]
+    UI[React + TypeScript 前端] --> Bridge[Desktop Runtime Shim]
+    Bridge --> Host[pywebview Host]
+    Host --> API[backend/api/DesktopAPI]
+    API --> App[application 层<br/>task_manager / image_ops / preview]
+    App --> Engines[backend/engines]
+    Engines --> Worker[worker.py / multiprocessing]
+    Worker --> Libs[Pillow + ReportLab + piexif + exifread]
     Libs --> IO[本地文件读写]
 ```
 
@@ -53,17 +55,17 @@ flowchart LR
 sequenceDiagram
     participant User as 用户
     participant FE as 前端
-    participant Go as Go 后端
-    participant Py as Python Worker
+    participant Host as pywebview Host
+    participant Py as Python Backend
     participant FS as 文件系统
 
     User->>FE: 选择文件 + 设置参数
-    FE->>Go: 调用 Wails 绑定方法
-    Go->>Py: JSON 请求(script + input)
+    FE->>Host: 调用桌面绑定方法
+    Host->>Py: 调用 DesktopAPI / application
     Py->>FS: 读取/处理/写入图片
     FS-->>Py: 输出结果
-    Py-->>Go: JSON 响应(success/error)
-    Go-->>FE: 结果 + 进度事件
+    Py-->>Host: 响应(success/error)
+    Host-->>FE: 结果 + 原生能力回传
     FE-->>User: 展示处理状态与产物
 ```
 
@@ -73,15 +75,15 @@ sequenceDiagram
 
 | 模块 | 主要能力 | 关键实现 |
 |---|---|---|
-| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO 输出；支持缩放/长边/固定尺寸；可选保留 EXIF | `backend/services/converter.go` + `backend/python/converter.py` |
-| 图片压缩 | 5 档压缩策略（无损到极限）；可指定目标体积；支持元数据剥离 | `compressor.go` + `compressor.py`（MozJPEG/PNGQuant/OxiPNG/Pillow） |
-| 转 PDF | 多图合并 PDF；页面尺寸、方向、边距、排版网格 | `pdf_generator.go` + `pdf_generator.py` |
-| GIF 工具 | 拆帧、倒放、变速、多图合成 GIF | `gif_splitter.go` + `gif_splitter.py` |
-| 信息查看 | 读取格式/尺寸/位深/EXIF/直方图等信息 | `info_viewer.go` + `info_viewer.py` |
-| 元数据处理 | EXIF 编辑；隐私清理（Strip Metadata） | `app.go` + `metadata.go` + `metadata_tool.py` |
-| 图片水印 | 文字/图片水印、九宫格定位、平铺、混合模式、阴影 | `watermark.go` + `watermark.py` |
-| 图片调整 | 旋转、翻转、亮度/对比度/饱和度/色相/锐度、裁剪比例 | `adjuster.go` + `adjuster.py` |
-| 图片滤镜 | 基础滤镜 + 高级滤镜 + 30+ 预设滤镜 | `filter.go` + `filter.py` |
+| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO 输出；支持缩放/长边/固定尺寸；可选保留 EXIF | `backend/engines/converter.py` |
+| 图片压缩 | 5 档压缩策略（无损到极限）；可指定目标体积；支持元数据剥离 | `backend/engines/compressor.py` |
+| 转 PDF | 多图合并 PDF；页面尺寸、方向、边距、排版网格 | `backend/engines/pdf_generator.py` |
+| GIF 工具 | 拆帧、倒放、变速、多图合成 GIF | `backend/engines/gif_splitter.py` |
+| 信息查看 | 读取格式/尺寸/位深/EXIF/直方图等信息 | `backend/engines/info_viewer.py` |
+| 元数据处理 | EXIF 编辑；隐私清理（Strip Metadata） | `backend/engines/metadata_tool.py` |
+| 图片水印 | 文字/图片水印、九宫格定位、平铺、混合模式、阴影 | `backend/engines/watermark.py` |
+| 图片调整 | 旋转、翻转、亮度/对比度/饱和度/色相/锐度、裁剪比例 | `backend/engines/adjuster.py` |
+| 图片滤镜 | 基础滤镜 + 高级滤镜 + 30+ 预设滤镜 | `backend/engines/filter.py` |
 
 ---
 
@@ -94,8 +96,8 @@ sequenceDiagram
 - Tailwind CSS `4.x`
 
 ### 后端
-- Go `1.24`
-- Wails `v2.11.0`
+- pywebview `6.x`
+- uv（Python 依赖与运行管理）
 
 ### Python 图像栈
 - Python `>=3.10`
@@ -112,25 +114,20 @@ sequenceDiagram
 Imageflow/
 ├── frontend/                    # React + Vite UI
 │   ├── components/              # 核心界面组件
-│   ├── wailsjs/                 # Wails 自动生成绑定
+│   ├── runtime/                 # 桌面宿主运行时兼容层
+│   ├── types/                   # 前后端绑定与模型定义
+│   ├── wailsjs/                 # 历史生成绑定（前端兼容层仍会复用类型）
 │   └── ...
-├── backend/                     # Go + Wails 后端
-│   ├── app.go                   # 对外绑定方法（前端调用入口）
-│   ├── main.go                  # Wails 应用入口
-│   ├── services/                # 各业务服务
-│   ├── utils/                   # Python执行器、设置存储、路径工具等
-│   ├── models/                  # 请求/响应结构定义
-│   └── python/                  # Python处理脚本
-│       ├── worker.py            # 长驻 Worker（减少进程开销）
-│       ├── converter.py
-│       ├── compressor.py
-│       ├── pdf_generator.py
-│       ├── gif_splitter.py
-│       ├── info_viewer.py
-│       ├── metadata_tool.py
-│       ├── watermark.py
-│       ├── adjuster.py
-│       └── filter.py
+├── backend/                     # 纯 Python 后端
+│   ├── api/                     # 前端可调用 API
+│   ├── application/             # 应用编排与任务管理
+│   ├── domain/                  # 领域路径与规则
+│   ├── infrastructure/          # 对话框、设置、窗口控制
+│   ├── host/                    # pywebview 宿主接线
+│   ├── engines/                 # 图像能力引擎
+│   ├── testdata/                # 测试数据
+│   ├── tests/                   # 后端与引擎回归测试
+│   └── main.py                  # pywebview 应用入口
 ├── docs/                        # 架构与需求文档
 ├── pyproject.toml               # Python依赖（uv）
 └── README.md
@@ -143,9 +140,8 @@ Imageflow/
 ### 1) 环境准备
 
 - Node.js（建议 LTS）
-- Go `1.24+`
 - Python `3.10+`
-- Wails CLI
+- uv
 
 ### 2) 安装依赖
 
@@ -157,29 +153,54 @@ npm install
 # Python 依赖（推荐）
 cd ..
 uv sync
-
-# Go 依赖
-cd backend
-go mod download
 ```
 
 ### 3) 启动开发
 
 ```bash
-# 仓库根目录
-wails dev
+# 根目录一条命令启动开发模式
+npm run dev
 ```
+
+该命令会自动启动 Vite 前端开发服务器和 pywebview 桌面宿主。前端页面支持 Vite HMR，`backend/**/*.py` 变更后会自动重启 Python 宿主。
 
 ### 4) 构建发布
 
 ```bash
-# 构建前端
-cd frontend
-npm run build
+# 同步 Python 运行与打包依赖
+uv sync --group build
 
-# 构建桌面应用
-cd ..
-wails build
+# 构建便携版 zip 和 Inno Setup 6 安装版
+npm run build:release
+```
+
+发布产物输出到 `artifacts/release/`：
+
+| 产物 | 文件名格式 | 说明 |
+|---|---|---|
+| 便携版 | `ImageFlow-portable-<version>-windows-amd64.zip` | 解压后直接运行 `ImageFlow.exe` |
+| 安装版 | `ImageFlow-setup-<version>-windows-amd64.exe` | Inno Setup 6 安装器 |
+
+也可以单独构建：
+
+```bash
+# 仅构建便携版
+npm run build:portable
+
+# 仅构建安装版
+npm run build:installer
+```
+
+安装版构建依赖 Inno Setup 6。若 `ISCC.exe` 不在系统 `PATH` 中，可设置：
+
+```bash
+export INNO_SETUP_ISCC="C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+```
+
+本地只验证发布态运行时，可先执行 `npm run build:frontend`，再运行：
+
+```bash
+uv run python -m backend.main
 ```
 
 ---
@@ -200,9 +221,9 @@ wails build
 ## 并发与性能设计
 
 - 默认并发 `8`，可在设置中调节 `1-32`。
-- `PythonExecutorPool` 支持多执行器并行调度。
-- `worker.py` 长驻进程 + 模块预热，降低重复启动成本。
-- 批处理任务提供进度事件回传，前端可实时展示。
+- `backend/application/image_ops.py` 基于 `multiprocessing` 调度多进程执行。
+- `backend/engines/worker.py` 保留模块预热与脚本级兼容能力。
+- 批处理任务通过 `TaskManager` 管理取消与进程回收。
 - 大图预览支持阈值控制，防止前端内存飙升。
 
 ---
@@ -213,9 +234,6 @@ wails build
 
 | 变量名 | 说明 |
 |---|---|
-| `IMAGEFLOW_PYTHON_EXE` | 指定 Python 解释器（必须是 Python 3） |
-| `IMAGEFLOW_SCRIPTS_DIR` | 指定 Python 脚本目录（默认自动探测） |
-| `IMAGEFLOW_FILE_LOG=1` | 启用文件日志 |
 | `IMAGEFLOW_PREVIEW_MAX_BYTES` | 预览文件大小阈值（字节） |
 | `IMAGEFLOW_PROFILE=1` | 打开 Python 侧性能/能力检测日志 |
 
@@ -259,14 +277,16 @@ Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/set
 
 ```bash
 # Python 单元测试
-python -m unittest discover -s backend/python/tests
+uv run python -m unittest discover -s backend/tests -v
 
-# Go 单元测试
-cd backend
-go test ./...
+# Python 引擎回归测试
+uv run python -m unittest discover -s backend/tests/engines -v
+
+# 发布配置回归测试
+uv run python -m unittest backend.tests.test_release_builder -v
 
 # 前端构建检查
-cd ../frontend
+cd frontend
 npm run build
 ```
 
@@ -279,12 +299,12 @@ npm run build
 - 或显式设置 `IMAGEFLOW_PYTHON_EXE` 为 Python 3 路径
 
 ### 2. 找不到 Python 脚本目录
-- 检查 `backend/python` 是否完整
-- 必要时设置 `IMAGEFLOW_SCRIPTS_DIR`
+- 检查 `backend/engines` 是否完整
+- 先执行 `uv sync`，确保 `.venv` 和依赖已同步
 
 ### 3. 打包后界面空白或资源缺失
 - 先执行 `cd frontend && npm run build`
-- 再执行 `wails build`
+- 再执行 `uv run python -m backend.main`
 
 ### 4. 批量任务速度不稳定
 - 调整 `max_concurrency`（通常 4-16 更稳）
@@ -299,7 +319,8 @@ npm run build
 - 压缩方案：`docs/image-compression.md`
 - 综合需求：`docs/ImageFlow 综合需求文档.md`
 - 开发指南：`docs/ImageFlow_Development_Guide_Final.md`
-- 交互方案：`docs/Wails v3 React + Go 拖拽文件交互技术方案.md`
+- 迁移设计：`docs/superpowers/specs/2026-04-17-python-backend-migration-design.md`
+- 迁移计划：`docs/superpowers/plans/2026-04-17-python-backend-migration.md`
 
 ---
 

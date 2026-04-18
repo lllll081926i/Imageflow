@@ -14,12 +14,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -27,11 +21,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Sync Python deps
-        run: uv sync
+        run: uv sync --group build
 
       - name: Install frontend deps
         working-directory: frontend
@@ -49,61 +50,31 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Run Go tests
-        working-directory: backend
-        run: go test ./...
-
       - name: Run Python tests
-        run: uv run python -m unittest discover -s backend/python/tests
+        run: uv run python -m unittest discover -s backend/tests -v
 
-      - name: Setup Wails CLI
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-        working-directory: backend
-        shell: pwsh
-        run: |
-          $version = go list -m -f "{{.Version}}" github.com/wailsapp/wails/v2
-          go install "github.com/wailsapp/wails/v2/cmd/wails@$version"
-          $gopath = go env GOPATH
-          Add-Content -Path $env:GITHUB_PATH -Value "$gopath/bin"
+      - name: Run Python engine tests
+        run: uv run python -m unittest discover -s backend/tests/engines -v
 
-      - name: Setup NSIS
+      - name: Setup Inno Setup 6
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
-          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
-            choco install nsis -y --no-progress
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
           }
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files (x86)\Inno Setup 6"
 
-      - name: Prepare package artifacts
+      - name: Build Windows release packages
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-        shell: pwsh
-        run: New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-
-      - name: Build single-file exe
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-        working-directory: backend
-        shell: pwsh
-        run: |
-          wails build -platform windows/amd64 -clean
-          Copy-Item "build/bin/ImageFlow.exe" "../artifacts/ImageFlow-single.exe" -Force
-
-      - name: Build installer exe
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-        working-directory: backend
-        shell: pwsh
-        run: |
-          wails build -platform windows/amd64 -nsis -clean
-          $installer = Get-ChildItem "build/bin" -Filter "*installer.exe" | Select-Object -First 1
-          if ($null -eq $installer) {
-            Write-Error "Installer exe not found in backend/build/bin"
-            exit 1
-          }
-          Copy-Item $installer.FullName "../artifacts/ImageFlow-installer.exe" -Force
+        run: npm run build:release
 
       - name: Upload Windows packages
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: imageflow-windows-exe
-          path: artifacts/*.exe
+          name: imageflow-windows-release
+          path: |
+            artifacts/release/ImageFlow-portable-*.zip
+            artifacts/release/ImageFlow-setup-*.exe
           if-no-files-found: error

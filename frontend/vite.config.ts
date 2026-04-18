@@ -9,7 +9,7 @@ export default defineConfig(() => {
             host: '0.0.0.0',
         },
         build: {
-            outDir: '../backend/frontend/dist',
+            outDir: 'dist',
             emptyOutDir: true,
         },
         plugins: [react()],
