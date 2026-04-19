@@ -43,6 +43,13 @@ const normalizeSavedPath = (value: unknown) => {
     return normalized || trimmed;
 };
 
+const savedPathKey = (value: string) => value.replace(/\\/g, '/').toLowerCase();
+
+const finiteNumberOr = (value: unknown, fallback: number) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : fallback;
+};
+
 const normalizeRecentPaths = (value: unknown) => {
     if (!Array.isArray(value)) return [] as string[];
     const seen = new Set<string>();
@@ -50,7 +57,7 @@ const normalizeRecentPaths = (value: unknown) => {
     for (const item of value) {
         const path = normalizeSavedPath(item);
         if (!path) continue;
-        const key = path.toLowerCase();
+        const key = savedPathKey(path);
         if (seen.has(key)) continue;
         seen.add(key);
         paths.push(path);
@@ -62,7 +69,11 @@ const normalizeRecentPaths = (value: unknown) => {
 export function normalizeAppSettings(raw?: Partial<AppSettingsSnapshot> | null): AppSettingsSnapshot {
     if (!raw) return { ...DEFAULT_APP_SETTINGS };
     return {
-        max_concurrency: clamp(Number(raw.max_concurrency || DEFAULT_APP_SETTINGS.max_concurrency), 1, 32),
+        max_concurrency: clamp(
+            Math.round(finiteNumberOr(raw.max_concurrency, DEFAULT_APP_SETTINGS.max_concurrency)),
+            1,
+            32,
+        ),
         output_prefix: typeof raw.output_prefix === 'string' && raw.output_prefix.trim()
             ? raw.output_prefix
             : DEFAULT_APP_SETTINGS.output_prefix,

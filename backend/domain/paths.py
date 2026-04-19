@@ -8,6 +8,8 @@ SUPPORTED_EXTENSIONS = {
     ".webp",
     ".gif",
     ".bmp",
+    ".avif",
+    ".ico",
     ".tiff",
     ".tif",
     ".heic",
@@ -52,6 +54,10 @@ def normalize_optional_user_supplied_path(path_value: str) -> str:
 
 def _is_image_file(path_value: Path) -> bool:
     return path_value.suffix.lower() in SUPPORTED_EXTENSIONS
+
+
+def _path_conflict_key(path_value: Path | str) -> str:
+    return str(Path(path_value)).casefold()
 
 
 def expand_input_paths(paths: list[str]) -> dict:
@@ -108,8 +114,12 @@ def resolve_output_path(base_path: str, reserved: list[str] | None = None) -> st
         raise ValueError("base path is empty")
 
     base = Path(normalize_user_supplied_path(base_path))
-    reserved_set = {str(Path(normalize_optional_user_supplied_path(item))) for item in (reserved or []) if str(item).strip()}
-    if not base.exists() and str(base) not in reserved_set:
+    reserved_set = {
+        _path_conflict_key(normalize_optional_user_supplied_path(item))
+        for item in (reserved or [])
+        if str(item).strip()
+    }
+    if not base.exists() and _path_conflict_key(base) not in reserved_set:
         return str(base)
 
     stem = base.stem or "output"
@@ -117,7 +127,7 @@ def resolve_output_path(base_path: str, reserved: list[str] | None = None) -> st
     parent = base.parent
     for index in range(1, 10000):
         candidate = parent / f"{stem}_{index:02d}{suffix}"
-        if not candidate.exists() and str(candidate) not in reserved_set:
+        if not candidate.exists() and _path_conflict_key(candidate) not in reserved_set:
             return str(candidate)
     raise RuntimeError("failed to resolve unique output path")
 

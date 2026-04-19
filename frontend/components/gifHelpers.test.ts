@@ -7,12 +7,16 @@ import {
     detectAnimatedImagePath,
     getGifModesForInputKind,
     getPreferredGifModeForInputKind,
+    normalizeGifSpeedPercent,
     planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
+    resolveWatermarkBackendPosition,
+    selectAnimatedProbeCandidatePaths,
     summarizeGifInputPaths,
 } from './gifHelpers';
 import { CustomSelect } from './Controls';
+import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
 import { FEATURES } from '../constants';
@@ -185,6 +189,49 @@ describe('buildGifProcessSuffix', () => {
     });
 });
 
+describe('normalizeGifSpeedPercent', () => {
+    it('会把速度限制在 50 到 300 之间，并对齐到 10 的倍数', () => {
+        expect(normalizeGifSpeedPercent(44)).toBe(50);
+        expect(normalizeGifSpeedPercent(95)).toBe(100);
+        expect(normalizeGifSpeedPercent(234)).toBe(230);
+        expect(normalizeGifSpeedPercent(305)).toBe(300);
+    });
+});
+
+describe('resolveWatermarkBackendPosition', () => {
+    it('把前端九宫格位置映射为后端水印锚点名称', () => {
+        expect(resolveWatermarkBackendPosition('tl')).toBe('top-left');
+        expect(resolveWatermarkBackendPosition('tc')).toBe('top-center');
+        expect(resolveWatermarkBackendPosition('tr')).toBe('top-right');
+        expect(resolveWatermarkBackendPosition('cl')).toBe('center-left');
+        expect(resolveWatermarkBackendPosition('c')).toBe('center');
+        expect(resolveWatermarkBackendPosition('cr')).toBe('center-right');
+        expect(resolveWatermarkBackendPosition('bl')).toBe('bottom-left');
+        expect(resolveWatermarkBackendPosition('bc')).toBe('bottom-center');
+        expect(resolveWatermarkBackendPosition('br')).toBe('bottom-right');
+    });
+
+    it('保留已经是后端格式的位置值', () => {
+        expect(resolveWatermarkBackendPosition('bottom-right')).toBe('bottom-right');
+    });
+});
+
+describe('selectAnimatedProbeCandidatePaths', () => {
+    it('只选择需要探测帧数的 PNG/WEBP，去重并限制数量', () => {
+        expect(selectAnimatedProbeCandidatePaths(
+            [
+                'C:/tmp/a.png',
+                'C:/tmp/A.PNG',
+                'C:/tmp/b.webp',
+                'C:/tmp/c.gif',
+                'C:/tmp/d.jpg',
+                'C:/tmp/e.webp',
+            ],
+            2,
+        )).toEqual(['C:/tmp/a.png', 'C:/tmp/b.webp']);
+    });
+});
+
 describe('resolveConverterOverwritePath', () => {
     it('在目标格式与源扩展一致时允许原位覆盖', () => {
         expect(resolveConverterOverwritePath('C:/tmp/sample.png', 'png')).toBe('C:/tmp/sample.png');
@@ -202,8 +249,8 @@ describe('planIcoConversionSizes', () => {
         expect(planIcoConversionSizes([], false)).toEqual([[]]);
     });
 
-    it('在非覆盖模式下为一个 ICO 请求保留多尺寸', () => {
-        expect(planIcoConversionSizes([64, 16, 32, 32], false)).toEqual([[16, 32, 64]]);
+    it('在选择多个尺寸时拆成单尺寸任务，便于输出文件名追加尺寸后缀', () => {
+        expect(planIcoConversionSizes([64, 16, 32, 32], false)).toEqual([[16], [32], [64]]);
     });
 
     it('在覆盖源文件模式下拆成多个单尺寸任务，避免同一路径冲突', () => {
@@ -431,6 +478,45 @@ describe('CustomSelect', () => {
 
         expect(onChange).toHaveBeenCalledWith('JPG');
         expect(document.body.querySelector('[role="listbox"]')).toBeNull();
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+    });
+});
+
+describe('GifSettingsPanel', () => {
+    it('修改帧率模式的滑杆使用 10 的步进', async () => {
+        const noop = vi.fn();
+        const { container, root } = await renderElement(
+            React.createElement(GifSettingsPanel, {
+                mode: '修改帧率',
+                setMode: noop,
+                exportFormat: 'PNG',
+                setExportFormat: noop,
+                convertFormat: 'GIF',
+                setConvertFormat: noop,
+                speedPercent: 100,
+                setSpeedPercent: noop,
+                compressQuality: 80,
+                setCompressQuality: noop,
+                sourceType: 'gif',
+                buildFps: 12,
+                setBuildFps: noop,
+                resizeWidth: 0,
+                resizeHeight: 0,
+                onResizeWidthChange: noop,
+                onResizeHeightChange: noop,
+                resizeMaintainAR: true,
+                setResizeMaintainAR: noop,
+                originalWidth: 0,
+                originalHeight: 0,
+            })
+        );
+
+        const rangeInput = container.querySelector('input[type="range"]');
+        expect(rangeInput?.getAttribute('step')).toBe('10');
 
         await act(async () => {
             root.unmount();

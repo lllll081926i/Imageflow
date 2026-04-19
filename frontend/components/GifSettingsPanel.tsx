@@ -128,6 +128,7 @@ const GifSettingsPanel = memo(({
                         value={speedPercent}
                         min={50}
                         max={300}
+                        step={10}
                         onChange={setSpeedPercent}
                     />
                     <div className="text-xs text-gray-500 dark:text-gray-400">

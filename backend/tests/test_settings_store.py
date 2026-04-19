@@ -1,3 +1,4 @@
+import json
 import unittest
 import os
 import tempfile
@@ -32,6 +33,36 @@ class SettingsStoreTests(unittest.TestCase):
 
             self.assertEqual(loaded.max_concurrency, 8)
             self.assertEqual(loaded.output_prefix, "IF")
+
+    def test_load_settings_preserves_known_values_when_file_has_unknown_or_string_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "settings.json"
+            settings_file.write_text(
+                json.dumps(
+                    {
+                        "max_concurrency": "12",
+                        "output_prefix": "KEEP",
+                        "output_template": "{basename}",
+                        "preserve_folder_structure": "false",
+                        "conflict_strategy": "rename",
+                        "default_output_dir": "D:/Out///",
+                        "recent_input_dirs": [r"D:\Input", "d:/input///", "E:/Other"],
+                        "recent_output_dirs": [],
+                        "future_field": "ignored",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            loaded = load_settings()
+
+            self.assertEqual(loaded.max_concurrency, 12)
+            self.assertEqual(loaded.output_prefix, "KEEP")
+            self.assertFalse(loaded.preserve_folder_structure)
+            self.assertEqual(loaded.default_output_dir, "D:/Out")
+            self.assertEqual(loaded.recent_input_dirs, [r"D:\Input", "E:/Other"])
 
 
 if __name__ == "__main__":

@@ -241,7 +241,7 @@ wheels = [
 
 [[package]]
 name = "imageflow-backend"
-version = "1.0.11"
+version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "exifread" },

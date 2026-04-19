@@ -15,6 +15,28 @@ def _process_worker(module_name: str, payload: dict[str, Any], queue: Queue) -> 
         queue.put({"success": False, "error": str(exc)})
 
 
+def _batch_process_worker(module_name: str, task_queue: Queue, result_queue: Queue) -> None:
+    while True:
+        item = task_queue.get()
+        if item is None:
+            return
+        index, payload = item
+        try:
+            result = invoke_engine_process(module_name, payload)
+        except Exception as exc:
+            result = {"success": False, "error": str(exc)}
+        result_queue.put((index, result))
+
+
+def _close_queue(queue: Queue) -> None:
+    close = getattr(queue, "close", None)
+    if callable(close):
+        close()
+    join_thread = getattr(queue, "join_thread", None)
+    if callable(join_thread):
+        join_thread()
+
+
 def execute_engine(module_name: str, payload: dict[str, Any], task_manager: TaskManager | None = None) -> dict[str, Any]:
     task_id = task_manager.current_task_id if task_manager else None
     queue: Queue = Queue()
@@ -56,46 +78,66 @@ def execute_engine_batch(
     task_id = task_manager.current_task_id
     max_workers = max(1, min(settings.max_concurrency, len(payloads)))
     results: list[dict[str, Any] | None] = [None] * len(payloads)
-    pending = list(enumerate(payloads))
-    active: list[tuple[int, Process, Queue]] = []
+    task_queue: Queue = Queue()
+    result_queue: Queue = Queue()
+    workers: list[Process] = []
 
-    def start_one(index: int, payload: dict[str, Any]) -> None:
-        queue: Queue = Queue()
-        process = Process(target=_process_worker, args=(module_name, payload, queue))
+    for item in enumerate(payloads):
+        task_queue.put(item)
+    for _ in range(max_workers):
+        task_queue.put(None)
+
+    for _ in range(max_workers):
+        process = Process(target=_batch_process_worker, args=(module_name, task_queue, result_queue))
         process.start()
         if task_id is not None:
             task_manager.attach_process(task_id, process)
-        active.append((index, process, queue))
+        workers.append(process)
 
-    while pending or active:
-        if task_id is not None and task_manager.is_cancelled(task_id):
-            for index, process, _queue in active:
-                if process.is_alive():
-                    process.terminate()
-                process.join()
-                results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-                task_manager.detach_process(task_id, process)
-            active.clear()
-            for index, _payload in pending:
-                results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-            break
+    completed = 0
+    try:
+        while completed < len(payloads):
+            if task_id is not None and task_manager.is_cancelled(task_id):
+                for process in workers:
+                    if process.is_alive():
+                        process.terminate()
+                    process.join()
+                for index, result in enumerate(results):
+                    if result is None:
+                        results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+                break
 
-        while pending and len(active) < max_workers:
-            index, payload = pending.pop(0)
-            start_one(index, payload)
-
-        for index, process, queue in list(active):
-            if process.is_alive():
-                continue
-            process.join()
             try:
-                results[index] = queue.get_nowait()
+                index, result = result_queue.get(timeout=0.05)
             except Empty:
-                results[index] = {"success": False, "error": "处理失败"}
-            active.remove((index, process, queue))
+                if all(not process.is_alive() for process in workers):
+                    for process in workers:
+                        process.join()
+                    while completed < len(payloads):
+                        try:
+                            index, result = result_queue.get_nowait()
+                        except Empty:
+                            break
+                        if 0 <= index < len(results) and results[index] is None:
+                            results[index] = result
+                            completed += 1
+                    break
+                continue
+
+            if 0 <= index < len(results) and results[index] is None:
+                results[index] = result
+                completed += 1
+
+        for process in workers:
+            process.join()
+    finally:
+        for process in workers:
+            if process.is_alive():
+                process.terminate()
+                process.join()
             if task_id is not None:
                 task_manager.detach_process(task_id, process)
-
-        time.sleep(0.02)
+        _close_queue(task_queue)
+        _close_queue(result_queue)
 
     return [result or {"success": False, "error": "处理失败"} for result in results]

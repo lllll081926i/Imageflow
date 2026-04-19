@@ -7,9 +7,12 @@ import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, Fil
 import {
     buildGifProcessSuffix,
     detectAnimatedImagePath,
+    normalizeGifSpeedPercent,
     planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
+    resolveWatermarkBackendPosition,
+    selectAnimatedProbeCandidatePaths,
 } from './gifHelpers';
 import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
@@ -2173,7 +2176,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     }, [gifInputType, gifMode]);
 
     useEffect(() => {
-        const normalized = clampNumber(Math.round(Number(gifSpeedPercent) || 100), 50, 300);
+        const normalized = normalizeGifSpeedPercent(gifSpeedPercent);
         if (normalized !== gifSpeedPercent) {
             setGifSpeedPercent(normalized);
         }
@@ -2497,8 +2500,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         files.forEach((file) => {
             const normalizedInput = normalizePath(file.input_path || '');
             if (!normalizedInput) return;
-            if (seen.has(normalizedInput)) return;
-            seen.add(normalizedInput);
+            const key = normalizePath(normalizedInput).toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
             next.push({
                 ...file,
                 input_path: normalizedInput,
@@ -2509,6 +2513,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         return next;
     };
     const joinPath = (base: string, rel: string) => `${normalizePath(base)}/${rel.replace(/^\/+/, '')}`;
+    const pathLookupKey = (path: string) => normalizePath(path).toLowerCase();
     const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
     const replaceExt = (p: string, ext: string) => {
         const normalized = p.replace(/\\/g, '/');
@@ -2849,7 +2854,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             if (typeof payload.gifExportFormat === 'string') setGifExportFormat(payload.gifExportFormat);
             if (typeof payload.gifConvertFormat === 'string') setGifConvertFormat(payload.gifConvertFormat);
             if (typeof payload.gifSpeedPercent === 'number') {
-                setGifSpeedPercent(clampNumber(Math.round(payload.gifSpeedPercent), 50, 300));
+                setGifSpeedPercent(normalizeGifSpeedPercent(payload.gifSpeedPercent));
             }
             if (typeof payload.gifCompressQuality === 'number') setGifCompressQuality(payload.gifCompressQuality);
             if (typeof payload.gifBuildFps === 'number') setGifBuildFps(payload.gifBuildFps);
@@ -3401,6 +3406,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             void rememberRecentDirs({ inputDir: inputDirForHistory, outputDir: outDir });
             const total = files.length;
             let completed = 0;
+            const getBatchChunkSize = (itemCount: number, requestsPerItem = 1) => {
+                const safeRequestsPerItem = Math.max(1, Math.round(Number(requestsPerItem) || 1));
+                return Math.max(1, Math.min(itemCount, Math.max(1, Math.floor(20 / safeRequestsPerItem))));
+            };
 
             if (id === 'converter') {
                 if (!appAny.Convert || !appAny.ConvertBatch) {
@@ -3421,7 +3430,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     '最长边': 'long_edge',
                 };
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
-                const chunkSize = total >= 80 ? 20 : 1;
+                const chunkSize = getBatchChunkSize(files.length, icoSizeGroups.length);
                 let seq = 1;
                 let failed = 0;
                 for (let i = 0; i < files.length; i += chunkSize) {
@@ -3437,7 +3446,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             let output_path = input_path;
 
                             if (isIcoFormat) {
-                                const suffix = convOverwriteSource && icoSizeGroup.length === 1
+                                const suffix = icoSizeGroup.length === 1
                                     ? `_ico${icoSizeGroup[0]}`
                                     : '';
                                 if (convOverwriteSource) {
@@ -3584,7 +3593,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 let failed = 0;
                 let warned = 0;
 
-                const chunkSize = total >= 80 ? 20 : 1;
+                const chunkSize = getBatchChunkSize(files.length);
                 let seq = 1;
                 for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
@@ -3703,55 +3712,80 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const fontSize = Math.max(8, Math.round(36 * (watermarkSize / 40)));
                 const fontName = fontMap[watermarkFont] || watermarkFont;
                 const blendMode = blendMap[watermarkBlendMode] || 'normal';
-                const positionMap: Record<string, string> = {
-                    ml: 'cl',
-                    mc: 'c',
-                    mr: 'cr',
-                };
-                const resolvedPosition = positionMap[watermarkPosition] || watermarkPosition;
+                const resolvedPosition = resolveWatermarkBackendPosition(watermarkPosition);
 
                 let seq = 1;
                 let failed = 0;
-                for (const f of files) {
+                const chunkSize = appAny.AddWatermarkBatch ? getBatchChunkSize(files.length) : 1;
+                for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
-                    const outRel = buildOutputRelPath(f, {
-                        suffix: '_watermark',
-                        seq,
-                        op: 'watermark',
-                        template: outputTemplate,
-                        prefix: outputPrefix,
-                        preserveStructure,
-                        date: batchTime,
-                    });
-                    const req: models.WatermarkRequest = {
-                        input_path: normalizePath(f.input_path),
-                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                        watermark_type: isText ? 'text' : 'image',
-                        text: textValue,
-                        image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
-                        position: resolvedPosition,
-                        opacity,
-                        scale,
-                        font_size: fontSize,
-                        font_color: watermarkColor,
-                        rotation: watermarkRotate,
-                        font_name: fontName,
-                        blend_mode: blendMode,
-                        tiled: watermarkTiled,
-                        shadow: watermarkShadow,
-                        offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
-                        offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
-                    };
+                    const group = files.slice(i, i + chunkSize);
+                    const chunk: models.WatermarkRequest[] = [];
+                    for (const f of group) {
+                        if (cancelRequestedRef.current) break;
+                        const outRel = buildOutputRelPath(f, {
+                            suffix: '_watermark',
+                            seq,
+                            op: 'watermark',
+                            template: outputTemplate,
+                            prefix: outputPrefix,
+                            preserveStructure,
+                            date: batchTime,
+                        });
+                        chunk.push({
+                            input_path: normalizePath(f.input_path),
+                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                            watermark_type: isText ? 'text' : 'image',
+                            text: textValue,
+                            image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
+                            position: resolvedPosition,
+                            opacity,
+                            scale,
+                            font_size: fontSize,
+                            font_color: watermarkColor,
+                            rotation: watermarkRotate,
+                            font_name: fontName,
+                            blend_mode: blendMode,
+                            tiled: watermarkTiled,
+                            shadow: watermarkShadow,
+                            offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
+                            offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
+                        });
+                        seq += 1;
+                    }
+                    if (cancelRequestedRef.current || chunk.length === 0) {
+                        break;
+                    }
                     try {
-                        const res = await appAny.AddWatermark(req);
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
+                        if (chunk.length > 1 && appAny.AddWatermarkBatch) {
+                            const res = await appAny.AddWatermarkBatch(chunk);
+                            let cancelledInBatch = false;
+                            (res || []).forEach((item, idx: number) => {
+                                if (!item?.success) {
+                                    if (isCancellationError(item?.error)) {
+                                        cancelledInBatch = true;
+                                        return;
+                                    }
+                                    failed += 1;
+                                    reportTaskFailure('图片水印', chunk[idx]?.input_path || item?.input_path || '', item?.error, '水印失败');
+                                }
+                            });
+                            if (cancelledInBatch) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
-                            failed += 1;
-                            reportTaskFailure('图片水印', f.input_path, res?.error, '水印失败');
+                        } else {
+                            const res = await appAny.AddWatermark(chunk[0]);
+                            if (!res?.success) {
+                                if (isCancellationError(res?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
+                                failed += 1;
+                                reportTaskFailure('图片水印', chunk[0].input_path, res?.error, '水印失败');
+                            }
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3759,12 +3793,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             setCancelRequested(true);
                             break;
                         }
-                        console.error(`Failed to watermark ${f.input_path}:`, err);
-                        failed += 1;
-                        reportTaskFailure('图片水印', f.input_path, err, '水印失败');
+                        console.error('Failed to watermark batch:', err);
+                        failed += chunk.length;
+                        reportBatchTaskFailure('图片水印', group, err, '水印失败');
                     }
-                    completed++;
-                    seq += 1;
+                    completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
                 const cancelled = cancelRequestedRef.current;
@@ -3783,45 +3816,75 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 }
                 let seq = 1;
                 let failed = 0;
-                for (const f of files) {
+                const chunkSize = appAny.AdjustBatch ? getBatchChunkSize(files.length) : 1;
+                for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
-                    const outRel = buildOutputRelPath(f, {
-                        suffix: '_adjusted',
-                        seq,
-                        op: 'adjust',
-                        template: outputTemplate,
-                        prefix: outputPrefix,
-                        preserveStructure,
-                        date: batchTime,
-                    });
                     const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
                     const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
-                    const req: models.AdjustRequest = {
-                        input_path: normalizePath(f.input_path),
-                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                        rotate: adjustRotate,
-                        flip_h: adjustFlipH,
-                        flip_v: adjustFlipV,
-                        brightness: 0,
-                        exposure: adjustExposure,
-                        contrast: adjustContrast,
-                        saturation: adjustSaturation,
-                        vibrance: adjustVibrance,
-                        hue: adjustHue,
-                        sharpness: adjustSharpness,
-                        crop_ratio: cropRatio,
-                        crop_mode: cropMode,
-                    };
+                    const group = files.slice(i, i + chunkSize);
+                    const chunk: models.AdjustRequest[] = [];
+                    for (const f of group) {
+                        if (cancelRequestedRef.current) break;
+                        const outRel = buildOutputRelPath(f, {
+                            suffix: '_adjusted',
+                            seq,
+                            op: 'adjust',
+                            template: outputTemplate,
+                            prefix: outputPrefix,
+                            preserveStructure,
+                            date: batchTime,
+                        });
+                        chunk.push({
+                            input_path: normalizePath(f.input_path),
+                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                            rotate: adjustRotate,
+                            flip_h: adjustFlipH,
+                            flip_v: adjustFlipV,
+                            brightness: 0,
+                            exposure: adjustExposure,
+                            contrast: adjustContrast,
+                            saturation: adjustSaturation,
+                            vibrance: adjustVibrance,
+                            hue: adjustHue,
+                            sharpness: adjustSharpness,
+                            crop_ratio: cropRatio,
+                            crop_mode: cropMode,
+                        });
+                        seq += 1;
+                    }
+                    if (cancelRequestedRef.current || chunk.length === 0) {
+                        break;
+                    }
                     try {
-                        const res = await appAny.Adjust(req);
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
+                        if (chunk.length > 1 && appAny.AdjustBatch) {
+                            const res = await appAny.AdjustBatch(chunk);
+                            let cancelledInBatch = false;
+                            (res || []).forEach((item, idx: number) => {
+                                if (!item?.success) {
+                                    if (isCancellationError(item?.error)) {
+                                        cancelledInBatch = true;
+                                        return;
+                                    }
+                                    failed += 1;
+                                    reportTaskFailure('图片调整', chunk[idx]?.input_path || item?.input_path || '', item?.error, '调整失败');
+                                }
+                            });
+                            if (cancelledInBatch) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
-                            failed += 1;
-                            reportTaskFailure('图片调整', f.input_path, res?.error, '调整失败');
+                        } else {
+                            const res = await appAny.Adjust(chunk[0]);
+                            if (!res?.success) {
+                                if (isCancellationError(res?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
+                                failed += 1;
+                                reportTaskFailure('图片调整', chunk[0].input_path, res?.error, '调整失败');
+                            }
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3829,12 +3892,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             setCancelRequested(true);
                             break;
                         }
-                        console.error(`Failed to adjust ${f.input_path}:`, err);
-                        failed += 1;
-                        reportTaskFailure('图片调整', f.input_path, err, '调整失败');
+                        console.error('Failed to adjust batch:', err);
+                        failed += chunk.length;
+                        reportBatchTaskFailure('图片调整', group, err, '调整失败');
                     }
-                    completed++;
-                    seq += 1;
+                    completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
                 const cancelled = cancelRequestedRef.current;
@@ -3857,35 +3919,65 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const vignette = clampNumber(filterVignette / 100, 0, 1);
                 let seq = 1;
                 let failed = 0;
-                for (const f of files) {
+                const chunkSize = appAny.ApplyFilterBatch ? getBatchChunkSize(files.length) : 1;
+                for (let i = 0; i < files.length; i += chunkSize) {
                     if (cancelRequestedRef.current) break;
-                    const outRel = buildOutputRelPath(f, {
-                        suffix: '_filtered',
-                        seq,
-                        op: 'filter',
-                        template: outputTemplate,
-                        prefix: outputPrefix,
-                        preserveStructure,
-                        date: batchTime,
-                    });
-                    const req: models.FilterRequest = {
-                        input_path: normalizePath(f.input_path),
-                        output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                        filter_type: filterPreset,
-                        intensity,
-                        grain,
-                        vignette,
-                    };
+                    const group = files.slice(i, i + chunkSize);
+                    const chunk: models.FilterRequest[] = [];
+                    for (const f of group) {
+                        if (cancelRequestedRef.current) break;
+                        const outRel = buildOutputRelPath(f, {
+                            suffix: '_filtered',
+                            seq,
+                            op: 'filter',
+                            template: outputTemplate,
+                            prefix: outputPrefix,
+                            preserveStructure,
+                            date: batchTime,
+                        });
+                        chunk.push({
+                            input_path: normalizePath(f.input_path),
+                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                            filter_type: filterPreset,
+                            intensity,
+                            grain,
+                            vignette,
+                        });
+                        seq += 1;
+                    }
+                    if (cancelRequestedRef.current || chunk.length === 0) {
+                        break;
+                    }
                     try {
-                        const res = await appAny.ApplyFilter(req);
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
+                        if (chunk.length > 1 && appAny.ApplyFilterBatch) {
+                            const res = await appAny.ApplyFilterBatch(chunk);
+                            let cancelledInBatch = false;
+                            (res || []).forEach((item, idx: number) => {
+                                if (!item?.success) {
+                                    if (isCancellationError(item?.error)) {
+                                        cancelledInBatch = true;
+                                        return;
+                                    }
+                                    failed += 1;
+                                    reportTaskFailure('图片滤镜', chunk[idx]?.input_path || item?.input_path || '', item?.error, '滤镜失败');
+                                }
+                            });
+                            if (cancelledInBatch) {
                                 cancelRequestedRef.current = true;
                                 setCancelRequested(true);
                                 break;
                             }
-                            failed += 1;
-                            reportTaskFailure('图片滤镜', f.input_path, res?.error, '滤镜失败');
+                        } else {
+                            const res = await appAny.ApplyFilter(chunk[0]);
+                            if (!res?.success) {
+                                if (isCancellationError(res?.error)) {
+                                    cancelRequestedRef.current = true;
+                                    setCancelRequested(true);
+                                    break;
+                                }
+                                failed += 1;
+                                reportTaskFailure('图片滤镜', chunk[0].input_path, res?.error, '滤镜失败');
+                            }
                         }
                     } catch (err) {
                         if (isCancellationError(err) || cancelRequestedRef.current) {
@@ -3893,12 +3985,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             setCancelRequested(true);
                             break;
                         }
-                        console.error(`Failed to filter ${f.input_path}:`, err);
-                        failed += 1;
-                        reportTaskFailure('图片滤镜', f.input_path, err, '滤镜失败');
+                        console.error('Failed to filter batch:', err);
+                        failed += chunk.length;
+                        reportBatchTaskFailure('图片滤镜', group, err, '滤镜失败');
                     }
-                    completed++;
-                    seq += 1;
+                    completed += chunk.length;
                     setProgress((completed / total) * 100);
                 }
                 const cancelled = cancelRequestedRef.current;
@@ -3986,11 +4077,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     return;
                 }
 
+                const probeCandidatePaths = selectAnimatedProbeCandidatePaths(files.map((file) => file.input_path));
+                const frameCountByPath = new Map<string, number | null>();
+                if (probeCandidatePaths.length > 0 && appAny?.ProbeAnimatedPaths) {
+                    try {
+                        const probeResults = await appAny.ProbeAnimatedPaths(probeCandidatePaths);
+                        if (Array.isArray(probeResults)) {
+                            probeResults.forEach((item) => {
+                                const inputPath = normalizePath(String(item?.input_path || ''));
+                                const key = pathLookupKey(inputPath);
+                                if (!key) {
+                                    return;
+                                }
+                                const frameCount = Number(item?.frame_count);
+                                frameCountByPath.set(key, Number.isFinite(frameCount) ? frameCount : null);
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Failed to batch probe animated inputs:', error);
+                    }
+                }
                 const probeAnimatedFrameCount = async (inputPath: string) => {
+                    const normalizedInputPath = normalizePath(inputPath);
+                    const key = pathLookupKey(normalizedInputPath);
+                    if (frameCountByPath.has(key)) {
+                        return frameCountByPath.get(key) ?? null;
+                    }
                     try {
                         const res = await appAny.SplitGIF({
                             action: 'get_frame_count',
-                            input_path: normalizePath(inputPath),
+                            input_path: normalizedInputPath,
                             maintain_aspect: true,
                         });
                         if (!res?.success) {

@@ -385,6 +385,7 @@ type FileTreeNode = {
 type FileTreeRoot = Record<string, FileTreeNode>;
 
 const normalizePath = (p: string) => p.replace(/\\/g, '/');
+const pathKey = (p: string) => normalizePath(p).toLowerCase();
 const basename = (p: string) => normalizePath(p).split('/').pop() || p;
 const getExt = (name: string) => {
     const idx = name.lastIndexOf('.');
@@ -612,7 +613,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     onPathsExpanded,
     onItemSelect,
     selectedPath,
-    acceptedFormats = "image/*,.svg", 
+    acceptedFormats = "image/*,.svg,.avif,.ico",
     allowMultiple = true,
     title = "拖拽图片到这里",
     subTitle = "或点击选择文件 (支持批量处理)",
@@ -630,10 +631,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
-        const seen = new Set(base.files.map((f) => normalizePath(f.input_path)));
+        const seen = new Set(base.files.map((f) => pathKey(f.input_path)));
         const merged = base.files.slice();
         for (const f of incoming.files) {
-            const key = normalizePath(f.input_path);
+            const key = pathKey(f.input_path);
             if (seen.has(key)) continue;
             seen.add(key);
             merged.push(f);
@@ -771,7 +772,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     allowsMultipleSelection: allowMultiple,
                     filters: [{
                         DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.heic;*.heif;*.svg"
+                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.avif;*.ico;*.tiff;*.tif;*.heic;*.heif;*.svg"
                     }]
                 } as any);
 

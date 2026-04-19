@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   test-and-build:
@@ -56,8 +60,14 @@ jobs:
       - name: Run Python engine tests
         run: uv run python -m unittest discover -s backend/tests/engines -v
 
+      - name: Compile Python sources
+        run: uv run python -m compileall backend
+
+      - name: Check diff whitespace
+        run: git diff --check
+
       - name: Setup Inno Setup 6
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
@@ -66,11 +76,11 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files (x86)\Inno Setup 6"
 
       - name: Build Windows release packages
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         run: npm run build:release
 
       - name: Upload Windows packages
-        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: imageflow-windows-release
@@ -78,3 +88,12 @@ jobs:
             artifacts/release/ImageFlow-portable-*.zip
             artifacts/release/ImageFlow-setup-*.exe
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/release/ImageFlow-portable-*.zip
+            artifacts/release/ImageFlow-setup-*.exe
+          fail_on_unmatched_files: true

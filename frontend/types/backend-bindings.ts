@@ -1,6 +1,13 @@
 import type { models } from './backend-models';
 
 export type AppBindings = {
+    ProbeAnimatedPaths?: (arg1: Array<string>) => Promise<Array<{
+        input_path: string;
+        frame_count: number;
+        is_animated: boolean;
+        format?: string;
+        error?: string;
+    }>>;
     AddWatermark: (arg1: models.WatermarkRequest) => Promise<models.WatermarkResult>;
     AddWatermarkBatch: (arg1: Array<models.WatermarkRequest>) => Promise<Array<models.WatermarkResult>>;
     Adjust: (arg1: models.AdjustRequest) => Promise<models.AdjustResult>;

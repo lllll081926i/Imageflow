@@ -1,3 +1,5 @@
+import multiprocessing
+
 from backend.host.window import build_window_api, configure_window, resolve_frontend_entry
 
 
@@ -19,5 +21,10 @@ def main() -> None:
     webview.start()
 
 
-if __name__ == "__main__":
+def bootstrap() -> None:
+    multiprocessing.freeze_support()
     main()
+
+
+if __name__ == "__main__":
+    bootstrap()

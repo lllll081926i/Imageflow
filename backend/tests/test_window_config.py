@@ -135,6 +135,27 @@ class WindowConfigTests(unittest.TestCase):
             else:
                 sys.modules["webview"] = previous_webview
 
+    def test_bootstrap_calls_freeze_support_before_starting_main(self):
+        calls: list[str] = []
+        original_multiprocessing = getattr(main_module, "multiprocessing", None)
+        original_main = main_module.main
+
+        try:
+            main_module.multiprocessing = types.SimpleNamespace(
+                freeze_support=lambda: calls.append("freeze_support")
+            )
+            main_module.main = lambda: calls.append("main")
+
+            main_module.bootstrap()
+
+            self.assertEqual(calls, ["freeze_support", "main"])
+        finally:
+            if original_multiprocessing is None:
+                delattr(main_module, "multiprocessing")
+            else:
+                main_module.multiprocessing = original_multiprocessing
+            main_module.main = original_main
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,8 +34,9 @@ def build_image_preview(input_path: str) -> dict[str, Any]:
     converter = load_engine_module("converter")
     open_image = getattr(converter, "open_image_with_svg_support")
 
-    image = open_image(str(source), format_type="jpg")
+    image: Image.Image | None = None
     try:
+        image = open_image(str(source), format_type="jpg")
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
         else:
@@ -49,7 +50,8 @@ def build_image_preview(input_path: str) -> dict[str, Any]:
     except Exception as exc:
         return {"success": False, "error": str(exc)}
     finally:
-        try:
-            image.close()
-        except Exception:
-            pass
+        if image is not None:
+            try:
+                image.close()
+            except Exception:
+                pass

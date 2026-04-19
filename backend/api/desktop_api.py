@@ -4,6 +4,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, UnidentifiedImageError
+
 from backend.application.image_ops import execute_engine, execute_engine_batch
 from backend.application.preview import build_image_preview
 from backend.application.task_manager import TaskManager
@@ -16,7 +18,7 @@ from backend.domain.paths import (
     resolve_output_path,
 )
 from backend.infrastructure.dialogs import open_directory_dialog, open_file_dialog
-from backend.infrastructure.settings_store import load_settings, save_settings
+from backend.infrastructure.settings_store import load_settings, save_settings, settings_from_dict
 from backend.infrastructure.window_ops import (
     runtime_quit,
     runtime_window_minimise,
@@ -36,18 +38,22 @@ def _normalize_recent_path(value: str) -> str:
     return cleaned or trimmed
 
 
+def _recent_path_key(value: str) -> str:
+    return value.replace("\\", "/").casefold()
+
+
 def _merge_recent_paths(current: list[str], next_value: str) -> list[str]:
     normalized = _normalize_recent_path(next_value)
     if not normalized:
         return list(current)
 
     merged: list[str] = [normalized]
-    seen = {normalized.lower()}
+    seen = {_recent_path_key(normalized)}
     for item in current:
         candidate = _normalize_recent_path(item)
         if not candidate:
             continue
-        key = candidate.lower()
+        key = _recent_path_key(candidate)
         if key in seen:
             continue
         seen.add(key)
@@ -93,6 +99,48 @@ def _extract_runtime_file_path(file_ref: Any) -> str:
     return ""
 
 
+def _probe_animated_path(input_path: str) -> dict[str, Any]:
+    raw_path = str(input_path or "").strip()
+    try:
+        normalized_path = normalize_user_supplied_path(raw_path)
+        with Image.open(normalized_path) as image:
+            frame_count = int(getattr(image, "n_frames", 1) or 1)
+            return {
+                "input_path": normalized_path,
+                "frame_count": frame_count,
+                "is_animated": frame_count > 1,
+                "format": str(image.format or "").upper(),
+            }
+    except ValueError as exc:
+        return {
+            "input_path": raw_path,
+            "frame_count": 0,
+            "is_animated": False,
+            "error": str(exc),
+        }
+    except FileNotFoundError:
+        return {
+            "input_path": normalized_path,
+            "frame_count": 0,
+            "is_animated": False,
+            "error": f"Input file not found: {normalized_path}",
+        }
+    except UnidentifiedImageError:
+        return {
+            "input_path": normalized_path,
+            "frame_count": 0,
+            "is_animated": False,
+            "error": f"Unsupported image format: {normalized_path}",
+        }
+    except Exception as exc:
+        return {
+            "input_path": normalized_path,
+            "frame_count": 0,
+            "is_animated": False,
+            "error": str(exc),
+        }
+
+
 class DesktopAPI:
     def __init__(self, task_manager: TaskManager | None = None):
         self._task_manager = task_manager or TaskManager()
@@ -114,7 +162,7 @@ class DesktopAPI:
         return asdict(self._settings())
 
     def save_settings(self, payload: dict) -> dict:
-        saved = save_settings(AppSettings(**payload))
+        saved = save_settings(settings_from_dict(payload))
         return asdict(saved)
 
     def update_recent_paths(self, payload: dict) -> dict:
@@ -199,6 +247,10 @@ class DesktopAPI:
     def split_gif(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
         return self._run_operation(lambda: execute_engine("gif_splitter", normalized, self._task_manager))
+
+    def probe_animated_paths(self, paths: list[str]) -> list[dict]:
+        normalized_paths = [str(path) for path in paths if str(path).strip()]
+        return [_probe_animated_path(path) for path in normalized_paths]
 
     def generate_subtitle_long_image(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
@@ -329,6 +381,9 @@ class DesktopAPI:
 
     def SplitGIF(self, payload: dict) -> dict:
         return self.split_gif(payload)
+
+    def ProbeAnimatedPaths(self, paths: list[str]) -> list[dict]:
+        return self.probe_animated_paths(paths)
 
     def GenerateSubtitleLongImage(self, payload: dict) -> dict:
         return self.generate_subtitle_long_image(payload)

@@ -19,6 +19,23 @@ const FORMAT_EXTENSION_GROUPS: Record<string, string[]> = {
 };
 
 const PROBE_ANIMATED_EXTENSIONS = new Set(['png', 'webp']);
+const GIF_SPEED_MIN = 50;
+const GIF_SPEED_MAX = 300;
+const GIF_SPEED_STEP = 10;
+const WATERMARK_BACKEND_POSITION_MAP: Record<string, string> = {
+    tl: 'top-left',
+    tc: 'top-center',
+    tr: 'top-right',
+    cl: 'center-left',
+    ml: 'center-left',
+    c: 'center',
+    mc: 'center',
+    cr: 'center-right',
+    mr: 'center-right',
+    bl: 'bottom-left',
+    bc: 'bottom-center',
+    br: 'bottom-right',
+};
 
 function normalizePath(path: string): string {
     return String(path || '').replace(/\\/g, '/');
@@ -85,6 +102,48 @@ export function buildGifProcessSuffix(
     return `_compress_q${compressQuality}`;
 }
 
+export function normalizeGifSpeedPercent(value: number): number {
+    const numeric = Number.isFinite(Number(value)) ? Number(value) : 100;
+    const clamped = Math.max(GIF_SPEED_MIN, Math.min(GIF_SPEED_MAX, Math.round(numeric)));
+    return Math.max(
+        GIF_SPEED_MIN,
+        Math.min(GIF_SPEED_MAX, Math.round(clamped / GIF_SPEED_STEP) * GIF_SPEED_STEP),
+    );
+}
+
+export function resolveWatermarkBackendPosition(value: string): string {
+    const normalized = String(value || '').trim();
+    return WATERMARK_BACKEND_POSITION_MAP[normalized] || normalized;
+}
+
+export function selectAnimatedProbeCandidatePaths(inputPaths: string[], limit = 200): string[] {
+    const maxCandidates = Number.isFinite(Number(limit)) ? Math.max(0, Math.floor(Number(limit))) : 200;
+    const selected: string[] = [];
+    const seen = new Set<string>();
+
+    for (const inputPath of Array.isArray(inputPaths) ? inputPaths : []) {
+        if (selected.length >= maxCandidates) {
+            break;
+        }
+        const normalizedPath = normalizePath(inputPath);
+        if (!normalizedPath) {
+            continue;
+        }
+        const ext = getPathExtension(normalizedPath);
+        if (!PROBE_ANIMATED_EXTENSIONS.has(ext)) {
+            continue;
+        }
+        const dedupeKey = normalizedPath.toLowerCase();
+        if (seen.has(dedupeKey)) {
+            continue;
+        }
+        seen.add(dedupeKey);
+        selected.push(normalizedPath);
+    }
+
+    return selected;
+}
+
 export function resolveConverterOverwritePath(inputPath: string, targetFormat: string): string {
     const normalizedPath = normalizePath(inputPath);
     const currentExt = getPathExtension(normalizedPath);
@@ -104,17 +163,14 @@ export function resolveConverterOverwritePath(inputPath: string, targetFormat: s
     return baseDir ? `${baseDir}/${nextFileName}` : nextFileName;
 }
 
-export function planIcoConversionSizes(selectedSizes: number[], overwriteSource: boolean): number[][] {
+export function planIcoConversionSizes(selectedSizes: number[], _overwriteSource: boolean): number[][] {
     const normalized = Array.isArray(selectedSizes)
         ? Array.from(new Set(selectedSizes.filter((size) => Number.isFinite(size) && size > 0))).sort((a, b) => a - b)
         : [];
     if (normalized.length === 0) {
         return [[]];
     }
-    if (overwriteSource) {
-        return normalized.map((size) => [size]);
-    }
-    return [normalized];
+    return normalized.map((size) => [size]);
 }
 
 export function getGifModesForInputKind(kind: GifInputKind): string[] {
