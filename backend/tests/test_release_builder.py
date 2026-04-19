@@ -45,8 +45,8 @@ class ReleaseBuilderTests(unittest.TestCase):
             self.assertIn("--windowed", command)
             self.assertIn("--name", command)
             self.assertIn("ImageFlow", command)
-            self.assertIn(f"{frontend_dist}{os.pathsep}frontend/dist", command)
-            self.assertIn(f"{root / 'ico.png'}{os.pathsep}.", command)
+            self.assertIn(f"{paths.frontend_dist_dir}{os.pathsep}frontend/dist", command)
+            self.assertIn(f"{paths.project_root / 'ico.png'}{os.pathsep}.", command)
             self.assertIn(str(icon_path), command)
 
     def test_render_inno_script_uses_release_paths(self):
@@ -72,7 +72,7 @@ class ReleaseBuilderTests(unittest.TestCase):
 
             self.assertIn('AppName=ImageFlow', script)
             self.assertIn('AppVersion=1.0.11', script)
-            self.assertIn(f'SourceDir={paths.pyinstaller_dist_dir.as_posix()}', script)
+            self.assertIn(f'SourceDir={paths.pyinstaller_dist_dir.resolve().as_posix()}', script)
             self.assertIn('OutputBaseFilename=ImageFlow-setup-1.0.11-windows-amd64', script)
 
 

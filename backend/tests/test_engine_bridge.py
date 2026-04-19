@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,7 +85,8 @@ class EngineBridgeTests(unittest.TestCase):
 
             self.assertEqual(len(results), len(payloads))
             self.assertTrue(all(result["success"] for result in results))
-            self.assertEqual([result["output_path"] for result in results], [str(path) for path in output_paths])
+            for result, output_path in zip(results, output_paths):
+                self.assertTrue(os.path.samefile(result["output_path"], output_path))
             self.assertTrue(all(path.exists() for path in output_paths))
 
 
