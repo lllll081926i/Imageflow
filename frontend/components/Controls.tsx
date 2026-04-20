@@ -383,10 +383,25 @@ type FileTreeNode = {
 };
 
 type FileTreeRoot = Record<string, FileTreeNode>;
+type RuntimeDropMarker = {
+    signature: string;
+    expiresAt: number;
+};
 
 const normalizePath = (p: string) => p.replace(/\\/g, '/');
 const pathKey = (p: string) => normalizePath(p).toLowerCase();
 const basename = (p: string) => normalizePath(p).split('/').pop() || p;
+const getDirectDropPath = (file: File) => {
+    const candidate = file as File & { path?: string | null; pywebviewFullPath?: string | null };
+    if (typeof candidate.path === 'string' && candidate.path.trim()) {
+        return candidate.path.trim();
+    }
+    if (typeof candidate.pywebviewFullPath === 'string' && candidate.pywebviewFullPath.trim()) {
+        return candidate.pywebviewFullPath.trim();
+    }
+    return '';
+};
+const buildRuntimeDropSignature = (paths: string[]) => paths.map(pathKey).sort().join('|');
 const getExt = (name: string) => {
     const idx = name.lastIndexOf('.');
     return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
@@ -628,6 +643,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const inputRef = useRef<HTMLInputElement>(null);
     const directoryInputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
+    const runtimeDropMarkerRef = useRef<RuntimeDropMarker | null>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
@@ -654,10 +670,37 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             onPathsExpanded?.(mergedSnapshot);
         }
     }, [onPathsExpanded]);
-    const expandPathsFromFiles = async (files: File[]) => {
+    const markRuntimeDropAsHandled = useCallback((paths: string[]) => {
+        if (paths.length === 0) {
+            runtimeDropMarkerRef.current = null;
+            return;
+        }
+        runtimeDropMarkerRef.current = {
+            signature: buildRuntimeDropSignature(paths),
+            expiresAt: Date.now() + 2000,
+        };
+    }, []);
+    const shouldIgnoreRuntimeDrop = useCallback((paths: string[]) => {
+        const marker = runtimeDropMarkerRef.current;
+        if (!marker) {
+            return false;
+        }
+        if (marker.expiresAt <= Date.now()) {
+            runtimeDropMarkerRef.current = null;
+            return false;
+        }
+        if (marker.signature !== buildRuntimeDropSignature(paths)) {
+            return false;
+        }
+        runtimeDropMarkerRef.current = null;
+        return true;
+    }, []);
+    const expandPathsFromFiles = async (files: File[], resolvedPaths?: string[]) => {
         const app = getAppBindings();
         if (!app?.ExpandDroppedPaths) return null;
-        const paths = await resolveSelectedFilePaths(files);
+        const paths = resolvedPaths && resolvedPaths.length > 0
+            ? resolvedPaths
+            : await resolveSelectedFilePaths(files);
         if (!paths.length) return null;
         try {
             const result = await app.ExpandDroppedPaths(paths);
@@ -667,17 +710,19 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             return null;
         }
     };
-    const applyFileSelection = async (files: File[]) => {
+    const applyFileSelection = async (files: File[], resolvedPaths?: string[]) => {
         onFilesSelected(files);
         setSelectionError('');
-        const expanded = await expandPathsFromFiles(files);
+        const normalizedPaths = resolvedPaths && resolvedPaths.length > 0
+            ? resolvedPaths
+            : await resolveSelectedFilePaths(files);
+        const expanded = await expandPathsFromFiles(files, normalizedPaths);
         if (expanded) {
             mergeAndPublishResult(expanded);
             return;
         }
 
-        const resolvedPaths = await resolveSelectedFilePaths(files);
-        if (!resolvedPaths.length) {
+        if (!normalizedPaths.length) {
             setSelectionError('当前环境无法解析所选文件的本地路径，请优先使用桌面端原生文件选择器或直接拖入文件。');
             return;
         }
@@ -688,7 +733,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 const anyFile = f as any;
                 const inputPath = typeof anyFile.path === 'string' && anyFile.path
                     ? anyFile.path
-                    : (resolvedPaths[index] || '');
+                    : (normalizedPaths[index] || '');
                 const relative = f.webkitRelativePath || f.name;
                 const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
                 return {
@@ -710,6 +755,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
         window.runtime.OnFileDrop(async (_x: number, _y: number, paths: string[]) => {
             if (!paths || paths.length === 0) return;
+            if (shouldIgnoreRuntimeDrop(paths)) return;
             const app = getAppBindings();
             if (!app?.ExpandDroppedPaths) return;
 
@@ -739,6 +785,18 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragOver(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const files: File[] = Array.from(e.dataTransfer.files);
+            const directPaths = files.map((file) => getDirectDropPath(file));
+            const hasDirectPaths = files.length > 0 && directPaths.every((path) => path !== '');
+            if (hasDirectPaths) {
+                markRuntimeDropAsHandled(directPaths);
+                void (async () => {
+                    await applyFileSelection(files, directPaths);
+                })();
+                return;
+            }
+        }
         if (window.runtime?.OnFileDrop) {
             return;
         }
@@ -949,12 +1007,18 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                 onChange={handleInputChange} 
             />
             <input
-                ref={directoryInputRef}
+                ref={(node) => {
+                    directoryInputRef.current = node;
+                    if (!node) {
+                        return;
+                    }
+                    node.setAttribute('webkitdirectory', '');
+                    node.setAttribute('directory', '');
+                }}
                 type="file"
                 className="hidden"
                 multiple={true}
                 onChange={handleDirectoryChange}
-                {...({ webkitdirectory: true, directory: true } as any)}
             />
 
             {hasPreview ? (

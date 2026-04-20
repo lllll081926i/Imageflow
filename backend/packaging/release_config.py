@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,11 @@ def read_project_version(project_root: Path) -> str:
 def validate_windows_build_host() -> None:
     if platform.system().lower() != "windows":
         raise RuntimeError("Windows release packages must be built on Windows.")
+    machine = platform.machine().lower()
+    if machine not in {"amd64", "x86_64"}:
+        raise RuntimeError(f"Windows release packages must be built with an x64 Python runtime, got: {platform.machine()}")
+    if sys.maxsize <= 2**32:
+        raise RuntimeError("Windows release packages require a 64-bit Python runtime.")
 
 
 def create_release_paths(project_root: Path | None = None, version: str | None = None) -> ReleasePaths:
@@ -67,4 +73,3 @@ def create_release_paths(project_root: Path | None = None, version: str | None =
         installer_exe=artifacts_dir / installer_name,
         inno_script=build_root / f"{APP_NAME}-setup.iss",
     )
-

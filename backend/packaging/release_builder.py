@@ -36,10 +36,32 @@ def _remove_tree(path: Path, project_root: Path) -> None:
     shutil.rmtree(path)
 
 
+def _iter_frontend_source_files(frontend_root: Path):
+    for path in frontend_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in {"dist", "node_modules", ".git"} for part in path.parts):
+            continue
+        yield path
+
+
+def _latest_mtime(paths: list[Path]) -> float:
+    if not paths:
+        return 0.0
+    return max(path.stat().st_mtime for path in paths)
+
+
 def ensure_frontend_dist(paths: ReleasePaths) -> Path:
     index_html = paths.frontend_dist_dir / "index.html"
     if not index_html.exists():
         raise FileNotFoundError("frontend dist is missing. Run `npm --prefix frontend run build` first.")
+    frontend_root = paths.project_root / "frontend"
+    source_files = list(_iter_frontend_source_files(frontend_root))
+    dist_files = [path for path in paths.frontend_dist_dir.rglob("*") if path.is_file()]
+    latest_source_mtime = _latest_mtime(source_files)
+    latest_dist_mtime = _latest_mtime(dist_files)
+    if latest_source_mtime > latest_dist_mtime:
+        raise RuntimeError("frontend dist is stale. Run `npm --prefix frontend run build` before packaging.")
     return paths.frontend_dist_dir
 
 

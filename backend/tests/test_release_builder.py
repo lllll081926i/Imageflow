@@ -2,10 +2,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from backend.packaging.inno import render_inno_script
 from backend.packaging.release_builder import build_pyinstaller_command, ensure_frontend_dist
-from backend.packaging.release_config import ReleasePaths, create_release_paths
+from backend.packaging.release_config import ReleasePaths, create_release_paths, validate_windows_build_host
 
 
 class ReleaseBuilderTests(unittest.TestCase):
@@ -26,6 +27,49 @@ class ReleaseBuilderTests(unittest.TestCase):
 
             with self.assertRaisesRegex(FileNotFoundError, "frontend dist"):
                 ensure_frontend_dist(paths)
+
+    def test_ensure_frontend_dist_raises_when_build_output_is_stale(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_root = root / "frontend"
+            frontend_dist = frontend_root / "dist"
+            frontend_dist.mkdir(parents=True, exist_ok=True)
+            index_html = frontend_dist / "index.html"
+            index_html.write_text("<html></html>", encoding="utf-8")
+            bundle = frontend_dist / "assets.js"
+            bundle.write_text("console.log('dist');", encoding="utf-8")
+            source_file = frontend_root / "App.tsx"
+            source_file.write_text("export const app = 1;", encoding="utf-8")
+            older = 1_700_000_000
+            newer = older + 60
+            os.utime(index_html, (older, older))
+            os.utime(bundle, (older, older))
+            os.utime(source_file, (newer, newer))
+            paths = create_release_paths(project_root=root, version="1.0.11")
+
+            with self.assertRaisesRegex(RuntimeError, "frontend dist is stale"):
+                ensure_frontend_dist(paths)
+
+    def test_ensure_frontend_dist_accepts_fresh_build_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_root = root / "frontend"
+            frontend_dist = frontend_root / "dist"
+            frontend_dist.mkdir(parents=True, exist_ok=True)
+            source_file = frontend_root / "App.tsx"
+            source_file.write_text("export const app = 1;", encoding="utf-8")
+            index_html = frontend_dist / "index.html"
+            index_html.write_text("<html></html>", encoding="utf-8")
+            bundle = frontend_dist / "assets.js"
+            bundle.write_text("console.log('dist');", encoding="utf-8")
+            older = 1_700_000_000
+            newer = older + 60
+            os.utime(source_file, (older, older))
+            os.utime(index_html, (newer, newer))
+            os.utime(bundle, (newer, newer))
+            paths = create_release_paths(project_root=root, version="1.0.11")
+
+            self.assertEqual(ensure_frontend_dist(paths), frontend_dist)
 
     def test_build_pyinstaller_command_includes_required_assets(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -74,6 +118,17 @@ class ReleaseBuilderTests(unittest.TestCase):
             self.assertIn('AppVersion=1.0.11', script)
             self.assertIn(f'SourceDir={paths.pyinstaller_dist_dir.resolve().as_posix()}', script)
             self.assertIn('OutputBaseFilename=ImageFlow-setup-1.0.11-windows-amd64', script)
+
+    def test_validate_windows_build_host_rejects_non_windows(self):
+        with mock.patch("backend.packaging.release_config.platform.system", return_value="Linux"):
+            with self.assertRaisesRegex(RuntimeError, "built on Windows"):
+                validate_windows_build_host()
+
+    def test_validate_windows_build_host_rejects_non_x64_runtime(self):
+        with mock.patch("backend.packaging.release_config.platform.system", return_value="Windows"):
+            with mock.patch("backend.packaging.release_config.platform.machine", return_value="ARM64"):
+                with self.assertRaisesRegex(RuntimeError, "x64 Python runtime"):
+                    validate_windows_build_host()
 
 
 if __name__ == "__main__":

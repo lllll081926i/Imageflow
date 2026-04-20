@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Switch, StyledSlider, CustomSelect, SegmentedControl } from './Controls';
+import { Switch, StyledSlider, CustomSelect } from './Controls';
 import { getGifModesForInputKind, type GifInputKind } from './gifHelpers';
 
 export type GifSettingsPanelProps = {
@@ -50,6 +50,7 @@ const GifSettingsPanel = memo(({
     originalHeight,
 }: GifSettingsPanelProps) => {
     const modeOptions = getGifModesForInputKind(sourceType);
+    const modeGridClassName = modeOptions.length > 3 ? 'grid-cols-3' : 'grid-cols-2';
 
     if (sourceType === 'images') {
         return (
@@ -80,11 +81,27 @@ const GifSettingsPanel = memo(({
         <div className="space-y-6">
             <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
-                <SegmentedControl
-                    options={modeOptions}
-                    value={mode}
-                    onChange={setMode}
-                />
+                <div className={`grid ${modeGridClassName} gap-2`}>
+                    {modeOptions.map((option) => {
+                        const isActive = option === mode;
+
+                        return (
+                            <button
+                                key={option}
+                                type="button"
+                                aria-pressed={isActive}
+                                onClick={() => setMode(option)}
+                                className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
+                                    isActive
+                                        ? 'border-[#007AFF]/20 bg-[#007AFF]/10 text-[#007AFF] shadow-sm dark:border-[#0A84FF]/40 dark:bg-[#0A84FF]/15 dark:text-[#5AC8FA]'
+                                        : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white'
+                                }`}
+                            >
+                                {option}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
             {sourceType === 'animated' && (

@@ -61,6 +61,7 @@ def write_inno_script(paths: ReleasePaths, setup_icon: Path | None = None) -> Pa
 
 def find_iscc() -> Path:
     configured = os.getenv("INNO_SETUP_ISCC", "").strip()
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
     candidates = []
     if configured:
         candidates.append(Path(configured))
@@ -69,9 +70,10 @@ def find_iscc() -> Path:
     if found:
         candidates.append(Path(found))
 
+    if local_app_data:
+        candidates.append(Path(local_app_data) / "Programs" / "Inno Setup 6" / "ISCC.exe")
     candidates.extend(
         [
-            Path("C:/Users/lllll/AppData/Local/Programs/Inno Setup 6/ISCC.exe"),
             Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe"),
             Path("C:/Program Files/Inno Setup 6/ISCC.exe"),
         ]

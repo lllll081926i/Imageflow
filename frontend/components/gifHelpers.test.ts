@@ -15,7 +15,7 @@ import {
     selectAnimatedProbeCandidatePaths,
     summarizeGifInputPaths,
 } from './gifHelpers';
-import { CustomSelect } from './Controls';
+import { CustomSelect, FileDropZone } from './Controls';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
@@ -68,6 +68,7 @@ const renderElement = async (element: React.ReactElement) => {
 afterEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
+    delete (window as { runtime?: unknown }).runtime;
 });
 
 describe('resolveSelectedFilePaths', () => {
@@ -138,6 +139,82 @@ describe('resolveSelectedFilePaths', () => {
         await expect(resolveSelectedFilePaths(files, runtime as any)).resolves.toEqual([]);
 
         errorSpy.mockRestore();
+    });
+});
+
+describe('FileDropZone', () => {
+    it('在桌面端拖拽已携带 pywebviewFullPath 的文件时直接展开路径，不等待 runtime 回传', async () => {
+        const expandDroppedPaths = vi.fn().mockResolvedValue({
+            has_directory: false,
+            files: [
+                {
+                    input_path: 'D:/drop/a.png',
+                    source_root: 'D:/drop',
+                    relative_path: 'a.png',
+                    is_from_dir_drop: false,
+                    size: 12,
+                    mod_time: 1710000000,
+                },
+            ],
+        });
+        vi.mocked(getAppBindings).mockReturnValue({
+            ExpandDroppedPaths: expandDroppedPaths,
+        } as any);
+
+        const onFilesSelected = vi.fn();
+        const onPathsExpanded = vi.fn();
+        const onFileDrop = vi.fn();
+        const onFileDropOff = vi.fn();
+        (window as { runtime?: unknown }).runtime = {
+            OnFileDrop: onFileDrop,
+            OnFileDropOff: onFileDropOff,
+        };
+
+        const { container, root } = await renderElement(React.createElement(FileDropZone, {
+            onFilesSelected,
+            onPathsExpanded,
+        }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+        const file = {
+            name: 'a.png',
+            size: 12,
+            lastModified: 1710000000000,
+            pywebviewFullPath: 'D:/drop/a.png',
+        } as any;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [file] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+            await flushMicrotasks();
+        });
+
+        expect(onFileDrop).toHaveBeenCalledTimes(1);
+        expect(expandDroppedPaths).toHaveBeenCalledWith(['D:/drop/a.png']);
+        expect(onFilesSelected).toHaveBeenCalledWith([file]);
+        expect(onPathsExpanded).toHaveBeenCalledWith({
+            has_directory: false,
+            files: [
+                {
+                    input_path: 'D:/drop/a.png',
+                    source_root: 'D:/drop',
+                    relative_path: 'a.png',
+                    is_from_dir_drop: false,
+                    size: 12,
+                    mod_time: 1710000000,
+                },
+            ],
+        });
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+        expect(onFileDropOff).toHaveBeenCalledTimes(1);
     });
 });
 

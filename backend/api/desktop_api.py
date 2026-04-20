@@ -187,8 +187,8 @@ class DesktopAPI:
         return str(open_directory_dialog({"title": "选择输出文件夹"}) or "")
 
     def expand_dropped_paths(self, paths: list[str]) -> dict:
-        normalized = [normalize_user_supplied_path(path) for path in paths if str(path).strip()]
-        return expand_input_paths(normalized)
+        filtered = [str(path).strip() for path in paths if str(path).strip()]
+        return expand_input_paths(filtered)
 
     def resolve_output_path(self, payload: dict) -> dict:
         try:
