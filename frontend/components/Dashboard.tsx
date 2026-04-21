@@ -5,10 +5,9 @@ import { ViewState } from '../types';
 
 interface DashboardProps {
     onSelect: (view: ViewState) => void;
-    onPreload?: (view: ViewState) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onSelect, onPreload }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onSelect }) => {
     return (
         <div>
             <div className="mb-8 mt-4">
@@ -21,8 +20,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelect, onPreload }) => {
                         type="button"
                         key={item.id}
                         onClick={() => onSelect(item.id)} 
-                        onPointerEnter={() => onPreload?.(item.id)}
-                        onFocus={() => onPreload?.(item.id)}
                         className="group relative bg-white dark:bg-[#2C2C2E] p-6 rounded-2xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer border border-transparent hover:border-gray-100 dark:hover:border-white/5 text-left"
                     >
                         <div className={`w-14 h-14 rounded-2xl ${item.bg} ${item.darkBg} flex items-center justify-center mb-4 transition-transform group-hover:scale-110 duration-300`}>

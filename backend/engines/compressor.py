@@ -23,7 +23,6 @@ Usage:
 import sys
 import json
 import os
-import gc
 import tempfile
 from pathlib import Path
 from PIL import Image
@@ -233,9 +232,6 @@ class ImageCompressor:
             logger.info(
                 f"Compressed size: {compressed_size} bytes (saved {compression_rate:.2f}%)"
             )
-
-            # Force garbage collection
-            gc.collect()
 
             # Return success result
             out = {

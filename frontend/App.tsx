@@ -32,7 +32,6 @@ const App: React.FC = () => {
     const [theme, setTheme] = useState<Theme>('light');
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
-    const [loadedFeatureViews, setLoadedFeatureViews] = useState<FeatureId[]>([]);
     const [failureNotifications, setFailureNotifications] = useState<TaskFailureNotification[]>([]);
     const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -41,9 +40,6 @@ const App: React.FC = () => {
     const pageTransitionRef = useRef<HTMLDivElement | null>(null);
     const isSecondaryView = activeView !== 'dashboard';
     const isFeatureView = isFeatureId(activeView);
-    const visibleFeatureViews = isFeatureView && !loadedFeatureViews.includes(activeView)
-        ? [...loadedFeatureViews, activeView]
-        : loadedFeatureViews;
 
     useEffect(() => {
         // Prevent default drag behaviors to stop opening files in browser
@@ -75,11 +71,6 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (!isFeatureView) return;
-        setLoadedFeatureViews((prev) => (prev.includes(activeView) ? prev : [...prev, activeView]));
-    }, [activeView, isFeatureView]);
-
-    useEffect(() => {
         const container = pageTransitionRef.current;
         if (!container) return;
         const enterClass = direction === 'left' ? 'animate-page-enter-backward' : 'animate-page-enter-forward';
@@ -105,11 +96,6 @@ const App: React.FC = () => {
             setDirection('right');
         }
         setActiveView(view);
-    }, []);
-
-    const handlePreload = useCallback((view: ViewState) => {
-        if (!isFeatureId(view)) return;
-        setLoadedFeatureViews((prev) => (prev.includes(view) ? prev : [...prev, view]));
     }, []);
 
     const handleBack = useCallback(() => handleNavigate('dashboard'), [handleNavigate]);
@@ -308,34 +294,35 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 flex overflow-hidden">
-                <Sidebar active={activeView} setActive={handleNavigate} onPreload={handlePreload} />
+                <Sidebar active={activeView} setActive={handleNavigate} />
                 <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
                     <div className={`flex-1 overflow-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
                         <div className="max-w-full mx-auto h-full">
                             <div ref={pageTransitionRef} className="h-full flex flex-col">
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
-                                    <Dashboard onSelect={handleNavigate} onPreload={handlePreload} />
+                                    <Dashboard onSelect={handleNavigate} />
                                 </div>
                                 <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
                                     <SettingsView />
                                 </div>
-                                {visibleFeatureViews.map((viewId) => (
-                                    <div key={viewId} className={`${activeView === viewId ? 'block' : 'hidden'} h-full`}>
-                                        {viewId === 'subtitle_stitch' ? (
+                                {isFeatureView && (
+                                    <div className="h-full">
+                                        {activeView === 'subtitle_stitch' ? (
                                             <SubtitleStitchPage
-                                                isActive={activeView === viewId}
+                                                isActive={true}
                                                 onTaskFailure={handleTaskFailure}
                                             />
                                         ) : (
                                             <DetailView
-                                                id={viewId}
-                                                isActive={activeView === viewId}
+                                                key={activeView}
+                                                id={activeView}
+                                                isActive={true}
                                                 onBack={handleBack}
                                                 onTaskFailure={handleTaskFailure}
                                             />
                                         )}
                                     </div>
-                                ))}
+                                )}
                             </div>
                         </div>
                     </div>

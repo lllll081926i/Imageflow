@@ -10,7 +10,6 @@ import os
 import json
 import importlib
 import traceback
-import gc
 import time
 from typing import Dict, Any
 
@@ -217,9 +216,6 @@ def main():
 
             # Write result to stdout
             print(json.dumps(result), flush=True)
-
-            # Force garbage collection
-            gc.collect()
 
         except json.JSONDecodeError as e:
             error_result = {'success': False, 'error': f'Invalid JSON: {str(e)}'}

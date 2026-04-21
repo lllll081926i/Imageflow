@@ -17,7 +17,6 @@ Usage:
 import sys
 import json
 import os
-import gc
 import io
 import re
 import shutil
@@ -557,9 +556,6 @@ class ImageConverter:
             # Explicitly close image to free memory
             img.close()
             del img
-
-            # Force garbage collection for large batch processing
-            gc.collect()
 
             if _PROFILE_ENABLED:
                 total_elapsed = time.perf_counter() - total_start

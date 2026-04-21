@@ -14,7 +14,6 @@ Usage:
 import sys
 import json
 import os
-import gc
 from pathlib import Path
 from PIL import Image, ImageFilter, ImageEnhance, ImageOps, ImageDraw, ImageChops
 import logging
@@ -138,9 +137,6 @@ class ImageFilterApplier:
 
             # Get file size
             file_size = os.path.getsize(output_path)
-
-            # Force garbage collection
-            gc.collect()
 
             return {
                 'success': True,

@@ -216,6 +216,61 @@ describe('FileDropZone', () => {
         });
         expect(onFileDropOff).toHaveBeenCalledTimes(1);
     });
+
+    it('大目录拖入后默认折叠节点，避免首屏渲染全部子项', async () => {
+        const nestedFiles = Array.from({ length: 121 }, (_, index) => ({
+            input_path: `D:/drop/batch/group/file-${index}.png`,
+            source_root: 'D:/drop/batch',
+            relative_path: `group/file-${index}.png`,
+            is_from_dir_drop: true,
+            size: 12,
+            mod_time: 1710000000 + index,
+        }));
+        const expandDroppedPaths = vi.fn().mockResolvedValue({
+            has_directory: true,
+            files: nestedFiles,
+        });
+        vi.mocked(getAppBindings).mockReturnValue({
+            ExpandDroppedPaths: expandDroppedPaths,
+        } as any);
+
+        (window as { runtime?: unknown }).runtime = {
+            OnFileDrop: vi.fn(),
+            OnFileDropOff: vi.fn(),
+        };
+
+        const { container, root } = await renderElement(React.createElement(FileDropZone, {
+            onFilesSelected: vi.fn(),
+            onPathsExpanded: vi.fn(),
+        }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+        const file = {
+            name: 'batch',
+            size: 0,
+            lastModified: 1710000000000,
+            pywebviewFullPath: 'D:/drop/batch',
+        } as any;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [file] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+            await flushMicrotasks();
+        });
+
+        expect(container.textContent).toContain('batch');
+        expect(container.textContent).toContain('121 项');
+        expect(container.textContent).not.toContain('file-0.png');
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+    });
 });
 
 describe('resolveGifAction', () => {

@@ -60,6 +60,33 @@ def _path_conflict_key(path_value: Path | str) -> str:
     return str(Path(path_value)).casefold()
 
 
+def _iter_supported_files(root: Path):
+    stack: list[Path] = [root]
+    while stack:
+        current_dir = stack.pop()
+        try:
+            with os.scandir(current_dir) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+
+                    if Path(entry.name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                        continue
+
+                    try:
+                        yield entry.path, entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
 def expand_input_paths(paths: list[str]) -> dict:
     files: list[dict] = []
     has_directory = False
@@ -87,18 +114,13 @@ def expand_input_paths(paths: list[str]) -> dict:
             continue
 
         has_directory = True
-        for current in normalized.rglob("*"):
-            if not current.is_file() or not _is_image_file(current):
-                continue
-            try:
-                current_info = current.stat()
-            except OSError:
-                continue
+        for current_path, current_info in _iter_supported_files(normalized):
+            current = Path(current_path)
             files.append(
                 {
-                    "input_path": str(current),
+                    "input_path": current_path,
                     "source_root": str(normalized),
-                    "relative_path": current.relative_to(normalized).as_posix(),
+                    "relative_path": os.path.relpath(current_path, normalized).replace("\\", "/"),
                     "is_from_dir_drop": True,
                     "size": current_info.st_size,
                     "mod_time": int(current_info.st_mtime),

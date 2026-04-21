@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback, useId, memo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue, useId, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
@@ -378,6 +378,8 @@ type FileTreeNode = {
     isFolder: true;
     children: Record<string, FileTreeNode>;
     files: DroppedFile[];
+    itemCount?: number;
+    initiallyOpen?: boolean;
     sortedChildren?: FileTreeNode[];
     sortedFiles?: DroppedFile[];
 };
@@ -467,15 +469,22 @@ const buildFileTree = (files: DroppedFile[]) => {
 
     return root;
 };
-const sortTreeNode = (node: FileTreeNode, sortKey: SortKey, sortOrder: SortOrder) => {
+
+const ROOT_AUTO_EXPAND_LIMIT = 120;
+const CHILD_AUTO_EXPAND_LIMIT = 48;
+
+const sortTreeNode = (node: FileTreeNode, sortKey: SortKey, sortOrder: SortOrder, depth = 0) => {
     const sortedChildren = Object.values(node.children || {});
-    sortedChildren.forEach((child) => sortTreeNode(child, sortKey, sortOrder));
+    sortedChildren.forEach((child) => sortTreeNode(child, sortKey, sortOrder, depth + 1));
     sortedChildren.sort((a, b) => {
         const res = compareNames(a.name, b.name);
         return sortOrder === 'asc' ? res : -res;
     });
     node.sortedChildren = sortedChildren;
     node.sortedFiles = sortFiles(node.files || [], sortKey, sortOrder);
+    node.itemCount = node.sortedFiles.length + sortedChildren.reduce((sum, child) => sum + (child.itemCount || 0), 0);
+    const autoExpandLimit = depth === 0 ? ROOT_AUTO_EXPAND_LIMIT : CHILD_AUTO_EXPAND_LIMIT;
+    node.initiallyOpen = (node.itemCount || 0) <= autoExpandLimit;
 };
 const buildSortedFileTree = (files: DroppedFile[], sortKey: SortKey, sortOrder: SortOrder) => {
     const root = buildFileTree(files);
@@ -500,8 +509,25 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
     onRemoveFolder,
     onRemoveFile,
 }) => {
-    const [open, setOpen] = useState(true);
-    const [shouldRenderChildren, setShouldRenderChildren] = useState(true);
+    const [open, setOpen] = useState(() => node.initiallyOpen ?? true);
+    const [shouldRenderChildren, setShouldRenderChildren] = useState(() => node.initiallyOpen ?? true);
+    const previousAutoStateRef = useRef({
+        path: node.path,
+        itemCount: node.itemCount || 0,
+    });
+
+    useEffect(() => {
+        const previous = previousAutoStateRef.current;
+        const itemCount = node.itemCount || 0;
+        const shouldResetOpenState = previous.path !== node.path
+            || (previous.itemCount !== itemCount && node.initiallyOpen === false);
+        if (shouldResetOpenState) {
+            const nextOpen = node.initiallyOpen ?? true;
+            setOpen(nextOpen);
+            setShouldRenderChildren(nextOpen);
+        }
+        previousAutoStateRef.current = { path: node.path, itemCount };
+    }, [node.initiallyOpen, node.itemCount, node.path]);
 
     useEffect(() => {
         if (open) {
@@ -545,7 +571,7 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                 <div className="flex-1 min-w-0 text-left">
                     <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{node.name}</div>
                     <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                        {sortedFiles.length} 文件, {sortedChildren.length} 文件夹
+                        {node.itemCount || 0} 项, {sortedChildren.length} 文件夹
                     </div>
                 </div>
                 {depth === 0 && (
@@ -645,6 +671,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const sortButtonRef = useRef<HTMLButtonElement>(null);
     const runtimeDropMarkerRef = useRef<RuntimeDropMarker | null>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
+    const deferredPreviewResult = useDeferredValue(previewResult);
+    const isPreviewPending = deferredPreviewResult !== previewResult;
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
         const seen = new Set(base.files.map((f) => pathKey(f.input_path)));
@@ -913,15 +941,15 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     }, [onPathsExpanded]);
 
     const treeRoot = useMemo<FileTreeRoot>(() => {
-        if (!previewResult?.files) return {};
-        return buildSortedFileTree(previewResult.files, sortKey, sortOrder);
-    }, [previewResult, sortKey, sortOrder]);
+        if (!deferredPreviewResult?.files) return {};
+        return buildSortedFileTree(deferredPreviewResult.files, sortKey, sortOrder);
+    }, [deferredPreviewResult, sortKey, sortOrder]);
 
     const looseFiles = useMemo(() => {
-        const files = previewResult?.files || [];
+        const files = deferredPreviewResult?.files || [];
         const filtered = files.filter((f) => !f.is_from_dir_drop);
         return sortFiles(filtered, sortKey, sortOrder);
-    }, [previewResult, sortKey, sortOrder]);
+    }, [deferredPreviewResult, sortKey, sortOrder]);
 
     const hasPreview = (previewResult?.files?.length || 0) > 0;
 
@@ -1029,6 +1057,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                 <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
                                     已添加 {previewResult?.files.length} 项
                                 </div>
+                                {isPreviewPending && (
+                                    <div className="text-[11px] font-medium text-[#007AFF]">
+                                        正在整理列表...
+                                    </div>
+                                )}
                             </div>
                             
                             <button
@@ -1045,6 +1078,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         <div className="flex-1 overflow-y-auto overflow-x-hidden relative scrollbar-dark">
                             {/* Scrollable Content */}
                             <div className="absolute inset-0 w-full">
+                                {isPreviewPending && Object.keys(treeRoot).length === 0 && looseFiles.length === 0 && (
+                                    <div className="h-full flex items-center justify-center px-6 text-xs text-gray-400">
+                                        正在整理文件列表，请稍候...
+                                    </div>
+                                )}
                                 {(Object.values(treeRoot) as FileTreeNode[]).map((node) => (
                                     <TreeNode
                                         key={node.path}

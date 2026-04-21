@@ -239,8 +239,7 @@ class GIFTool:
             canvas_size = (max_width, max_height)
             self._assert_frame_pixel_budget(len(paths), canvas_size, "build")
 
-            temp_frame_paths = []
-            opened_frames = []
+            quantized_frames = []
             try:
                 for path in paths:
                     with Image.open(path) as img:
@@ -249,36 +248,28 @@ class GIFTool:
                             logger.info("Converting %s to PNG-compatible RGBA before GIF", path)
                         rgba = img.convert("RGBA")
                         padded = self._pad_to_size(rgba, canvas_size)
-                        quantized = self._quantize_rgba_frame(padded, 255)
-
-                    with tempfile.NamedTemporaryFile(prefix="imageflow-gif-frame-", suffix=".png", delete=False) as tmp_frame:
-                        tmp_path = tmp_frame.name
-                    quantized.save(tmp_path, format="PNG")
-                    temp_frame_paths.append(tmp_path)
-
-                for temp_path in temp_frame_paths:
-                    opened_frames.append(Image.open(temp_path))
+                        try:
+                            quantized_frames.append(self._quantize_rgba_frame(padded, 255))
+                        finally:
+                            if padded is not rgba:
+                                padded.close()
+                            rgba.close()
 
                 self._ensure_parent_dir(output_path)
                 self._save_gif(
-                    opened_frames,
+                    quantized_frames,
                     output_path,
-                    [duration_ms] * len(opened_frames),
+                    [duration_ms] * len(quantized_frames),
                     loop,
                     optimize=True,
                     transparency=255,
                 )
             finally:
-                for frame in opened_frames:
+                for frame in quantized_frames:
                     try:
                         frame.close()
                     except Exception:
                         pass
-                for temp_path in temp_frame_paths:
-                    try:
-                        os.remove(temp_path)
-                    except OSError as cleanup_err:
-                        logger.warning("Failed to cleanup temp GIF frame %s: %s", temp_path, cleanup_err)
 
             return {
                 "success": True,
@@ -811,21 +802,30 @@ class GIFTool:
 
     def _quantize_rgba_frame(self, frame, palette_size):
         rgba = frame.convert("RGBA")
-        alpha = rgba.getchannel("A")
-        # Reserve one index (255) for transparent pixels.
-        colors = max(2, min(255, int(palette_size)))
-        quantized = rgba.quantize(
-            colors=colors,
-            method=Image.FASTOCTREE,
-            dither=Image.FLOYDSTEINBERG,
-        )
-        palette = quantized.getpalette() or []
-        if len(palette) < 768:
-            quantized.putpalette(palette + [0] * (768 - len(palette)))
-        transparent_mask = alpha.point(lambda a: 255 if a <= 127 else 0, mode="L")
-        quantized.paste(255, mask=transparent_mask)
-        quantized.info["transparency"] = 255
-        return quantized
+        try:
+            alpha = rgba.getchannel("A")
+            try:
+                # Reserve one index (255) for transparent pixels.
+                colors = max(2, min(255, int(palette_size)))
+                quantized = rgba.quantize(
+                    colors=colors,
+                    method=Image.FASTOCTREE,
+                    dither=Image.FLOYDSTEINBERG,
+                )
+                palette = quantized.getpalette() or []
+                if len(palette) < 768:
+                    quantized.putpalette(palette + [0] * (768 - len(palette)))
+                transparent_mask = alpha.point(lambda a: 255 if a <= 127 else 0, mode="L")
+                try:
+                    quantized.paste(255, mask=transparent_mask)
+                finally:
+                    transparent_mask.close()
+                quantized.info["transparency"] = 255
+                return quantized
+            finally:
+                alpha.close()
+        finally:
+            rgba.close()
 
     def _ensure_parent_dir(self, path):
         parent = os.path.dirname(path)

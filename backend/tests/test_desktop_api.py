@@ -1,10 +1,13 @@
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 from PIL import Image
 
+from backend.api import desktop_api
 from backend.app import create_app
 
 
@@ -258,6 +261,139 @@ class DesktopAPITests(unittest.TestCase):
         self.assertEqual(result[0]["frame_count"], 0)
         self.assertFalse(result[0]["is_animated"])
         self.assertIn("不允许使用父级目录跳转路径", result[0]["error"])
+
+    def test_get_info_cancels_previous_inflight_info_request(self):
+        app = create_app()
+        first = Path(self.temp_dir.name) / "first.png"
+        second = Path(self.temp_dir.name) / "second.png"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+
+        original_execute_engine = desktop_api.execute_engine
+        first_started = threading.Event()
+        first_cancelled = threading.Event()
+        first_result: dict[str, object] = {}
+
+        def fake_execute_engine(_module_name, payload, task_manager, task_id=None):
+            input_name = Path(str(payload["input_path"])).name
+            if input_name == "first.png":
+                first_started.set()
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    if task_manager.is_cancelled(task_id):
+                        first_cancelled.set()
+                        return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+                    time.sleep(0.01)
+                return {"success": True, "input_path": payload["input_path"]}
+            return {"success": True, "input_path": payload["input_path"]}
+
+        def run_first_request():
+            first_result["value"] = app.get_info({"input_path": str(first)})
+
+        worker = threading.Thread(target=run_first_request)
+        try:
+            desktop_api.execute_engine = fake_execute_engine
+            worker.start()
+            self.assertTrue(first_started.wait(timeout=2.0))
+
+            second_result = app.get_info({"input_path": str(second)})
+
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(first_cancelled.is_set())
+            self.assertEqual(first_result["value"], {"success": False, "error": "[PY_CANCELLED] operation cancelled"})
+            self.assertEqual(second_result, {"success": True, "input_path": str(second.resolve())})
+        finally:
+            desktop_api.execute_engine = original_execute_engine
+            if worker.is_alive():
+                worker.join(timeout=0.5)
+
+    def test_get_info_does_not_replace_current_operation_task(self):
+        task_manager = desktop_api.TaskManager()
+        app = desktop_api.DesktopAPI(task_manager)
+        operation_task_id = task_manager.begin_task("operation")
+        image_path = Path(self.temp_dir.name) / "sample.png"
+        image_path.write_bytes(b"sample")
+
+        original_execute_engine = desktop_api.execute_engine
+        try:
+            desktop_api.execute_engine = lambda _module_name, _payload, _task_manager, task_id=None: {
+                "success": True,
+                "info_task_id": task_id,
+                "current_task_id": _task_manager.current_task_id,
+            }
+
+            result = app.get_info({"input_path": str(image_path)})
+
+            self.assertTrue(result["success"])
+            self.assertIsNotNone(result["info_task_id"])
+            self.assertNotEqual(result["info_task_id"], operation_task_id)
+            self.assertEqual(result["current_task_id"], operation_task_id)
+            self.assertEqual(task_manager.current_task_id, operation_task_id)
+            self.assertTrue(task_manager.cancel_current_task())
+            self.assertTrue(task_manager.is_cancelled(operation_task_id))
+        finally:
+            desktop_api.execute_engine = original_execute_engine
+            task_manager.finish_task(operation_task_id)
+
+    def test_get_info_registers_new_active_task_atomically(self):
+        task_manager = desktop_api.TaskManager()
+        app = desktop_api.DesktopAPI(task_manager)
+        first = Path(self.temp_dir.name) / "first.png"
+        second = Path(self.temp_dir.name) / "second.png"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+
+        original_begin_task = task_manager.begin_task
+        original_execute_engine = desktop_api.execute_engine
+        first_begin_entered = threading.Event()
+        first_cancelled = threading.Event()
+        first_result: dict[str, object] = {}
+        info_begin_count = 0
+
+        def delayed_begin_task(kind: str, set_current: bool = True):
+            nonlocal info_begin_count
+            if kind == "info":
+                info_begin_count += 1
+                if info_begin_count == 1:
+                    first_begin_entered.set()
+                    time.sleep(0.2)
+            return original_begin_task(kind, set_current=set_current)
+
+        def fake_execute_engine(_module_name, payload, current_task_manager, task_id=None):
+            input_name = Path(str(payload["input_path"])).name
+            if input_name == "first.png":
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    if current_task_manager.is_cancelled(task_id):
+                        first_cancelled.set()
+                        return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+                    time.sleep(0.01)
+                return {"success": True, "input_path": payload["input_path"]}
+            return {"success": True, "input_path": payload["input_path"]}
+
+        def run_first_request():
+            first_result["value"] = app.get_info({"input_path": str(first)})
+
+        worker = threading.Thread(target=run_first_request)
+        try:
+            task_manager.begin_task = delayed_begin_task  # type: ignore[method-assign]
+            desktop_api.execute_engine = fake_execute_engine
+            worker.start()
+            self.assertTrue(first_begin_entered.wait(timeout=2.0))
+
+            second_result = app.get_info({"input_path": str(second)})
+
+            worker.join(timeout=2.0)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(first_cancelled.is_set())
+            self.assertEqual(first_result["value"], {"success": False, "error": "[PY_CANCELLED] operation cancelled"})
+            self.assertEqual(second_result, {"success": True, "input_path": str(second.resolve())})
+        finally:
+            task_manager.begin_task = original_begin_task  # type: ignore[method-assign]
+            desktop_api.execute_engine = original_execute_engine
+            if worker.is_alive():
+                worker.join(timeout=0.5)
 
 
 if __name__ == "__main__":

@@ -6,10 +6,9 @@ import { ViewState } from '../types';
 interface SidebarProps {
     active: ViewState;
     setActive: (view: ViewState) => void;
-    onPreload?: (view: ViewState) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ active, setActive, onPreload }) => {
+const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
     const [collapsed, setCollapsed] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -57,8 +56,6 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive, onPreload }) => {
                         key={item.id}
                         ref={el => { itemRefs.current[item.id] = el; }}
                         onClick={() => setActive(item.id)}
-                        onPointerEnter={() => onPreload?.(item.id)}
-                        onFocus={() => onPreload?.(item.id)}
                         title={collapsed ? item.title : ''}
                         className={`w-full flex items-center h-12 rounded-xl text-sm font-medium transition-all duration-300 group relative px-3 z-10 ${
                             active === item.id 

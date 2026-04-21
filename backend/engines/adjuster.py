@@ -11,7 +11,6 @@ Usage:
     (Output is provided via JSON on stdout)
 """
 
-import gc
 import sys
 import json
 import os
@@ -91,9 +90,6 @@ class ImageAdjuster:
 
             # Get file size
             file_size = os.path.getsize(output_path)
-
-            # Force garbage collection
-            gc.collect()
 
             return {
                 'success': True,

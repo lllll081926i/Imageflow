@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from PIL import Image, UnidentifiedImageError
@@ -144,6 +145,8 @@ def _probe_animated_path(input_path: str) -> dict[str, Any]:
 class DesktopAPI:
     def __init__(self, task_manager: TaskManager | None = None):
         self._task_manager = task_manager or TaskManager()
+        self._info_task_lock = Lock()
+        self._active_info_task_id: int | None = None
 
     def _settings(self) -> AppSettings:
         return load_settings()
@@ -208,7 +211,21 @@ class DesktopAPI:
 
     def get_info(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
-        return self._run_operation(lambda: execute_engine("info_viewer", normalized, self._task_manager))
+        with self._info_task_lock:
+            previous_task_id = self._active_info_task_id
+            task_id = self._task_manager.begin_task("info", set_current=False)
+            self._active_info_task_id = task_id
+
+        if previous_task_id is not None:
+            self._task_manager.cancel_task(previous_task_id)
+
+        try:
+            return execute_engine("info_viewer", normalized, self._task_manager, task_id=task_id)
+        finally:
+            self._task_manager.finish_task(task_id)
+            with self._info_task_lock:
+                if self._active_info_task_id == task_id:
+                    self._active_info_task_id = None
 
     def edit_metadata(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)

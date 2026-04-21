@@ -1497,6 +1497,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const [cancelRequested, setCancelRequested] = useState(false);
     const cancelRequestedRef = useRef(false);
     const infoRequestIdRef = useRef(0);
+    const infoRequestTimerRef = useRef<number | null>(null);
     const [progress, setProgress] = useState(0);
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
@@ -3238,11 +3239,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     }, [previewPath, isPreviewFeature]);
 
     const loadInfoForPath = useCallback(async (p: string) => {
-        const appAny = getAppBindings();
-        if (!appAny?.GetInfo) {
-            setLastMessage('未检测到 Wails 运行环境');
-            return;
-        }
         const normalized = normalizePath(p);
         const requestId = ++infoRequestIdRef.current;
         setIsProcessing(true);
@@ -3250,33 +3246,59 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         setLastMessage('');
         setInfoFilePath(normalized);
         setInfoPreview(null);
-        try {
-            const info = await appAny.GetInfo({ input_path: normalized });
-            if (infoRequestIdRef.current !== requestId) {
-                return;
-            }
-            setInfoPreview(info);
-            if (info?.success) {
-                const fileName = normalized.split('/').pop() || normalized;
-                setLastMessage(`信息读取完成：${fileName}`);
-            } else {
-                setLastMessage(info?.error || '信息读取失败');
-            }
-        } catch (err: any) {
-            if (infoRequestIdRef.current !== requestId) {
-                return;
-            }
-            console.error(`Failed to get info ${p}:`, err);
-            const msg = typeof err?.message === 'string' ? err.message : '信息读取失败';
-            setInfoPreview({ success: false, error: msg });
-            setLastMessage(msg);
-        } finally {
-            if (infoRequestIdRef.current === requestId) {
-                setProgress(100);
-                setIsProcessing(false);
-            }
+        if (infoRequestTimerRef.current) {
+            window.clearTimeout(infoRequestTimerRef.current);
+            infoRequestTimerRef.current = null;
         }
+
+        infoRequestTimerRef.current = window.setTimeout(() => {
+            infoRequestTimerRef.current = null;
+            void (async () => {
+                const appAny = getAppBindings();
+                if (!appAny?.GetInfo) {
+                    if (infoRequestIdRef.current === requestId) {
+                        setLastMessage('未检测到 Wails 运行环境');
+                        setProgress(100);
+                        setIsProcessing(false);
+                    }
+                    return;
+                }
+                try {
+                    const info = await appAny.GetInfo({ input_path: normalized });
+                    if (infoRequestIdRef.current !== requestId) {
+                        return;
+                    }
+                    setInfoPreview(info);
+                    if (info?.success) {
+                        const fileName = normalized.split('/').pop() || normalized;
+                        setLastMessage(`信息读取完成：${fileName}`);
+                    } else {
+                        setLastMessage(info?.error || '信息读取失败');
+                    }
+                } catch (err: any) {
+                    if (infoRequestIdRef.current !== requestId) {
+                        return;
+                    }
+                    console.error(`Failed to get info ${p}:`, err);
+                    const msg = typeof err?.message === 'string' ? err.message : '信息读取失败';
+                    setInfoPreview({ success: false, error: msg });
+                    setLastMessage(msg);
+                } finally {
+                    if (infoRequestIdRef.current === requestId) {
+                        setProgress(100);
+                        setIsProcessing(false);
+                    }
+                }
+            })();
+        }, 120);
     }, [normalizePath]);
+
+    useEffect(() => () => {
+        if (infoRequestTimerRef.current) {
+            window.clearTimeout(infoRequestTimerRef.current);
+            infoRequestTimerRef.current = null;
+        }
+    }, []);
 
     const handlePathsExpanded = useCallback((result: ExpandDroppedPathsResult) => {
         setDropResult(result);

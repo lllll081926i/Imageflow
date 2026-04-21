@@ -37,17 +37,24 @@ def _close_queue(queue: Queue) -> None:
         join_thread()
 
 
-def execute_engine(module_name: str, payload: dict[str, Any], task_manager: TaskManager | None = None) -> dict[str, Any]:
-    task_id = task_manager.current_task_id if task_manager else None
+def execute_engine(
+    module_name: str,
+    payload: dict[str, Any],
+    task_manager: TaskManager | None = None,
+    task_id: int | None = None,
+) -> dict[str, Any]:
+    effective_task_id = task_id if task_id is not None else (task_manager.current_task_id if task_manager else None)
+    if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
+        return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
     queue: Queue = Queue()
     process = Process(target=_process_worker, args=(module_name, payload, queue))
     process.start()
-    if task_manager and task_id is not None:
-        task_manager.attach_process(task_id, process)
+    if task_manager and effective_task_id is not None:
+        task_manager.attach_process(effective_task_id, process)
 
     try:
         while process.is_alive():
-            if task_manager and task_id is not None and task_manager.is_cancelled(task_id):
+            if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
                 process.terminate()
                 process.join()
                 return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
@@ -58,12 +65,12 @@ def execute_engine(module_name: str, payload: dict[str, Any], task_manager: Task
             result = queue.get_nowait()
         except Empty:
             result = {"success": False, "error": "处理失败"}
-        if task_manager and task_id is not None and task_manager.is_cancelled(task_id):
+        if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
             return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
         return result
     finally:
-        if task_manager and task_id is not None:
-            task_manager.detach_process(task_id, process)
+        if task_manager and effective_task_id is not None:
+            task_manager.detach_process(effective_task_id, process)
 
 
 def execute_engine_batch(

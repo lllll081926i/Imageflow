@@ -104,6 +104,33 @@ class TaskManagerTests(unittest.TestCase):
             image_ops.Queue = original_queue
             image_ops.invoke_engine_process = original_invoke
 
+    def test_execute_engine_skips_starting_process_for_cancelled_task(self):
+        original_process = image_ops.Process
+        process_started = False
+
+        class FailingProcess:
+            def __init__(self, target, args):
+                self._target = target
+                self._args = args
+
+            def start(self):
+                nonlocal process_started
+                process_started = True
+                raise AssertionError("cancelled task should not start a process")
+
+        try:
+            image_ops.Process = FailingProcess
+            manager = TaskManager()
+            task_id = manager.begin_task("info", set_current=False)
+            manager.cancel_task(task_id)
+
+            result = image_ops.execute_engine("info_viewer", {"input_path": "D:/dummy.png"}, manager, task_id=task_id)
+
+            self.assertEqual(result, {"success": False, "error": "[PY_CANCELLED] operation cancelled"})
+            self.assertFalse(process_started)
+        finally:
+            image_ops.Process = original_process
+
 
 if __name__ == "__main__":
     unittest.main()
