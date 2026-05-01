@@ -34,6 +34,10 @@ class TaskManager:
             try:
                 if process.is_alive():
                     process.terminate()
+                    process.join(timeout=5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=2)
             except Exception:
                 continue
         return True
@@ -75,8 +79,11 @@ class TaskManager:
             if task is None:
                 return
             processes = task.get("processes", [])
-            if isinstance(processes, list) and process in processes:
-                processes.remove(process)
+            if isinstance(processes, list):
+                try:
+                    processes.remove(process)
+                except ValueError:
+                    pass
 
     def _refresh_current_task_id(self) -> None:
         while self._active_task_ids and self._active_task_ids[-1] not in self._tasks:

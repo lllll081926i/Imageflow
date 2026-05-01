@@ -6,6 +6,10 @@ type FilePathRuntime = {
     ResolveFilePaths?: (files: File[]) => Promise<unknown> | unknown;
 };
 
+type ResolveFilePathOptions = {
+    timeoutMs?: number;
+};
+
 export type AppSettingsSnapshot = {
     max_concurrency: number;
     output_prefix: string;
@@ -19,6 +23,7 @@ export type AppSettingsSnapshot = {
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const MAX_RECENT_PATHS = 4;
+const DEFAULT_FILE_PATH_RESOLVE_TIMEOUT_MS = 1500;
 
 export const DEFAULT_APP_SETTINGS: AppSettingsSnapshot = {
     max_concurrency: 8,
@@ -146,6 +151,7 @@ export function getAppBindings(): Partial<AppBindings> | null {
 export async function resolveSelectedFilePaths(
     files: Array<File | { path?: string | null; pywebviewFullPath?: string | null }>,
     runtimeApi?: FilePathRuntime | null,
+    options?: ResolveFilePathOptions,
 ): Promise<string[]> {
     const directPaths = files
         .map((file) => {
@@ -170,7 +176,16 @@ export async function resolveSelectedFilePaths(
     }
 
     try {
-        const resolved = await runtime.ResolveFilePaths(files as File[]);
+        const timeoutMs = Math.max(0, Number(options?.timeoutMs ?? DEFAULT_FILE_PATH_RESOLVE_TIMEOUT_MS) || 0);
+        const resolvePromise = Promise.resolve(runtime.ResolveFilePaths(files as File[]));
+        const resolved = timeoutMs > 0
+            ? await Promise.race([
+                resolvePromise,
+                new Promise<unknown>((resolve) => {
+                    window.setTimeout(() => resolve([]), timeoutMs);
+                }),
+            ])
+            : await resolvePromise;
         if (!Array.isArray(resolved)) {
             return [];
         }

@@ -16,7 +16,13 @@ from typing import Dict, Any
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
+    sys.path.append(SCRIPTS_DIR)
+
+ALLOWED_SCRIPTS = frozenset({
+    "converter", "compressor", "filter", "adjuster",
+    "watermark", "pdf_generator", "gif_splitter",
+    "metadata_tool", "info_viewer", "subtitle_stitcher",
+})
 
 
 _CONVERTER_MODULE = None
@@ -162,6 +168,8 @@ def process_command(command: Dict[str, Any]) -> Dict[str, Any]:
         # Import the module dynamically
         # Strip .py extension if present to get module name
         module_name = script_name[:-3] if script_name.endswith('.py') else script_name
+        if module_name not in ALLOWED_SCRIPTS:
+            return {'success': False, 'error': f'Script {script_name} is not allowed'}
         module = importlib.import_module(module_name)
 
         # Call the main processing function

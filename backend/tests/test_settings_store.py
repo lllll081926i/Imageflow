@@ -64,6 +64,33 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(loaded.default_output_dir, "D:/Out")
             self.assertEqual(loaded.recent_input_dirs, [r"D:\Input", "E:/Other"])
 
+    def test_load_settings_allows_override_path_with_double_dot_in_directory_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "a..b" / "settings.json"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            settings_file.write_text(
+                json.dumps(
+                    {
+                        "max_concurrency": 10,
+                        "output_prefix": "SAFE",
+                        "output_template": "{basename}",
+                        "preserve_folder_structure": True,
+                        "conflict_strategy": "rename",
+                        "default_output_dir": "",
+                        "recent_input_dirs": [],
+                        "recent_output_dirs": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            loaded = load_settings()
+
+            self.assertEqual(loaded.max_concurrency, 10)
+            self.assertEqual(loaded.output_prefix, "SAFE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,6 +66,7 @@ const renderElement = async (element: React.ReactElement) => {
 };
 
 afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     document.body.innerHTML = '';
     delete (window as { runtime?: unknown }).runtime;
@@ -140,9 +141,63 @@ describe('resolveSelectedFilePaths', () => {
 
         errorSpy.mockRestore();
     });
+
+    it('运行时解析本地路径超时时回退为空数组', async () => {
+        vi.useFakeTimers();
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(true),
+            ResolveFilePaths: vi.fn().mockReturnValue(new Promise(() => {})),
+        };
+        const files = [{ name: 'slow.png' }] as any;
+
+        const promise = resolveSelectedFilePaths(files, runtime as any, { timeoutMs: 25 });
+        await vi.advanceTimersByTimeAsync(25);
+
+        await expect(promise).resolves.toEqual([]);
+    });
 });
 
 describe('FileDropZone', () => {
+    it('拖入文件后在等待运行时路径解析时展示进行中状态', async () => {
+        vi.useFakeTimers();
+        const runtime = {
+            CanResolveFilePaths: vi.fn().mockReturnValue(true),
+            ResolveFilePaths: vi.fn().mockReturnValue(new Promise(() => {})),
+        };
+        (window as { runtime?: unknown }).runtime = runtime;
+        vi.mocked(getAppBindings).mockReturnValue({
+            ExpandDroppedPaths: vi.fn(),
+        } as any);
+
+        const { container, root } = await renderElement(React.createElement(FileDropZone, {
+            onFilesSelected: vi.fn(),
+            onPathsExpanded: vi.fn(),
+        }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+        const file = {
+            name: 'slow.png',
+            size: 12,
+            lastModified: 1710000000000,
+        } as any;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [file] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+        });
+
+        expect(container.textContent).toContain('正在解析文件路径');
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+    });
+
     it('在桌面端拖拽已携带 pywebviewFullPath 的文件时直接展开路径，不等待 runtime 回传', async () => {
         const expandDroppedPaths = vi.fn().mockResolvedValue({
             has_directory: false,

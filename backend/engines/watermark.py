@@ -21,10 +21,6 @@ import logging
 from converter import open_image_with_svg_support
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -95,6 +91,9 @@ class WatermarkApplier:
         Returns:
             dict: Watermark application result
         """
+        img = None
+        overlay = None
+        watermarked = None
         try:
             if watermark_type == 'image':
                 watermark_path = str(watermark_path or '').strip()
@@ -141,9 +140,14 @@ class WatermarkApplier:
             if watermark_type == 'text':
                 if tiled:
                     tile_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
-                    if rotation != 0:
-                        tile_img = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                    self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                    try:
+                        if rotation != 0:
+                            rotated = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                            tile_img.close()
+                            tile_img = rotated
+                        self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                    finally:
+                        tile_img.close()
                 else:
                     self._apply_text_watermark(overlay, img.size, text, font,
                                              font_size, font_color, opacity,
@@ -151,9 +155,14 @@ class WatermarkApplier:
             elif watermark_type == 'image':
                 if tiled:
                     tile_img = self._build_image_watermark(watermark_path, img.size, watermark_scale, opacity)
-                    if rotation != 0:
-                        tile_img = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                    self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                    try:
+                        if rotation != 0:
+                            rotated = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                            tile_img.close()
+                            tile_img = rotated
+                        self._tile_overlay(overlay, tile_img, offset_x, offset_y)
+                    finally:
+                        tile_img.close()
                 else:
                     self._apply_image_watermark(overlay, img.size, watermark_path,
                                               watermark_scale, opacity, position,
@@ -166,10 +175,14 @@ class WatermarkApplier:
             
             # Composite watermark onto original image
             watermarked = self._blend_overlay(img, overlay, blend_mode)
-            
+            overlay.close()
+            overlay = None
+
             # Convert back to original mode if necessary
             if original_mode != 'RGBA':
+                prev = watermarked
                 watermarked = watermarked.convert(original_mode)
+                prev.close()
             
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
@@ -203,6 +216,13 @@ class WatermarkApplier:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            for image in (watermarked, overlay, img):
+                if image is not None:
+                    try:
+                        image.close()
+                    except Exception:
+                        pass
 
     def _resolve_output_format(self, output_path, image):
         ext = Path(output_path).suffix.lower()
@@ -227,13 +247,23 @@ class WatermarkApplier:
             if img.mode in ('RGBA', 'LA'):
                 rgba = img.convert('RGBA')
                 background = Image.new('RGB', rgba.size, (255, 255, 255))
-                background.paste(rgba, mask=rgba.split()[-1])
-                save_img = background
+                alpha = rgba.split()[-1]
+                try:
+                    background.paste(rgba, mask=alpha)
+                    save_img = background
+                finally:
+                    alpha.close()
+                    rgba.close()
             elif img.mode == 'P' and 'transparency' in img.info:
                 rgba = img.convert('RGBA')
                 background = Image.new('RGB', rgba.size, (255, 255, 255))
-                background.paste(rgba, mask=rgba.split()[-1])
-                save_img = background
+                alpha = rgba.split()[-1]
+                try:
+                    background.paste(rgba, mask=alpha)
+                    save_img = background
+                finally:
+                    alpha.close()
+                    rgba.close()
             elif img.mode not in ('RGB', 'L'):
                 save_img = img.convert('RGB')
         save_img.save(output_path, format=img_format)
@@ -247,10 +277,13 @@ class WatermarkApplier:
                              font_size, font_color, opacity, position,
                              rotation, offset_x, offset_y, shadow=False):
         """Apply a text watermark to the overlay."""
+        text_img = None
         try:
             text_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
             if rotation != 0:
-                text_img = text_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                rotated = text_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                text_img.close()
+                text_img = rotated
 
             wm_width, wm_height = text_img.size
             x, y = self._calculate_position(
@@ -261,6 +294,9 @@ class WatermarkApplier:
         except Exception as e:
             logger.error(f"Failed to apply text watermark: {e}")
             raise
+        finally:
+            if text_img is not None:
+                text_img.close()
 
     def _build_text_watermark(self, text, font, font_size, font_color, opacity, shadow):
         try:
@@ -275,6 +311,7 @@ class WatermarkApplier:
             bbox = draw.textbbox((0, 0), text, font=pil_font)
             text_width = max(1, bbox[2] - bbox[0])
             text_height = max(1, bbox[3] - bbox[1])
+            tmp.close()
 
             color = self._parse_color(font_color, opacity)
             text_img = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
@@ -306,20 +343,28 @@ class WatermarkApplier:
                               rotation, offset_x, offset_y, shadow=False):
         """Apply an image watermark to the overlay."""
         watermark = self._build_image_watermark(watermark_path, img_size, watermark_scale, opacity)
-        if rotation != 0:
-            watermark = watermark.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+        try:
+            if rotation != 0:
+                rotated = watermark.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
+                watermark.close()
+                watermark = rotated
 
-        wm_width, wm_height = watermark.size
-        x, y = self._calculate_position(
-            img_size, (wm_width, wm_height), position, offset_x, offset_y
-        )
+            wm_width, wm_height = watermark.size
+            x, y = self._calculate_position(
+                img_size, (wm_width, wm_height), position, offset_x, offset_y
+            )
 
-        if shadow:
-            shadow_img, shadow_offset = self._create_shadow_image(watermark, opacity)
-            overlay.paste(shadow_img, (x + shadow_offset, y + shadow_offset), shadow_img)
+            if shadow:
+                shadow_img, shadow_offset = self._create_shadow_image(watermark, opacity)
+                try:
+                    overlay.paste(shadow_img, (x + shadow_offset, y + shadow_offset), shadow_img)
+                finally:
+                    shadow_img.close()
 
-        overlay.paste(watermark, (x, y), watermark)
-        logger.debug(f"Applied image watermark at ({x}, {y})")
+            overlay.paste(watermark, (x, y), watermark)
+            logger.debug(f"Applied image watermark at ({x}, {y})")
+        finally:
+            watermark.close()
 
     def _build_image_watermark(self, watermark_path, img_size, watermark_scale, opacity):
         with Image.open(watermark_path) as base_wm:
@@ -333,24 +378,39 @@ class WatermarkApplier:
         scale = max(0.01, scale)
         new_width = max(1, int(img_size[0] * scale))
         new_height = max(1, int(orig_height * new_width / max(1, orig_width)))
-        watermark = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        resized = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        watermark.close()
+        watermark = resized
 
         if opacity < 1.0:
             alpha = watermark.split()[3]
-            alpha = ImageEnhance.Brightness(alpha).enhance(opacity)
-            watermark.putalpha(alpha)
+            try:
+                enhanced_alpha = ImageEnhance.Brightness(alpha).enhance(opacity)
+                try:
+                    watermark.putalpha(enhanced_alpha)
+                finally:
+                    enhanced_alpha.close()
+            finally:
+                alpha.close()
 
         return watermark
 
     def _create_shadow_image(self, watermark, opacity):
         alpha = watermark.split()[3]
-        shadow_alpha = ImageEnhance.Brightness(alpha).enhance(0.6)
-        shadow = Image.new('RGBA', watermark.size, (0, 0, 0, 0))
-        shadow.putalpha(shadow_alpha)
+        try:
+            shadow_alpha = ImageEnhance.Brightness(alpha).enhance(0.6)
+            try:
+                shadow = Image.new('RGBA', watermark.size, (0, 0, 0, 0))
+                shadow.putalpha(shadow_alpha)
+            finally:
+                shadow_alpha.close()
+        finally:
+            alpha.close()
         blur_radius = max(1, int(min(watermark.size) * 0.04))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        blurred = shadow.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        shadow.close()
         shadow_offset = max(2, int(min(watermark.size) * 0.02))
-        return shadow, shadow_offset
+        return blurred, shadow_offset
 
     def _tile_overlay(self, overlay, tile_img, offset_x, offset_y):
         if tile_img.size[0] <= 0 or tile_img.size[1] <= 0:
@@ -371,33 +431,51 @@ class WatermarkApplier:
         layer = overlay.convert('RGBA')
         mode = str(blend_mode or 'normal').strip().lower()
         if mode in ('', 'normal'):
-            return Image.alpha_composite(base, layer)
+            try:
+                return Image.alpha_composite(base, layer)
+            finally:
+                base.close()
+                layer.close()
 
         base_rgb = base.convert('RGB')
         layer_rgb = layer.convert('RGB')
         alpha = layer.split()[3]
-
-        if mode == 'multiply':
-            blended = ImageChops.multiply(base_rgb, layer_rgb)
-        elif mode == 'screen':
-            blended = ImageChops.screen(base_rgb, layer_rgb)
-        elif mode == 'overlay':
-            if hasattr(ImageChops, 'overlay'):
-                blended = ImageChops.overlay(base_rgb, layer_rgb)
-            else:
+        base_alpha = base.split()[3]
+        blended = None
+        out_rgb = None
+        try:
+            if mode == 'multiply':
                 blended = ImageChops.multiply(base_rgb, layer_rgb)
-        elif mode in ('soft_light', 'softlight'):
-            if hasattr(ImageChops, 'soft_light'):
-                blended = ImageChops.soft_light(base_rgb, layer_rgb)
-            else:
+            elif mode == 'screen':
                 blended = ImageChops.screen(base_rgb, layer_rgb)
-        else:
-            blended = layer_rgb
+            elif mode == 'overlay':
+                if hasattr(ImageChops, 'overlay'):
+                    blended = ImageChops.overlay(base_rgb, layer_rgb)
+                else:
+                    blended = ImageChops.multiply(base_rgb, layer_rgb)
+            elif mode in ('soft_light', 'softlight'):
+                if hasattr(ImageChops, 'soft_light'):
+                    blended = ImageChops.soft_light(base_rgb, layer_rgb)
+                else:
+                    blended = ImageChops.screen(base_rgb, layer_rgb)
+            else:
+                blended = layer_rgb
 
-        out_rgb = Image.composite(blended, base_rgb, alpha)
-        out = out_rgb.convert('RGBA')
-        out.putalpha(base.split()[3])
-        return out
+            out_rgb = Image.composite(blended, base_rgb, alpha)
+            out = out_rgb.convert('RGBA')
+            out.putalpha(base_alpha)
+            return out
+        finally:
+            if out_rgb is not None:
+                out_rgb.close()
+            if blended is not None and blended is not layer_rgb:
+                blended.close()
+            base_alpha.close()
+            alpha.close()
+            base_rgb.close()
+            layer_rgb.close()
+            base.close()
+            layer.close()
     
     def _calculate_position(self, img_size, wm_size, position, offset_x, offset_y):
         """Calculate watermark position based on position string."""

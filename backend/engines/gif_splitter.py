@@ -28,7 +28,6 @@ from pathlib import Path
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 DEFAULT_FPS = 10
@@ -39,7 +38,6 @@ MAX_QUALITY = 100
 GIF_MIN_DELAY_MS = 20
 GIF_DELAY_UNIT_MS = 10
 FRAME_OUTPUT_FORMATS = {"png", "bmp"}
-MAX_FRAME_PIXEL_BUDGET = 120_000_000
 ANIMATED_OUTPUT_FORMATS = {"gif", "apng", "webp"}
 
 
@@ -100,6 +98,12 @@ class GIFTool:
         except Exception as exc:
             logger.error("GIF export failed: %s", exc, exc_info=True)
             return _error_response("GIF_EXPORT_FAILED", str(exc))
+        finally:
+            for frame in locals().get("frames", []):
+                try:
+                    frame.close()
+                except Exception:
+                    pass
 
     def reverse_gif(self, input_path, output_path, loop=None):
         try:
@@ -112,13 +116,18 @@ class GIFTool:
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
-            self._save_gif(frames, output_path, durations, loop_value)
+            frame_count = len(frames)
+            try:
+                self._save_gif(frames, output_path, durations, loop_value)
+            finally:
+                for frame in frames:
+                    frame.close()
 
             return {
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(frames),
+                "frame_count": frame_count,
             }
         except FileNotFoundError:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
@@ -134,10 +143,19 @@ class GIFTool:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
                 frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
-                self._assert_frame_pixel_budget(len(frames), gif.size, "change_speed")
             factor = self._clamp_speed_factor(speed_factor)
+            source_frames = frames
             frames, new_durations, disposals = self._retime_gif_frames(frames, durations, factor, disposals)
-            quantized_frames = [self._quantize_rgba_frame(frame, 255) for frame in frames]
+            retained_frame_ids = {id(frame) for frame in frames}
+            for frame in source_frames:
+                if id(frame) not in retained_frame_ids:
+                    frame.close()
+            quantized_frames = []
+            for frame in frames:
+                try:
+                    quantized_frames.append(self._quantize_rgba_frame(frame, 255))
+                finally:
+                    frame.close()
             if len(disposals) != len(quantized_frames):
                 effective_disposals = None
             else:
@@ -145,21 +163,26 @@ class GIFTool:
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
-            self._save_gif(
-                quantized_frames,
-                output_path,
-                new_durations,
-                loop_value,
-                optimize=True,
-                disposal=effective_disposals,
-                transparency=255,
-            )
+            frame_count = len(quantized_frames)
+            try:
+                self._save_gif(
+                    quantized_frames,
+                    output_path,
+                    new_durations,
+                    loop_value,
+                    optimize=True,
+                    disposal=effective_disposals,
+                    transparency=255,
+                )
+            finally:
+                for frame in quantized_frames:
+                    frame.close()
 
             return {
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(quantized_frames),
+                "frame_count": frame_count,
                 "speed_factor": factor,
             }
         except FileNotFoundError:
@@ -178,24 +201,31 @@ class GIFTool:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
                 frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
-                self._assert_frame_pixel_budget(len(frames), gif.size, "compress")
 
             quality_value = self._sanitize_quality(quality)
             palette_size = self._quality_to_palette_size(quality_value)
             for idx, frame in enumerate(frames):
-                frames[idx] = self._quantize_rgba_frame(frame, palette_size)
+                try:
+                    frames[idx] = self._quantize_rgba_frame(frame, palette_size)
+                finally:
+                    frame.close()
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
-            self._save_gif(
-                frames,
-                output_path,
-                durations,
-                loop_value,
-                optimize=True,
-                disposal=disposals,
-                transparency=255,
-            )
+            frame_count = len(frames)
+            try:
+                self._save_gif(
+                    frames,
+                    output_path,
+                    durations,
+                    loop_value,
+                    optimize=True,
+                    disposal=disposals,
+                    transparency=255,
+                )
+            finally:
+                for frame in frames:
+                    frame.close()
 
             in_size = os.path.getsize(input_path) if os.path.exists(input_path) else 0
             out_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
@@ -203,7 +233,7 @@ class GIFTool:
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(frames),
+                "frame_count": frame_count,
                 "quality": quality_value,
                 "input_size": in_size,
                 "output_size": out_size,
@@ -227,33 +257,39 @@ class GIFTool:
             fps_value = self._sanitize_fps(fps)
             duration_ms = max(1, int(1000 / fps_value))
 
+            # Single-pass: open each image once for both size scan and conversion
             max_width = 0
             max_height = 0
-            for idx, path in enumerate(paths):
-                with Image.open(path) as img:
-                    width, height = img.size
-                max_width = max(max_width, width)
-                max_height = max(max_height, height)
-                self._assert_frame_pixel_budget(idx + 1, (max_width, max_height), "build")
-
-            canvas_size = (max_width, max_height)
-            self._assert_frame_pixel_budget(len(paths), canvas_size, "build")
-
             quantized_frames = []
             try:
-                for path in paths:
+                for idx, path in enumerate(paths):
                     with Image.open(path) as img:
+                        width, height = img.size
+                        max_width = max(max_width, width)
+                        max_height = max(max_height, height)
+
                         ext = Path(path).suffix.lower()
                         if ext != ".png":
                             logger.info("Converting %s to PNG-compatible RGBA before GIF", path)
                         rgba = img.convert("RGBA")
-                        padded = self._pad_to_size(rgba, canvas_size)
-                        try:
-                            quantized_frames.append(self._quantize_rgba_frame(padded, 255))
-                        finally:
-                            if padded is not rgba:
-                                padded.close()
-                            rgba.close()
+
+                    # Process outside the with-block since canvas_size may not be final yet
+                    # Store raw RGBA for now, pad after canvas is determined
+                    quantized_frames.append(("raw", rgba))
+
+                canvas_size = (max_width, max_height)
+
+                # Pad and quantize now that canvas_size is known
+                padded_frames = []
+                for kind, rgba in quantized_frames:
+                    padded = self._pad_to_size(rgba, canvas_size)
+                    try:
+                        padded_frames.append(self._quantize_rgba_frame(padded, 255))
+                    finally:
+                        if padded is not rgba:
+                            padded.close()
+                        rgba.close()
+                quantized_frames = padded_frames
 
                 self._ensure_parent_dir(output_path)
                 self._save_gif(
@@ -266,6 +302,8 @@ class GIFTool:
                 )
             finally:
                 for frame in quantized_frames:
+                    if isinstance(frame, tuple) and len(frame) == 2:
+                        frame = frame[1]
                     try:
                         frame.close()
                     except Exception:
@@ -308,32 +346,36 @@ class GIFTool:
                 target_height,
                 keep_aspect,
             )
-            self._assert_frame_pixel_budget(
-                len(frames),
-                (max(original_width, resized_size[0]), max(original_height, resized_size[1])),
-                "resize",
-            )
             resample = self._get_resample_filter()
             for idx, frame in enumerate(frames):
                 resized = frame.resize(resized_size, resample=resample)
-                frames[idx] = self._quantize_rgba_frame(resized, 255)
+                try:
+                    frames[idx] = self._quantize_rgba_frame(resized, 255)
+                finally:
+                    resized.close()
+                    frame.close()
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
-            self._save_gif(
-                frames,
-                output_path,
-                durations,
-                loop_value,
-                disposal=disposals,
-                transparency=255,
-            )
+            frame_count = len(frames)
+            try:
+                self._save_gif(
+                    frames,
+                    output_path,
+                    durations,
+                    loop_value,
+                    disposal=disposals,
+                    transparency=255,
+                )
+            finally:
+                for frame in frames:
+                    frame.close()
 
             return {
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(frames),
+                "frame_count": frame_count,
                 "width": resized_size[0],
                 "height": resized_size[1],
                 "original_width": original_width,
@@ -495,24 +537,31 @@ class GIFTool:
     def _extract_webp_durations(self, file_path):
         try:
             with open(file_path, "rb") as f:
-                data = f.read()
-            if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
-                return None
-            offset = 12
-            durations = []
-            data_len = len(data)
-            while offset + 8 <= data_len:
-                chunk_id = data[offset:offset + 4]
-                chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
-                chunk_start = offset + 8
-                chunk_end = chunk_start + chunk_size
-                if chunk_end > data_len:
-                    break
-                if chunk_id == b"ANMF" and chunk_size >= 16:
-                    payload = data[chunk_start:chunk_end]
-                    duration = payload[12] | (payload[13] << 8) | (payload[14] << 16)
-                    durations.append(max(1, int(duration)))
-                offset = chunk_end + (chunk_size & 1)
+                header = f.read(12)
+                if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"WEBP":
+                    return None
+                durations = []
+                while True:
+                    chunk_header = f.read(8)
+                    if len(chunk_header) < 8:
+                        break
+                    chunk_id = chunk_header[:4]
+                    chunk_size = struct.unpack("<I", chunk_header[4:8])[0]
+                    if chunk_id == b"ANMF" and chunk_size >= 16:
+                        payload = f.read(16)
+                        if len(payload) < 16:
+                            break
+                        remaining = chunk_size - 16
+                    else:
+                        payload = b""
+                        remaining = chunk_size
+                    if chunk_id == b"ANMF" and payload:
+                        duration = payload[12] | (payload[13] << 8) | (payload[14] << 16)
+                        durations.append(max(1, int(duration)))
+                    if remaining > 0:
+                        f.seek(remaining, os.SEEK_CUR)
+                    if chunk_size & 1:
+                        f.seek(1, os.SEEK_CUR)
             return durations or None
         except Exception:
             return None
@@ -520,30 +569,38 @@ class GIFTool:
     def _extract_apng_durations(self, file_path):
         try:
             with open(file_path, "rb") as f:
-                data = f.read()
-            if len(data) < 8 or data[:8] != b"\x89PNG\r\n\x1a\n":
-                return None
-            offset = 8
-            durations = []
-            data_len = len(data)
-            while offset + 12 <= data_len:
-                chunk_size = struct.unpack_from(">I", data, offset)[0]
-                chunk_type = data[offset + 4:offset + 8]
-                chunk_start = offset + 8
-                chunk_end = chunk_start + chunk_size
-                if chunk_end + 4 > data_len:
-                    break
-                if chunk_type == b"fcTL" and chunk_size >= 26:
-                    payload = data[chunk_start:chunk_end]
-                    delay_num = struct.unpack_from(">H", payload, 20)[0]
-                    delay_den = struct.unpack_from(">H", payload, 22)[0]
-                    if delay_den == 0:
-                        delay_den = 100
-                    if delay_num == 0:
-                        delay_num = 1
-                    duration_ms = max(1, int(round((delay_num / delay_den) * 1000.0)))
-                    durations.append(duration_ms)
-                offset = chunk_end + 4
+                signature = f.read(8)
+                if signature != b"\x89PNG\r\n\x1a\n":
+                    return None
+                durations = []
+                while True:
+                    chunk_header = f.read(8)
+                    if len(chunk_header) < 8:
+                        break
+                    chunk_size = struct.unpack(">I", chunk_header[:4])[0]
+                    chunk_type = chunk_header[4:8]
+                    if chunk_type == b"fcTL" and chunk_size >= 26:
+                        payload = f.read(26)
+                        if len(payload) < 26:
+                            break
+                        remaining = chunk_size - 26
+                    else:
+                        payload = b""
+                        remaining = chunk_size
+                    if chunk_type == b"fcTL" and payload:
+                        delay_num = struct.unpack_from(">H", payload, 20)[0]
+                        delay_den = struct.unpack_from(">H", payload, 22)[0]
+                        if delay_den == 0:
+                            delay_den = 100
+                        if delay_num == 0:
+                            delay_num = 1
+                        duration_ms = max(1, int(round((delay_num / delay_den) * 1000.0)))
+                        durations.append(duration_ms)
+                    if remaining > 0:
+                        f.seek(remaining, os.SEEK_CUR)
+                    crc = f.read(4)
+                    if len(crc) < 4:
+                        break
             return durations or None
         except Exception:
             return None
@@ -722,18 +779,6 @@ class GIFTool:
         if resampling is not None:
             return resampling.LANCZOS
         return Image.LANCZOS
-
-    def _assert_frame_pixel_budget(self, frame_count, size, operation):
-        if frame_count <= 0:
-            return
-        width, height = size
-        if width <= 0 or height <= 0:
-            raise ValueError("Invalid frame size")
-        total_pixels = int(frame_count) * int(width) * int(height)
-        if total_pixels > MAX_FRAME_PIXEL_BUDGET:
-            raise MemoryError(
-                f"{operation} requires {total_pixels} frame-pixels, exceeds budget {MAX_FRAME_PIXEL_BUDGET}"
-            )
 
     def _quality_to_palette_size(self, quality):
         # Keep one palette index reserved for transparency.

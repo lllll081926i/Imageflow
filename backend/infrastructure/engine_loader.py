@@ -4,17 +4,25 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+ALLOWED_ENGINES = frozenset({
+    "converter", "compressor", "filter", "adjuster",
+    "watermark", "pdf_generator", "gif_splitter",
+    "metadata_tool", "info_viewer", "subtitle_stitcher",
+})
+
 
 def ensure_engine_scripts_path() -> Path:
     scripts_dir = Path(__file__).resolve().parents[1] / "engines"
     scripts_path = str(scripts_dir)
     if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
+        sys.path.append(scripts_path)
     return scripts_dir
 
 
 @lru_cache(maxsize=None)
 def load_engine_module(module_name: str):
+    if module_name not in ALLOWED_ENGINES:
+        raise ImportError(f"Module '{module_name}' is not in the allowed engines list")
     ensure_engine_scripts_path()
     return importlib.import_module(module_name)
 

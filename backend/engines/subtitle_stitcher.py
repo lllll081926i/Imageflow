@@ -16,7 +16,6 @@ from typing import List, Optional
 
 from PIL import Image, UnidentifiedImageError
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 DEFAULT_SUBTITLE_RATIO = 0.18
@@ -87,17 +86,20 @@ def _dhash(image: Image.Image) -> int:
     resampling = getattr(Image, "Resampling", None)
     filter_name = resampling.LANCZOS if resampling is not None else Image.LANCZOS
     thumb = image.convert("L").resize((9, 8), filter_name)
-    pixels = thumb.load()
-    value = 0
-    bit_index = 0
-    for row in range(8):
-        for col in range(8):
-            left = pixels[col, row]
-            right = pixels[col + 1, row]
-            if left > right:
-                value |= (1 << bit_index)
-            bit_index += 1
-    return value
+    try:
+        pixels = thumb.load()
+        value = 0
+        bit_index = 0
+        for row in range(8):
+            for col in range(8):
+                left = pixels[col, row]
+                right = pixels[col + 1, row]
+                if left > right:
+                    value |= (1 << bit_index)
+                bit_index += 1
+        return value
+    finally:
+        thumb.close()
 
 
 def _hamming_distance(hash_a: int, hash_b: int) -> int:
@@ -117,9 +119,16 @@ def _normalize_frame_mode(frame: Image.Image, mode: str) -> Image.Image:
             return frame
         if frame.mode in ("RGBA", "LA"):
             base = Image.new("RGB", frame.size, (0, 0, 0))
-            alpha = frame.convert("RGBA").split()[3]
-            base.paste(frame.convert("RGB"), mask=alpha)
-            return base
+            rgba = frame.convert("RGBA")
+            rgb = frame.convert("RGB")
+            alpha = rgba.split()[3]
+            try:
+                base.paste(rgb, mask=alpha)
+                return base
+            finally:
+                alpha.close()
+                rgb.close()
+                rgba.close()
         return frame.convert("RGB")
     if frame.mode == "RGBA":
         return frame
@@ -153,31 +162,38 @@ def handle_request(input_data):
     last_strip_hash: Optional[int] = None
     skipped_count = 0
     strip_height = 0
+    canvas: Image.Image | None = None
 
     try:
         for idx, path in enumerate(input_paths):
             with Image.open(path) as image:
-                frame = _normalize_frame_mode(image.copy(), render_mode)
+                if idx == 0 and header_keep_full:
+                    frame = _normalize_frame_mode(image.copy(), render_mode)
+                    blocks.append(frame)
+                    if dedup_enabled:
+                        header_strip_height = max(minimum_strip_height, int(round(frame.height * crop_ratio)))
+                        header_strip_height = max(1, min(frame.height, header_strip_height))
+                        header_strip = frame.crop((0, frame.height - header_strip_height, frame.width, frame.height))
+                        try:
+                            last_strip_hash = _dhash(header_strip)
+                        finally:
+                            header_strip.close()
+                    continue
 
-            if idx == 0 and header_keep_full:
-                blocks.append(frame)
-                if dedup_enabled:
-                    header_strip_height = max(minimum_strip_height, int(round(frame.height * crop_ratio)))
-                    header_strip_height = max(1, min(frame.height, header_strip_height))
-                    header_strip = frame.crop((0, frame.height - header_strip_height, frame.width, frame.height))
-                    last_strip_hash = _dhash(header_strip)
-                continue
-
-            current_strip_height = max(minimum_strip_height, int(round(frame.height * crop_ratio)))
-            current_strip_height = max(1, min(frame.height, current_strip_height))
-            strip_height = current_strip_height
-            strip = frame.crop((0, frame.height - current_strip_height, frame.width, frame.height))
+                # Non-first frames: extract strip first, then normalize (avoids full-image copy)
+                current_strip_height = max(minimum_strip_height, int(round(image.height * crop_ratio)))
+                current_strip_height = max(1, min(image.height, current_strip_height))
+                strip_height = current_strip_height
+                raw_strip = image.crop((0, image.height - current_strip_height, image.width, image.height))
+                strip = _normalize_frame_mode(raw_strip.copy(), render_mode)
+                raw_strip.close()
 
             current_hash = _dhash(strip)
             if dedup_enabled and last_strip_hash is not None:
                 distance = _hamming_distance(last_strip_hash, current_hash)
                 if distance <= dedup_threshold:
                     skipped_count += 1
+                    strip.close()
                     continue
 
             last_strip_hash = current_hash
@@ -215,6 +231,11 @@ def handle_request(input_data):
     except Exception as exc:
         logger.error("subtitle stitch failed: %s", exc, exc_info=True)
         return _error_response("SUBTITLE_STITCH_FAILED", str(exc))
+    finally:
+        if canvas is not None:
+            canvas.close()
+        for block in blocks:
+            block.close()
 
 
 def process(input_data):

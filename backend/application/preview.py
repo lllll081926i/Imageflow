@@ -10,7 +10,7 @@ from backend.infrastructure.engine_loader import load_engine_module
 
 DEFAULT_PREVIEW_MAX_BYTES = 4 * 1024 * 1024
 PREVIEW_MAX_EDGE = 1280
-PREVIEW_JPEG_QUALITY = 85
+PREVIEW_JPEG_QUALITY = 80
 
 
 def _resolve_preview_max_bytes() -> int:
@@ -36,15 +36,18 @@ def build_image_preview(input_path: str) -> dict[str, Any]:
 
     image: Image.Image | None = None
     try:
-        image = open_image(str(source), format_type="jpg")
-        if image.mode not in ("RGB", "L"):
-            image = image.convert("RGB")
-        else:
-            image = image.copy()
+        raw = open_image(str(source), format_type="jpg")
+        try:
+            if raw.mode not in ("RGB", "L"):
+                image = raw.convert("RGB")
+            else:
+                image = raw.copy()
+        finally:
+            raw.close()
 
         image.thumbnail((PREVIEW_MAX_EDGE, PREVIEW_MAX_EDGE), Image.Resampling.LANCZOS)
         buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=PREVIEW_JPEG_QUALITY, optimize=True)
+        image.save(buffer, format="JPEG", quality=PREVIEW_JPEG_QUALITY, optimize=False)
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return {"success": True, "data_url": f"data:image/jpeg;base64,{encoded}"}
     except Exception as exc:

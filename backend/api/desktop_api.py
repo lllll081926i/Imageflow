@@ -102,6 +102,7 @@ def _extract_runtime_file_path(file_ref: Any) -> str:
 
 def _probe_animated_path(input_path: str) -> dict[str, Any]:
     raw_path = str(input_path or "").strip()
+    normalized_path = raw_path
     try:
         normalized_path = normalize_user_supplied_path(raw_path)
         with Image.open(normalized_path) as image:
@@ -146,6 +147,7 @@ class DesktopAPI:
     def __init__(self, task_manager: TaskManager | None = None):
         self._task_manager = task_manager or TaskManager()
         self._info_task_lock = Lock()
+        self._settings_lock = Lock()
         self._active_info_task_id: int | None = None
 
     def _settings(self) -> AppSettings:
@@ -155,6 +157,8 @@ class DesktopAPI:
         task_id = self._task_manager.begin_task("operation")
         try:
             return handler()
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
         finally:
             self._task_manager.finish_task(task_id)
 
@@ -165,14 +169,16 @@ class DesktopAPI:
         return asdict(self._settings())
 
     def save_settings(self, payload: dict) -> dict:
-        saved = save_settings(settings_from_dict(payload))
+        with self._settings_lock:
+            saved = save_settings(settings_from_dict(payload))
         return asdict(saved)
 
     def update_recent_paths(self, payload: dict) -> dict:
-        current = self._settings()
-        current.recent_input_dirs = _merge_recent_paths(current.recent_input_dirs, str(payload.get("input_dir") or ""))
-        current.recent_output_dirs = _merge_recent_paths(current.recent_output_dirs, str(payload.get("output_dir") or ""))
-        saved = save_settings(current)
+        with self._settings_lock:
+            current = self._settings()
+            current.recent_input_dirs = _merge_recent_paths(current.recent_input_dirs, str(payload.get("input_dir") or ""))
+            current.recent_output_dirs = _merge_recent_paths(current.recent_output_dirs, str(payload.get("output_dir") or ""))
+            saved = save_settings(current)
         return asdict(saved)
 
     def select_input_files(self) -> list[str]:
@@ -207,7 +213,10 @@ class DesktopAPI:
 
     def get_image_preview(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
-        return build_image_preview(normalized["input_path"])
+        input_path = normalized.get("input_path")
+        if not input_path:
+            return {"success": False, "error": "Missing input_path in payload"}
+        return build_image_preview(input_path)
 
     def get_info(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
@@ -326,7 +335,7 @@ class DesktopAPI:
         for item in files:
             path = _extract_runtime_file_path(item)
             if not path:
-                return []
+                continue
             resolved.append(path)
         return resolved
 

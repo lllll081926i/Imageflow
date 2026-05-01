@@ -116,8 +116,8 @@ export function resolveWatermarkBackendPosition(value: string): string {
     return WATERMARK_BACKEND_POSITION_MAP[normalized] || normalized;
 }
 
-export function selectAnimatedProbeCandidatePaths(inputPaths: string[], limit = 200): string[] {
-    const maxCandidates = Number.isFinite(Number(limit)) ? Math.max(0, Math.floor(Number(limit))) : 200;
+export function selectAnimatedProbeCandidatePaths(inputPaths: string[], limit = 10000): string[] {
+    const maxCandidates = Number.isFinite(Number(limit)) ? Math.max(0, Math.floor(Number(limit))) : 10000;
     const selected: string[] = [];
     const seen = new Set<string>();
 

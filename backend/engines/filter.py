@@ -21,10 +21,6 @@ import logging
 from converter import open_image_with_svg_support
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +71,8 @@ class ImageFilterApplier:
         Returns:
             dict: Filter application result
         """
+        img = None
+        alpha_channel = None
         try:
             # Open input image
             logger.info(f"Opening image: {input_path}")
@@ -83,9 +81,16 @@ class ImageFilterApplier:
             # Prefer the requested output extension so file content matches file name.
             img_format = self._resolve_output_format(output_path, img.format or 'PNG')
             
-            # Convert to RGB for processing if necessary
-            if img.mode != 'RGB':
+            # Preserve alpha channel if present, then convert to RGB for processing
+            if img.mode == 'RGBA':
+                alpha_channel = img.split()[3]
+                prev = img
                 img = img.convert('RGB')
+                prev.close()
+            elif img.mode != 'RGB':
+                prev = img
+                img = img.convert('RGB')
+                prev.close()
             
             filter_name = str(filter_name or '').strip().lower()
 
@@ -121,7 +126,14 @@ class ImageFilterApplier:
                 vignette_level = 0.0
             if vignette_level > 0:
                 img = self._add_vignette(img, vignette_level)
-            
+
+            # Reattach preserved alpha channel
+            if alpha_channel is not None:
+                img = img.convert('RGBA')
+                img.putalpha(alpha_channel)
+                alpha_channel.close()
+                alpha_channel = None
+
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
             if output_dir:
@@ -133,7 +145,7 @@ class ImageFilterApplier:
 
             # Explicitly close image to free memory
             img.close()
-            del img
+            img = None
 
             # Get file size
             file_size = os.path.getsize(output_path)
@@ -157,6 +169,11 @@ class ImageFilterApplier:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            if alpha_channel is not None:
+                alpha_channel.close()
+            if img is not None:
+                img.close()
 
     def _resolve_output_format(self, output_path, fallback_format):
         ext = Path(output_path).suffix.lower()
@@ -492,7 +509,14 @@ class ImageFilterApplier:
             noise = ImageOps.autocontrast(noise)
             noise_rgb = Image.merge('RGB', (noise, noise, noise))
             noisy = ImageChops.add(base, noise_rgb, scale=1.0, offset=-128)
-            return Image.blend(base, noisy, level)
+            result = Image.blend(base, noisy, level)
+            # Close intermediates
+            noisy.close()
+            noise_rgb.close()
+            noise.close()
+            if base is not img:
+                base.close()
+            return result
         except Exception:
             return self._add_noise_slow(img, level)
 
@@ -534,7 +558,12 @@ class ImageFilterApplier:
             mask = mask.point(lambda x: int(x * level))
 
             dark = ImageEnhance.Brightness(img).enhance(1 - 0.7 * level)
-            return Image.composite(dark, img, mask)
+            result = Image.composite(dark, img, mask)
+            # Close intermediates
+            dark.close()
+            mask.close()
+            gradient.close()
+            return result
         except Exception:
             return self._add_vignette_slow(img, level)
 
@@ -558,7 +587,12 @@ class ImageFilterApplier:
         img_with_vignette.putalpha(overlay)
 
         vignette_rgb = img_with_vignette.convert('RGB')
-        return Image.blend(img, vignette_rgb, strength)
+        result = Image.blend(img, vignette_rgb, strength)
+        # Close intermediates
+        vignette_rgb.close()
+        img_with_vignette.close()
+        overlay.close()
+        return result
     
     def _add_color_offset(self, img, offset_x, offset_y):
         """Add RGB color offset (chromatic aberration effect)."""
@@ -568,12 +602,8 @@ class ImageFilterApplier:
         r, g, b = img.split()
         
         # Shift channels
-        if offset_x > 0 or offset_y > 0:
-            r = ImageChops.offset(r, offset_x, offset_y)
-            b = ImageChops.offset(b, -offset_x, -offset_y)
-        elif offset_x < 0 or offset_y < 0:
-            r = ImageChops.offset(r, offset_x, offset_y)
-            b = ImageChops.offset(b, -offset_x, -offset_y)
+        r = ImageChops.offset(r, offset_x, offset_y)
+        b = ImageChops.offset(b, -offset_x, -offset_y)
         
         # Merge back
         return Image.merge('RGB', (r, g, b))

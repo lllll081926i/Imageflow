@@ -8,6 +8,32 @@ from backend.contracts.settings import AppSettings
 from backend.infrastructure.engine_loader import invoke_engine_process
 
 
+def _join_process(process: Any, timeout: float | None = None) -> None:
+    join = getattr(process, "join", None)
+    if not callable(join):
+        return
+    if timeout is None:
+        join()
+        return
+    try:
+        join(timeout=timeout)
+    except TypeError:
+        join()
+
+
+def _terminate_process(process: Any, join_timeout: float = 5, kill_timeout: float = 2) -> None:
+    terminate = getattr(process, "terminate", None)
+    if callable(terminate):
+        terminate()
+    _join_process(process, join_timeout)
+    is_alive = getattr(process, "is_alive", None)
+    if callable(is_alive) and is_alive():
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            kill()
+            _join_process(process, kill_timeout)
+
+
 def _process_worker(module_name: str, payload: dict[str, Any], queue: Queue) -> None:
     try:
         queue.put(invoke_engine_process(module_name, payload))
@@ -48,29 +74,33 @@ def execute_engine(
         return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
     queue: Queue = Queue()
     process = Process(target=_process_worker, args=(module_name, payload, queue))
-    process.start()
-    if task_manager and effective_task_id is not None:
-        task_manager.attach_process(effective_task_id, process)
-
     try:
+        process.start()
+        if task_manager and effective_task_id is not None:
+            task_manager.attach_process(effective_task_id, process)
+
         while process.is_alive():
             if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
-                process.terminate()
-                process.join()
+                _terminate_process(process)
                 return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-            time.sleep(0.05)
+            _join_process(process, 0.5)
 
-        process.join()
+        _join_process(process, 5)
         try:
             result = queue.get_nowait()
         except Empty:
-            result = {"success": False, "error": "处理失败"}
+            exitcode = process.exitcode
+            if exitcode is not None and exitcode < 0:
+                result = {"success": False, "error": f"进程被信号 {-exitcode} 终止 (exit code: {exitcode})"}
+            else:
+                result = {"success": False, "error": f"处理失败 (exit code: {exitcode})"}
         if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
             return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
         return result
     finally:
         if task_manager and effective_task_id is not None:
             task_manager.detach_process(effective_task_id, process)
+        _close_queue(queue)
 
 
 def execute_engine_batch(
@@ -94,32 +124,31 @@ def execute_engine_batch(
     for _ in range(max_workers):
         task_queue.put(None)
 
-    for _ in range(max_workers):
-        process = Process(target=_batch_process_worker, args=(module_name, task_queue, result_queue))
-        process.start()
-        if task_id is not None:
-            task_manager.attach_process(task_id, process)
-        workers.append(process)
-
     completed = 0
     try:
+        for _ in range(max_workers):
+            process = Process(target=_batch_process_worker, args=(module_name, task_queue, result_queue))
+            process.start()
+            if task_id is not None:
+                task_manager.attach_process(task_id, process)
+            workers.append(process)
+
         while completed < len(payloads):
             if task_id is not None and task_manager.is_cancelled(task_id):
                 for process in workers:
                     if process.is_alive():
-                        process.terminate()
-                    process.join()
+                        _terminate_process(process)
                 for index, result in enumerate(results):
                     if result is None:
                         results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
                 break
 
             try:
-                index, result = result_queue.get(timeout=0.05)
+                index, result = result_queue.get(timeout=0.5)
             except Empty:
                 if all(not process.is_alive() for process in workers):
                     for process in workers:
-                        process.join()
+                        _join_process(process, 5)
                     while completed < len(payloads):
                         try:
                             index, result = result_queue.get_nowait()
@@ -136,15 +165,14 @@ def execute_engine_batch(
                 completed += 1
 
         for process in workers:
-            process.join()
+            _join_process(process, 5)
     finally:
         for process in workers:
             if process.is_alive():
-                process.terminate()
-                process.join()
+                _terminate_process(process)
             if task_id is not None:
                 task_manager.detach_process(task_id, process)
         _close_queue(task_queue)
         _close_queue(result_queue)
 
-    return [result or {"success": False, "error": "处理失败"} for result in results]
+    return [result if result is not None else {"success": False, "error": "处理失败"} for result in results]

@@ -29,9 +29,6 @@ from converter import (
 )
 
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 
@@ -1501,7 +1498,9 @@ class InfoViewer:
             details["svg.root_tag"] = "svg"
 
     def _extract_ispe_dimensions(self, data):
-        def walk(offset, end):
+        _MAX_BOX_DEPTH = 16
+
+        def walk(offset, end, depth=0):
             while offset + 8 <= end:
                 size = struct.unpack(">I", data[offset : offset + 4])[0]
                 box_type = data[offset + 4 : offset + 8]
@@ -1524,7 +1523,7 @@ class InfoViewer:
                     height = struct.unpack(">I", data[body_start + 8 : body_start + 12])[0]
                     return width, height
 
-                if box_type in {
+                if depth < _MAX_BOX_DEPTH and box_type in {
                     b"meta",
                     b"moov",
                     b"trak",
@@ -1539,7 +1538,7 @@ class InfoViewer:
                         if box_type == b"meta" and body_end - body_start >= 4
                         else body_start
                     )
-                    width, height = walk(nested_start, body_end)
+                    width, height = walk(nested_start, body_end, depth + 1)
                     if width and height:
                         return width, height
 

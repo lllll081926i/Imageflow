@@ -53,9 +53,6 @@ except ImportError:
     logging.warning("pyoxipng not available, using Pillow only")
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 
@@ -388,23 +385,27 @@ class ImageCompressor:
             return (lossless_warning + "，" if lossless_warning else "") + f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
 
         if target_bytes > 0:
+            import io as _io
+
+            if img.mode in ("RGBA", "P", "LA"):
+                work = img.convert("RGB")
+            else:
+                work = img
+
             best_q = None
             best_size = None
             low = 5
             high = int(quality)
             last_size = None
             stable_hits = 0
-            last_q = None
             for _ in range(12):
                 if low > high:
                     break
                 q = (low + high) // 2
-                last_q = q
-                save_once(q)
-                try:
-                    size = os.path.getsize(output_path)
-                except OSError:
-                    break
+                buf = _io.BytesIO()
+                work.save(buf, format="JPEG", quality=q, optimize=False, progressive=True)
+                size = buf.tell()
+                buf.close()
                 if last_size == size:
                     stable_hits += 1
                 else:
@@ -419,8 +420,7 @@ class ImageCompressor:
                 if stable_hits >= 2:
                     break
             if best_q is not None:
-                if best_size is None or best_q != last_q:
-                    save_once(best_q)
+                save_once(best_q)
                 return lossless_warning
             return f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
 

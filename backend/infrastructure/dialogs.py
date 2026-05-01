@@ -1,35 +1,81 @@
 from __future__ import annotations
 
+import queue
 import threading
 from typing import Any
 
+# Singleton dialog thread: owns one Tk root and processes dialog requests.
+_dialog_queue: queue.Queue[tuple[callable, threading.Event, dict]] = queue.Queue()
+_dialog_started = threading.Event()
+_dialog_start_lock = threading.Lock()
+_dialog_start_error: Exception | None = None
+_dialog_thread: threading.Thread | None = None
+
+
+def _dialog_worker():
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    _dialog_started.set()
+
+    while True:
+        try:
+            callback, done_event, state = _dialog_queue.get()
+        except queue.Empty:
+            continue
+        if callback is None:
+            root.destroy()
+            return
+        try:
+            state["value"] = callback(root)
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            done_event.set()
+
+
+def _dialog_worker_entry():
+    global _dialog_start_error
+    try:
+        _dialog_worker()
+    except Exception as exc:
+        _dialog_start_error = exc
+        _dialog_started.set()
+
+
+def _ensure_dialog_thread():
+    global _dialog_start_error, _dialog_thread
+    if _dialog_started.is_set() and _dialog_start_error is None:
+        return
+
+    with _dialog_start_lock:
+        if _dialog_started.is_set() and _dialog_start_error is None:
+            return
+        if _dialog_thread is None or not _dialog_thread.is_alive() or _dialog_start_error is not None:
+            _dialog_start_error = None
+            _dialog_started.clear()
+            _dialog_thread = threading.Thread(target=_dialog_worker_entry, daemon=True)
+            _dialog_thread.start()
+
+    if not _dialog_started.wait(timeout=5):
+        raise RuntimeError("Timed out waiting for dialog thread startup")
+    if _dialog_start_error is not None:
+        raise RuntimeError(f"Failed to start dialog thread: {_dialog_start_error}") from _dialog_start_error
+
 
 def _run_in_tk_thread(callback):
-    result: dict[str, Any] = {}
-    error: dict[str, Exception] = {}
-    event = threading.Event()
+    _ensure_dialog_thread()
 
-    def runner():
-        try:
-            import tkinter as tk
+    done = threading.Event()
+    state: dict[str, Any] = {}
+    _dialog_queue.put((callback, done, state))
+    done.wait()
 
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            try:
-                result["value"] = callback(root)
-            finally:
-                root.destroy()
-        except Exception as exc:
-            error["value"] = exc
-        finally:
-            event.set()
-
-    threading.Thread(target=runner, daemon=True).start()
-    event.wait()
-    if "value" in error:
-        raise error["value"]
-    return result.get("value")
+    if "error" in state:
+        raise state["error"]
+    return state.get("value")
 
 
 def _build_filetypes(options: dict[str, Any]) -> list[tuple[str, str]]:

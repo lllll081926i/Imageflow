@@ -98,7 +98,7 @@ def settings_from_dict(data: dict[str, Any]) -> AppSettings:
 def _settings_file_path() -> Path:
     override = os.getenv("IMAGEFLOW_SETTINGS_FILE", "").strip()
     if override:
-        return Path(override)
+        return Path(override).resolve()
 
     appdata = os.getenv("APPDATA", "").strip()
     if appdata:
@@ -123,8 +123,19 @@ def load_settings() -> AppSettings:
 
 
 def save_settings(settings: AppSettings) -> AppSettings:
+    import tempfile
     normalized = normalize_settings(settings)
     path = _settings_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(normalized), ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(asdict(normalized), f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     return normalized

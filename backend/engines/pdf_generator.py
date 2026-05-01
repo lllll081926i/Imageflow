@@ -43,10 +43,6 @@ import logging
 from converter import is_svg_path, open_image_with_svg_support
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -106,6 +102,7 @@ class PDFGenerator:
     def __init__(self):
         """Initialize the PDF generator."""
         logger.info("PDFGenerator initialized")
+        self._size_cache: dict[str, tuple[int, int]] = {}
     
     def generate(self, images, output_path, layout='single',
                  custom_rows=2, custom_cols=2, page_size='A4',
@@ -210,16 +207,16 @@ class PDFGenerator:
             }
     
     def _validate_images(self, images):
-        """Validate that all image files exist and can be opened."""
+        """Validate that all image files exist and can be opened, caching sizes."""
         valid_images = []
-        
+        self._size_cache.clear()
+
         for img_path in images:
             if os.path.exists(img_path):
                 try:
-                    # Try to open the image to validate it
                     img = open_image_with_svg_support(img_path, format_type="png")
                     try:
-                        _ = img.size
+                        self._size_cache[img_path] = img.size
                     finally:
                         try:
                             img.close()
@@ -230,7 +227,7 @@ class PDFGenerator:
                     logger.warning(f"Cannot open image {img_path}: {e}")
             else:
                 logger.warning(f"Image not found: {img_path}")
-        
+
         return valid_images
     
     def _build_content(self, images, layout, custom_rows, custom_cols, pagesize, margin, compression_level=0, fit_mode='contain'):
@@ -365,11 +362,38 @@ class PDFGenerator:
         Returns:
             RLImage: Reportlab Image flowable
         """
-        # Load image with PIL to get dimensions
+        # Use cached size if available, otherwise open to get dimensions
+        cached_size = self._size_cache.get(img_path)
+        force_buffer = is_svg_path(img_path)
+
+        if cached_size and compression_level <= 0 and not force_buffer and fit_mode != 'cover':
+            # Fast path: use cached size, skip PIL open entirely
+            img_width, img_height = cached_size
+            avail_width = (available_size[0] - 2 * margin) * scale
+            avail_height = (available_size[1] - 2 * margin) * scale
+
+            if avail_width <= 0 or avail_height <= 0:
+                raise ValueError("Invalid margins or page size; no space for content")
+
+            width_ratio = avail_width / img_width
+            height_ratio = avail_height / img_height
+            fit_mode_normalized = self._normalize_fit_mode(fit_mode)
+            if fit_mode_normalized == 'original':
+                scale_factor = min(width_ratio, height_ratio, 1.0)
+            else:
+                scale_factor = min(width_ratio, height_ratio)
+
+            final_width = img_width * scale_factor
+            final_height = img_height * scale_factor
+
+            img = RLImage(img_path, width=final_width, height=final_height)
+            img.hAlign = "CENTER"
+            return img
+
+        # Slow path: need PIL for SVG, compression, or cover crop
         pil_img = open_image_with_svg_support(img_path, format_type="png")
         try:
             img_width, img_height = pil_img.size
-            force_buffer = is_svg_path(img_path)
 
             # Calculate available space (subtract margins first, then apply scale)
             avail_width = (available_size[0] - 2 * margin) * scale

@@ -131,6 +131,115 @@ class TaskManagerTests(unittest.TestCase):
         finally:
             image_ops.Process = original_process
 
+    def test_execute_engine_closes_queue_when_process_start_fails(self):
+        original_process = image_ops.Process
+        original_queue = image_ops.Queue
+        closed_queues: list[object] = []
+
+        class FakeQueue:
+            def close(self):
+                closed_queues.append(self)
+
+            def join_thread(self):
+                return None
+
+        class FailingProcess:
+            def __init__(self, target, args):
+                self._target = target
+                self._args = args
+
+            def start(self):
+                raise RuntimeError("start failed")
+
+        try:
+            image_ops.Process = FailingProcess
+            image_ops.Queue = FakeQueue
+
+            with self.assertRaises(RuntimeError):
+                image_ops.execute_engine("converter", {"input_path": "D:/dummy.png"})
+
+            self.assertEqual(len(closed_queues), 1)
+        finally:
+            image_ops.Process = original_process
+            image_ops.Queue = original_queue
+
+    def test_execute_engine_batch_cleans_started_workers_when_later_start_fails(self):
+        original_process = image_ops.Process
+        original_queue = image_ops.Queue
+        original_invoke = image_ops.invoke_engine_process
+        created_processes: list[object] = []
+        closed_queues: list[object] = []
+
+        class FakeQueue:
+            def __init__(self):
+                self.items = []
+
+            def put(self, item):
+                self.items.append(item)
+
+            def get(self, timeout=None):
+                if not self.items:
+                    raise image_ops.Empty()
+                return self.items.pop(0)
+
+            def get_nowait(self):
+                return self.get()
+
+            def close(self):
+                closed_queues.append(self)
+
+            def join_thread(self):
+                return None
+
+        class SometimesFailingProcess:
+            def __init__(self, target, args):
+                self._target = target
+                self._args = args
+                self._alive = False
+                self.terminated = False
+                created_processes.append(self)
+
+            def start(self):
+                if len(created_processes) == 2:
+                    raise RuntimeError("second worker failed")
+                self._alive = True
+
+            def is_alive(self):
+                return self._alive
+
+            def terminate(self):
+                self.terminated = True
+                self._alive = False
+
+            def kill(self):
+                self._alive = False
+
+            def join(self, timeout=None):
+                return None
+
+        try:
+            image_ops.Process = SometimesFailingProcess
+            image_ops.Queue = FakeQueue
+            image_ops.invoke_engine_process = lambda _module, payload: {"success": True, "value": payload["value"]}
+            manager = TaskManager()
+            task_id = manager.begin_task("batch")
+
+            with self.assertRaises(RuntimeError):
+                image_ops.execute_engine_batch(
+                    "converter",
+                    [{"value": index} for index in range(3)],
+                    AppSettings(max_concurrency=2),
+                    manager,
+                )
+
+            self.assertTrue(created_processes[0].terminated)
+            self.assertEqual(len(closed_queues), 2)
+            manager.finish_task(task_id)
+        finally:
+            image_ops.Process = original_process
+            image_ops.Queue = original_queue
+            image_ops.invoke_engine_process = original_invoke
+
 
 if __name__ == "__main__":
     unittest.main()

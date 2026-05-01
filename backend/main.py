@@ -16,8 +16,7 @@ def main() -> None:
         frameless=True,
         easy_drag=False,
     )
-    if window is not None:
-        configure_window(window)
+    configure_window(window)
     webview.start()
 
 

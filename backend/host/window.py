@@ -1,10 +1,14 @@
 import json
+import logging
 import os
+import re
 import sys
 from pathlib import Path
 
 from backend.api import DesktopAPI
 from backend.infrastructure.window_ops import set_window_maximized
+
+logger = logging.getLogger(__name__)
 
 
 def build_window_api() -> DesktopAPI:
@@ -35,7 +39,7 @@ def _dispatch_file_drop(window, event: dict) -> None:
             })
         );
         """
-        % json.dumps(payload, ensure_ascii=False)
+        % json.dumps(payload, ensure_ascii=True)
     )
 
 
@@ -56,16 +60,23 @@ def configure_window(window) -> None:
     window.events.minimized += lambda: set_window_maximized(False)
 
 
+def _is_valid_url(url: str) -> bool:
+    return bool(re.match(r"^https?://", url, re.IGNORECASE))
+
+
 def resolve_frontend_entry(project_root: Path | None = None, frontend_url: str | None = None) -> str:
     if frontend_url:
-        return frontend_url
+        if _is_valid_url(frontend_url):
+            return frontend_url
 
     env_url = os.getenv("IMAGEFLOW_FRONTEND_URL", "").strip()
     if env_url:
-        return env_url
+        if _is_valid_url(env_url):
+            return env_url
 
     if project_root is not None:
-        return str(project_root / "frontend" / "dist" / "index.html")
+        entry = project_root / "frontend" / "dist" / "index.html"
+        return str(entry)
 
     roots: list[Path] = []
     bundled_root = getattr(sys, "_MEIPASS", None)
@@ -78,4 +89,9 @@ def resolve_frontend_entry(project_root: Path | None = None, frontend_url: str |
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)
+
+    logger.warning(
+        "Frontend entry not found. Searched: %s",
+        ", ".join(str(c) for c in candidates),
+    )
     return str(candidates[0])

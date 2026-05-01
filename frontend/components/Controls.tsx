@@ -662,6 +662,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
     const [selectionError, setSelectionError] = useState('');
+    const [selectionStatus, setSelectionStatus] = useState('');
     const [previewResult, setPreviewResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [sortKey, setSortKey] = useState<SortKey>('name');
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
@@ -669,7 +670,9 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const inputRef = useRef<HTMLInputElement>(null);
     const directoryInputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
+    const previewResultRef = useRef<ExpandDroppedPathsResult | null>(null);
     const runtimeDropMarkerRef = useRef<RuntimeDropMarker | null>(null);
+    const runtimeDropTimeoutRef = useRef<number | null>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const deferredPreviewResult = useDeferredValue(previewResult);
     const isPreviewPending = deferredPreviewResult !== previewResult;
@@ -689,14 +692,10 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         };
     };
     const mergeAndPublishResult = useCallback((incoming: ExpandDroppedPathsResult) => {
-        let mergedSnapshot: ExpandDroppedPathsResult | null = null;
-        setPreviewResult((prev) => {
-            mergedSnapshot = mergeResults(prev, incoming);
-            return mergedSnapshot;
-        });
-        if (mergedSnapshot) {
-            onPathsExpanded?.(mergedSnapshot);
-        }
+        const mergedSnapshot = mergeResults(previewResultRef.current, incoming);
+        previewResultRef.current = mergedSnapshot;
+        setPreviewResult(mergedSnapshot);
+        onPathsExpanded?.(mergedSnapshot);
     }, [onPathsExpanded]);
     const markRuntimeDropAsHandled = useCallback((paths: string[]) => {
         if (paths.length === 0) {
@@ -723,6 +722,29 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         runtimeDropMarkerRef.current = null;
         return true;
     }, []);
+    const clearRuntimeDropWait = useCallback(() => {
+        if (runtimeDropTimeoutRef.current !== null) {
+            window.clearTimeout(runtimeDropTimeoutRef.current);
+            runtimeDropTimeoutRef.current = null;
+        }
+    }, []);
+    const beginSelectionStatus = useCallback((message: string) => {
+        clearRuntimeDropWait();
+        setSelectionError('');
+        setSelectionStatus(message);
+    }, [clearRuntimeDropWait]);
+    const endSelectionStatus = useCallback(() => {
+        clearRuntimeDropWait();
+        setSelectionStatus('');
+    }, [clearRuntimeDropWait]);
+    const waitForRuntimeDropPaths = useCallback(() => {
+        beginSelectionStatus('正在解析文件路径...');
+        runtimeDropTimeoutRef.current = window.setTimeout(() => {
+            runtimeDropTimeoutRef.current = null;
+            setSelectionStatus('');
+            setSelectionError('等待桌面端返回文件路径超时，请重试或使用文件选择器。');
+        }, 5000);
+    }, [beginSelectionStatus]);
     const expandPathsFromFiles = async (files: File[], resolvedPaths?: string[]) => {
         const app = getAppBindings();
         if (!app?.ExpandDroppedPaths) return null;
@@ -740,41 +762,48 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     };
     const applyFileSelection = async (files: File[], resolvedPaths?: string[]) => {
         onFilesSelected(files);
-        setSelectionError('');
-        const normalizedPaths = resolvedPaths && resolvedPaths.length > 0
-            ? resolvedPaths
-            : await resolveSelectedFilePaths(files);
-        const expanded = await expandPathsFromFiles(files, normalizedPaths);
-        if (expanded) {
-            mergeAndPublishResult(expanded);
-            return;
-        }
+        beginSelectionStatus(resolvedPaths && resolvedPaths.length > 0 ? '正在扫描文件...' : '正在解析文件路径...');
+        try {
+            const normalizedPaths = resolvedPaths && resolvedPaths.length > 0
+                ? resolvedPaths
+                : await resolveSelectedFilePaths(files);
+            if (normalizedPaths.length > 0) {
+                setSelectionStatus('正在扫描文件...');
+            }
+            const expanded = await expandPathsFromFiles(files, normalizedPaths);
+            if (expanded) {
+                mergeAndPublishResult(expanded);
+                return;
+            }
 
-        if (!normalizedPaths.length) {
-            setSelectionError('当前环境无法解析所选文件的本地路径，请优先使用桌面端原生文件选择器或直接拖入文件。');
-            return;
-        }
+            if (!normalizedPaths.length) {
+                setSelectionError('当前环境无法解析所选文件的本地路径，请优先使用桌面端原生文件选择器或直接拖入文件。');
+                return;
+            }
 
-        const result: ExpandDroppedPathsResult = {
-            has_directory: files.some((f) => Boolean(f.webkitRelativePath)),
-            files: files.map((f: File, index: number) => {
-                const anyFile = f as any;
-                const inputPath = typeof anyFile.path === 'string' && anyFile.path
-                    ? anyFile.path
-                    : (normalizedPaths[index] || '');
-                const relative = f.webkitRelativePath || f.name;
-                const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
-                return {
-                    input_path: inputPath,
-                    source_root: sourceRoot,
-                    relative_path: relative,
-                    is_from_dir_drop: Boolean(f.webkitRelativePath),
-                    size: f.size,
-                    mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
-                };
-            })
-        };
-        mergeAndPublishResult(result);
+            const result: ExpandDroppedPathsResult = {
+                has_directory: files.some((f) => Boolean(f.webkitRelativePath)),
+                files: files.map((f: File, index: number) => {
+                    const anyFile = f as any;
+                    const inputPath = typeof anyFile.path === 'string' && anyFile.path
+                        ? anyFile.path
+                        : (normalizedPaths[index] || '');
+                    const relative = f.webkitRelativePath || f.name;
+                    const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
+                    return {
+                        input_path: inputPath,
+                        source_root: sourceRoot,
+                        relative_path: relative,
+                        is_from_dir_drop: Boolean(f.webkitRelativePath),
+                        size: f.size,
+                        mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
+                    };
+                })
+            };
+            mergeAndPublishResult(result);
+        } finally {
+            endSelectionStatus();
+        }
     };
 
     useEffect(() => {
@@ -787,18 +816,26 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             const app = getAppBindings();
             if (!app?.ExpandDroppedPaths) return;
 
+            beginSelectionStatus('正在扫描文件...');
             try {
                 const result = await app.ExpandDroppedPaths(paths);
                 mergeAndPublishResult(result as ExpandDroppedPathsResult);
             } catch (e) {
                 console.error(e);
+                setSelectionError('扫描拖入文件失败，请重试。');
+            } finally {
+                endSelectionStatus();
             }
         }, true);
 
         return () => {
             window.runtime?.OnFileDropOff?.();
         };
-    }, [isActive, mergeAndPublishResult]);
+    }, [beginSelectionStatus, endSelectionStatus, isActive, mergeAndPublishResult, shouldIgnoreRuntimeDrop]);
+
+    useEffect(() => () => {
+        clearRuntimeDropWait();
+    }, [clearRuntimeDropWait]);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -826,6 +863,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             }
         }
         if (window.runtime?.OnFileDrop) {
+            waitForRuntimeDropPaths();
             return;
         }
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -924,6 +962,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             if (!prev) return prev;
             const newFiles = prev.files.filter((f) => f.input_path !== path);
             const newResult = { ...prev, files: newFiles };
+            previewResultRef.current = newResult;
             onPathsExpanded?.(newResult);
             return newResult;
         });
@@ -935,6 +974,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             if (!prev) return prev;
             const newFiles = prev.files.filter((f) => f.source_root !== root);
             const newResult = { ...prev, files: newFiles };
+            previewResultRef.current = newResult;
             onPathsExpanded?.(newResult);
             return newResult;
         });
@@ -1062,6 +1102,11 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                         正在整理列表...
                                     </div>
                                 )}
+                                {selectionStatus && (
+                                    <div className="text-[11px] font-medium text-[#007AFF]">
+                                        {selectionStatus}
+                                    </div>
+                                )}
                             </div>
                             
                             <button
@@ -1169,6 +1214,12 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
                         {subTitle}
                     </p>
+                    {selectionStatus && (
+                        <div className="mt-3 flex items-center gap-2 text-xs text-[#007AFF] dark:text-[#64AFFF] relative z-10">
+                            <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                            <span>{selectionStatus}</span>
+                        </div>
+                    )}
                     {selectionError && (
                         <div className="mt-3 text-xs text-red-500 dark:text-red-300 text-center px-6 relative z-10">
                             {selectionError}

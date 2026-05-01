@@ -9,6 +9,7 @@ from PIL import Image
 
 from backend.api import desktop_api
 from backend.app import create_app
+from backend.infrastructure import dialogs
 
 
 class DesktopAPITests(unittest.TestCase):
@@ -201,7 +202,7 @@ class DesktopAPITests(unittest.TestCase):
         self.assertEqual(resolved, [first, second])
         self.assertTrue(app.can_resolve_file_paths())
 
-    def test_resolve_file_paths_returns_empty_when_any_item_cannot_be_resolved(self):
+    def test_resolve_file_paths_skips_items_that_cannot_be_resolved(self):
         app = create_app()
         first = str((Path(self.temp_dir.name) / "first.png").resolve())
 
@@ -216,7 +217,7 @@ class DesktopAPITests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(resolved, [])
+        self.assertEqual(resolved, [first])
 
     def test_probe_animated_paths_returns_frame_counts_without_spawning_engine_processes(self):
         app = create_app()
@@ -394,6 +395,39 @@ class DesktopAPITests(unittest.TestCase):
             desktop_api.execute_engine = original_execute_engine
             if worker.is_alive():
                 worker.join(timeout=0.5)
+
+
+class DialogInfrastructureTests(unittest.TestCase):
+    def test_ensure_dialog_thread_raises_when_worker_startup_fails(self):
+        original_worker = dialogs._dialog_worker
+        original_started = dialogs._dialog_started
+
+        result: dict[str, object] = {}
+
+        def failing_worker():
+            raise RuntimeError("tk init failed")
+
+        def invoke():
+            try:
+                dialogs._ensure_dialog_thread()
+                result["value"] = "ok"
+            except Exception as exc:
+                result["error"] = exc
+
+        try:
+            dialogs._dialog_worker = failing_worker
+            dialogs._dialog_started = threading.Event()
+
+            worker = threading.Thread(target=invoke, daemon=True)
+            worker.start()
+            worker.join(timeout=1.0)
+
+            self.assertFalse(worker.is_alive(), "dialog startup should fail fast instead of hanging forever")
+            self.assertIsInstance(result.get("error"), RuntimeError)
+            self.assertIn("tk init failed", str(result.get("error")))
+        finally:
+            dialogs._dialog_worker = original_worker
+            dialogs._dialog_started = original_started
 
 
 if __name__ == "__main__":

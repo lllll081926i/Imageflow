@@ -29,10 +29,6 @@ import logging
 import time
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 _PROFILE_ENABLED = os.getenv("IMAGEFLOW_PROFILE") == "1"
 
@@ -116,8 +112,11 @@ def parse_svg_intrinsic_size_from_bytes(data: bytes):
         return parse_svg_intrinsic_size_from_text(text)
 
     try:
-        root = ET.fromstring(data)
-    except ET.ParseError:
+        # Defense-in-depth: strip any entity declarations before parsing
+        safe_text = re.sub(r"<!\s*(ENTITY|DOCTYPE)\b[^>]*>", "", text, flags=re.IGNORECASE)
+        safe_data = safe_text.encode("utf-8") if safe_text != text else data
+        root = ET.fromstring(safe_data)
+    except (ET.ParseError, UnicodeDecodeError):
         return parse_svg_intrinsic_size_from_text(text)
 
     return parse_svg_intrinsic_size_from_attrs(
@@ -317,6 +316,7 @@ class ImageConverter:
 
         inkscape = shutil.which("inkscape")
         if inkscape:
+            tmp_path = None
             try:
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp_path = tmp.name
@@ -333,15 +333,17 @@ class ImageConverter:
                 subprocess.run(args, check=True, capture_output=True)
                 img = Image.open(tmp_path)
                 img.load()
-                try:
-                    os.unlink(tmp_path)
-                except OSError as cleanup_err:
-                    logger.warning(f"Failed to cleanup temp SVG render file {tmp_path}: {cleanup_err}")
                 if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
                     img = img.resize((render_width, render_height), Image.Resampling.LANCZOS)
                 return img
             except Exception as e:
                 logger.warning(f"Inkscape SVG render failed: {e}")
+            finally:
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
         raise RuntimeError(
             "SVG input is not supported by the current Python environment. "
@@ -467,6 +469,7 @@ class ImageConverter:
             else:
                 logger.info(f"Opening image: {input_path}")
                 img = Image.open(input_path)
+                img.load()
 
             if _PROFILE_ENABLED:
                 open_elapsed = time.perf_counter() - open_start

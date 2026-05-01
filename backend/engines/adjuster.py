@@ -21,10 +21,6 @@ import logging
 from converter import open_image_with_svg_support
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +51,7 @@ class ImageAdjuster:
         Returns:
             dict: Adjustment result
         """
+        img = None
         try:
             # Open input image
             logger.info(f"Opening image: {input_path}")
@@ -63,17 +60,44 @@ class ImageAdjuster:
             # Prefer the requested output extension so file content matches file name.
             img_format = self._resolve_output_format(output_path, img.format or 'PNG')
             
-            # Apply adjustments in order
+            # Apply adjustments in order, closing intermediate images to free memory
+            prev = img
             img = self._apply_rotation(img, rotate)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_flip(img, flip_h, flip_v)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_crop_ratio(img, crop_ratio, crop_mode)
+            if img is not prev:
+                prev.close()
             brightness = self._merge_exposure(brightness, exposure)
+            prev = img
             img = self._apply_brightness(img, brightness)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_contrast(img, contrast)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_saturation(img, saturation)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_vibrance(img, vibrance)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_hue(img, hue)
+            if img is not prev:
+                prev.close()
+            prev = img
             img = self._apply_sharpness(img, sharpness)
+            if img is not prev:
+                prev.close()
             
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
@@ -86,7 +110,7 @@ class ImageAdjuster:
 
             # Explicitly close image to free memory
             img.close()
-            del img
+            img = None
 
             # Get file size
             file_size = os.path.getsize(output_path)
@@ -110,6 +134,9 @@ class ImageAdjuster:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            if img is not None:
+                img.close()
 
     def _resolve_output_format(self, output_path, fallback_format):
         ext = Path(output_path).suffix.lower()
@@ -284,6 +311,11 @@ class ImageAdjuster:
         s = s.point(lut)
         out = Image.merge("HSV", (h, s, v)).convert("RGB")
 
+        # Close intermediates
+        hsv.close()
+        if rgb is not img:
+            rgb.close()
+
         if alpha is not None:
             out = out.convert("RGBA")
             out.putalpha(alpha)
@@ -426,6 +458,11 @@ class ImageAdjuster:
         lut = [(i + shift) % 256 for i in range(256)]
         h = h.point(lut)
         out = Image.merge('HSV', (h, s, v)).convert('RGB')
+
+        # Close intermediates
+        hsv.close()
+        if rgb is not img:
+            rgb.close()
 
         if alpha is not None:
             out = out.convert('RGBA')
