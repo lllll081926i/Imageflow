@@ -131,5 +131,16 @@ class ReleaseBuilderTests(unittest.TestCase):
                     validate_windows_build_host()
 
 
+class ReleaseWorkflowTests(unittest.TestCase):
+    def test_ci_publishes_assets_when_github_release_is_published(self):
+        workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn("  release:\n    types: [published]", workflow)
+        self.assertIn("github.event_name == 'release'", workflow)
+        self.assertIn("github.event.release.tag_name", workflow)
+        self.assertIn("generate_release_notes: ${{ github.event_name != 'release' }}", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
