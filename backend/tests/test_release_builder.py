@@ -141,6 +141,32 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("github.event.release.tag_name", workflow)
         self.assertIn("generate_release_notes: ${{ github.event_name != 'release' }}", workflow)
 
+    def test_ci_limits_release_write_permission_to_publish_job(self):
+        workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "  test-and-build:\n"
+            "    runs-on: windows-2025\n"
+            "    permissions:\n"
+            "      contents: read",
+            workflow,
+        )
+        self.assertIn("  publish-release-assets:\n    needs: test-and-build", workflow)
+        self.assertIn(
+            "  publish-release-assets:\n"
+            "    needs: test-and-build\n"
+            "    if: startsWith(github.ref, 'refs/tags/v')",
+            workflow,
+        )
+        self.assertIn(
+            "    permissions:\n"
+            "      contents: write\n"
+            "      actions: read",
+            workflow,
+        )
+        self.assertIn("actions/download-artifact", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
