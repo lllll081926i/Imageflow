@@ -71,6 +71,7 @@ export const SegmentedControl: React.FC<{ options: string[]; value: string; onCh
 
 export const StyledSlider: React.FC<{ label?: string; value: number; min?: number; max?: number; unit?: string; onChange: (val: number) => void; step?: number; className?: string }> = memo(({ label, value, min = 0, max = 100, unit = "", onChange, step = 1, className = "" }) => {
     const percent = ((value - min) / (max - min)) * 100;
+    const inputLabel = unit ? `${label ?? '数值'} (${unit})` : label ?? '数值';
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         let val = parseInt(e.target.value);
@@ -95,6 +96,7 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
                     <div className="relative group">
                         <input 
                             type="number" 
+                            aria-label={inputLabel}
                             value={value}
                             min={min}
                             max={max}
@@ -348,12 +350,23 @@ interface FileDropZoneProps {
     onPathsExpanded?: (result: ExpandDroppedPathsResult) => void;
     onItemSelect?: (file: DroppedFile) => void;
     selectedPath?: string;
-    acceptedFormats?: string; 
+    acceptedFormats?: string;
+    fileDialogFilters?: FileDialogFilter[];
     allowMultiple?: boolean;
     title?: string;
     subTitle?: string;
     isActive?: boolean;
 }
+
+type FileDialogFilter = {
+    DisplayName: string;
+    Pattern: string;
+};
+
+const DEFAULT_IMAGE_FILE_DIALOG_FILTERS: FileDialogFilter[] = [{
+    DisplayName: "Images",
+    Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.avif;*.ico;*.tiff;*.tif;*.heic;*.heif;*.svg",
+}];
 
 type DroppedFile = {
     input_path: string;
@@ -393,6 +406,39 @@ type RuntimeDropMarker = {
 const normalizePath = (p: string) => p.replace(/\\/g, '/');
 const pathKey = (p: string) => normalizePath(p).toLowerCase();
 const basename = (p: string) => normalizePath(p).split('/').pop() || p;
+const getPathExtension = (p: string) => {
+    const name = basename(p);
+    const idx = name.lastIndexOf('.');
+    return idx === -1 ? '' : name.slice(idx).toLowerCase();
+};
+const parseAcceptedExtensionSet = (acceptedFormats: string) => {
+    const parts = String(acceptedFormats || '')
+        .split(',')
+        .map((part) => part.trim().toLowerCase())
+        .filter(Boolean);
+    if (parts.length === 0 || parts.some((part) => part.includes('/') || part.includes('*'))) {
+        return null;
+    }
+    const extensions = parts
+        .filter((part) => part.startsWith('.'))
+        .map((part) => part.replace(/\s+/g, ''));
+    return extensions.length > 0 ? new Set(extensions) : null;
+};
+const filterExpandedResultByExtensions = (
+    result: ExpandDroppedPathsResult,
+    acceptedExtensions: Set<string> | null,
+): ExpandDroppedPathsResult => {
+    if (!acceptedExtensions || acceptedExtensions.size === 0) {
+        return result;
+    }
+    return {
+        ...result,
+        files: result.files.filter((file) => {
+            const ext = getPathExtension(file.input_path || file.relative_path || '');
+            return acceptedExtensions.has(ext);
+        }),
+    };
+};
 const getDirectDropPath = (file: File) => {
     const candidate = file as File & { path?: string | null; pywebviewFullPath?: string | null };
     if (typeof candidate.path === 'string' && candidate.path.trim()) {
@@ -404,10 +450,6 @@ const getDirectDropPath = (file: File) => {
     return '';
 };
 const buildRuntimeDropSignature = (paths: string[]) => paths.map(pathKey).sort().join('|');
-const getExt = (name: string) => {
-    const idx = name.lastIndexOf('.');
-    return idx >= 0 ? name.slice(idx + 1).toUpperCase() : '';
-};
 const compareNames = (a: string, b: string) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 const getRelativeName = (file: DroppedFile) => {
@@ -655,6 +697,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     onItemSelect,
     selectedPath,
     acceptedFormats = "image/*,.svg,.avif,.ico",
+    fileDialogFilters,
     allowMultiple = true,
     title = "拖拽图片到这里",
     subTitle = "或点击选择文件 (支持批量处理)",
@@ -676,6 +719,13 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
     const deferredPreviewResult = useDeferredValue(previewResult);
     const isPreviewPending = deferredPreviewResult !== previewResult;
+    const activeFileDialogFilters = fileDialogFilters && fileDialogFilters.length > 0
+        ? fileDialogFilters
+        : DEFAULT_IMAGE_FILE_DIALOG_FILTERS;
+    const acceptedExtensionSet = useMemo(
+        () => parseAcceptedExtensionSet(acceptedFormats),
+        [acceptedFormats],
+    );
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
         const seen = new Set(base.files.map((f) => pathKey(f.input_path)));
@@ -692,11 +742,17 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         };
     };
     const mergeAndPublishResult = useCallback((incoming: ExpandDroppedPathsResult) => {
-        const mergedSnapshot = mergeResults(previewResultRef.current, incoming);
+        const filteredIncoming = filterExpandedResultByExtensions(incoming, acceptedExtensionSet);
+        if (acceptedExtensionSet && incoming.files.length > 0 && filteredIncoming.files.length === 0) {
+            setSelectionError('没有符合当前功能格式限制的文件');
+        } else {
+            setSelectionError('');
+        }
+        const mergedSnapshot = mergeResults(previewResultRef.current, filteredIncoming);
         previewResultRef.current = mergedSnapshot;
         setPreviewResult(mergedSnapshot);
         onPathsExpanded?.(mergedSnapshot);
-    }, [onPathsExpanded]);
+    }, [acceptedExtensionSet, onPathsExpanded]);
     const markRuntimeDropAsHandled = useCallback((paths: string[]) => {
         if (paths.length === 0) {
             runtimeDropMarkerRef.current = null;
@@ -876,7 +932,13 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         try {
             const app = getAppBindings();
             if (app?.SelectInputFiles) {
-                const res = await app.SelectInputFiles();
+                const res = await app.SelectInputFiles({
+                    title: '选择文件',
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: allowMultiple,
+                    filters: activeFileDialogFilters,
+                });
                 const paths = Array.isArray(res) ? res : (typeof res === 'string' && res ? [res] : []);
                 if (paths.length === 0) return;
                 if (!app?.ExpandDroppedPaths) {
@@ -894,10 +956,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                     canChooseFiles: true,
                     canChooseDirectories: false,
                     allowsMultipleSelection: allowMultiple,
-                    filters: [{
-                        DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.avif;*.ico;*.tiff;*.tif;*.heic;*.heif;*.svg"
-                    }]
+                    filters: activeFileDialogFilters,
                 } as any);
 
                 if (res === undefined || res === null) {
@@ -1142,7 +1201,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
                                 {looseFiles.map((f) => {
                                     const name = basename(f.input_path);
-                                    const ext = getExt(name);
                                     const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
                                     return (
                                         <div

@@ -25,6 +25,57 @@ import {
 } from '../types/wails-api';
 import type { models } from '../types/backend-models';
 
+const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.avif',
+    '.ico',
+    '.tiff',
+    '.tif',
+    '.svg',
+];
+
+const INFO_IMAGE_INPUT_EXTENSIONS = [
+    ...DEFAULT_IMAGE_INPUT_EXTENSIONS,
+    '.heic',
+    '.heif',
+];
+
+const COMPRESSOR_INPUT_EXTENSIONS = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.bmp',
+    '.avif',
+    '.ico',
+    '.tiff',
+    '.tif',
+];
+
+const extensionsToAccept = (extensions: string[]) => extensions.join(',');
+const extensionsToDialogPattern = (extensions: string[]) => extensions.map((ext) => `*${ext}`).join(';');
+
+const DEFAULT_IMAGE_ACCEPTED_FORMATS = extensionsToAccept(DEFAULT_IMAGE_INPUT_EXTENSIONS);
+const INFO_IMAGE_ACCEPTED_FORMATS = extensionsToAccept(INFO_IMAGE_INPUT_EXTENSIONS);
+const COMPRESSOR_ACCEPTED_FORMATS = extensionsToAccept(COMPRESSOR_INPUT_EXTENSIONS);
+const DEFAULT_IMAGE_FILE_DIALOG_FILTERS = [{
+    DisplayName: 'Images',
+    Pattern: extensionsToDialogPattern(DEFAULT_IMAGE_INPUT_EXTENSIONS),
+}];
+const INFO_IMAGE_FILE_DIALOG_FILTERS = [{
+    DisplayName: 'Images',
+    Pattern: extensionsToDialogPattern(INFO_IMAGE_INPUT_EXTENSIONS),
+}];
+const COMPRESSOR_FILE_DIALOG_FILTERS = [{
+    DisplayName: 'Compressible bitmaps',
+    Pattern: extensionsToDialogPattern(COMPRESSOR_INPUT_EXTENSIONS),
+}];
+
 interface DetailViewProps {
     id: ViewState;
     onBack: () => void;
@@ -465,7 +516,7 @@ const WatermarkSettings = memo(({
                     allowsMultipleSelection: false,
                     filters: [{
                         DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif;*.svg"
+                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif"
                     }]
                 } as any);
                 const picked = Array.isArray(res) ? res[0] : res;
@@ -664,6 +715,8 @@ type AdjustSettingsProps = {
     setRotate?: (v: number) => void;
     flipH?: boolean;
     setFlipH?: (v: boolean) => void;
+    flipV?: boolean;
+    setFlipV?: (v: boolean) => void;
 };
 
 type AdjustCropControlsProps = {
@@ -673,6 +726,8 @@ type AdjustCropControlsProps = {
     setRotate: (v: number) => void;
     flipH: boolean;
     setFlipH: (v: boolean) => void;
+    flipV: boolean;
+    setFlipV: (v: boolean) => void;
 };
 
 const AdjustCropControls = memo(({
@@ -682,6 +737,8 @@ const AdjustCropControls = memo(({
     setRotate,
     flipH,
     setFlipH,
+    flipV,
+    setFlipV,
 }: AdjustCropControlsProps) => (
     <div className="space-y-2">
         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">裁剪与旋转</label>
@@ -720,6 +777,16 @@ const AdjustCropControls = memo(({
             >
                 <span className="scale-x-[-1] inline-block"><Icon name="RotateCw" size={16} /></span> 水平翻转
             </button>
+            <button
+                onClick={() => setFlipV(!flipV)}
+                className={`flex items-center justify-center gap-2 py-2 rounded-xl border transition-all text-sm font-medium ${
+                    flipV
+                        ? 'border-[#007AFF]/60 text-[#007AFF] bg-[#007AFF]/10'
+                        : 'border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E] hover:bg-gray-50 dark:hover:bg-white/5'
+                }`}
+            >
+                <span className="rotate-90 inline-block"><Icon name="RotateCw" size={16} /></span> 垂直翻转
+            </button>
         </div>
     </div>
 ));
@@ -744,6 +811,8 @@ const AdjustSettings = memo(({
     setRotate,
     flipH,
     setFlipH,
+    flipV,
+    setFlipV,
 }: AdjustSettingsProps) => {
     const canShowCrop = showCrop
         && typeof cropRatio === 'string'
@@ -751,7 +820,9 @@ const AdjustSettings = memo(({
         && typeof rotate === 'number'
         && typeof setRotate === 'function'
         && typeof flipH === 'boolean'
-        && typeof setFlipH === 'function';
+        && typeof setFlipH === 'function'
+        && typeof flipV === 'boolean'
+        && typeof setFlipV === 'function';
 
     return (
         <div className="space-y-4">
@@ -763,6 +834,8 @@ const AdjustSettings = memo(({
                     setRotate={setRotate}
                     flipH={flipH}
                     setFlipH={setFlipH}
+                    flipV={flipV}
+                    setFlipV={setFlipV}
                 />
             )}
 
@@ -802,11 +875,8 @@ const FILTER_PRESETS = [
 ];
 
 type FilterSettingsProps = {
-    intensity: number;
     setIntensity: (v: number) => void;
-    grain: number;
     setGrain: (v: number) => void;
-    vignette: number;
     setVignette: (v: number) => void;
     selected: number;
     setSelected: (v: number) => void;
@@ -848,11 +918,8 @@ const FilterControls = memo(({
 ));
 
 const FilterSettings = memo(({
-    intensity,
     setIntensity,
-    grain,
     setGrain,
-    vignette,
     setVignette,
     selected,
     setSelected,
@@ -1483,7 +1550,7 @@ const InfoSettings = memo(({
     );
 });
 
-const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, onTaskFailure }) => {
+const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFailure }) => {
     const feature = FEATURES.find(f => f.id === id);
     if (!feature) return null;
 
@@ -2286,11 +2353,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
             case 'filter':
                 return (
                     <FilterSettings
-                        intensity={filterIntensity}
                         setIntensity={setFilterIntensity}
-                        grain={filterGrain}
                         setGrain={setFilterGrain}
-                        vignette={filterVignette}
                         setVignette={setFilterVignette}
                         selected={filterSelected}
                         setSelected={setFilterSelected}
@@ -2516,12 +2580,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     const joinPath = (base: string, rel: string) => `${normalizePath(base)}/${rel.replace(/^\/+/, '')}`;
     const pathLookupKey = (path: string) => normalizePath(path).toLowerCase();
     const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
-    const replaceExt = (p: string, ext: string) => {
-        const normalized = p.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('.');
-        if (idx === -1) return `${normalized}.${ext}`;
-        return `${normalized.slice(0, idx)}.${ext}`;
-    };
     const extname = (p: string) => {
         const normalized = p.replace(/\\/g, '/');
         const idx = normalized.lastIndexOf('.');
@@ -2606,7 +2664,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
         const template = (options.template || defaultOutputSettings.output_template).trim() || defaultOutputSettings.output_template;
         const prefixClean = sanitizeFileName(options.prefix || '');
         const prefixValue = prefixClean ? `${prefixClean}_` : '';
-        const templateHasPrefix = template.includes('{prefix}');
+        const templateHasPrefix = /\{prefix(?:[:}])/i.test(template);
         const rendered = applyOutputTemplate(template, {
             basename: baseName,
             prefix: prefixValue,
@@ -3613,7 +3671,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 const targetSizeKB = compTargetSize ? Math.max(0, Number(compTargetSizeKB) || 0) : 0;
 
                 let failed = 0;
-                let warned = 0;
+                let warnings = 0;
 
                 const chunkSize = getBatchChunkSize(files.length);
                 let seq = 1;
@@ -3652,7 +3710,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                     try {
                         if (chunk.length === 1) {
                             const res = await appAny.Compress(chunk[0]);
-                            if (res?.warning) warned++;
+                            if (res?.warning) warnings++;
                             if (!res?.success) {
                                 if (isCancellationError(res?.error)) {
                                     cancelRequestedRef.current = true;
@@ -3664,7 +3722,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                             }
                         } else {
                             const res = await appAny.CompressBatch(chunk);
-                            warned += (res || []).filter(r => r?.warning).length;
+                            warnings += (res || []).filter(r => r?.warning).length;
                             let cancelledInBatch = false;
                             (res || []).forEach((item, idx: number) => {
                                 if (!item?.success) {
@@ -3698,7 +3756,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 }
                 const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
-                const extra = failed > 0 || warned > 0 ? `（失败 ${failed}，未达目标 ${warned}）` : '';
+                const extraParts = [
+                    failed > 0 ? `失败 ${failed}` : '',
+                    warnings > 0 ? `提示 ${warnings}` : '',
+                ].filter(Boolean);
+                const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
                 setLastMessage(cancelled
                     ? `压缩已停止：成功 ${success}/${total} 项${extra}`
                     : `压缩完成：成功 ${success}/${total} 项${extra}`);
@@ -4466,6 +4528,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
     };
 
     const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
+    const acceptedInputFormats = id === 'compressor'
+        ? COMPRESSOR_ACCEPTED_FORMATS
+        : id === 'info'
+            ? INFO_IMAGE_ACCEPTED_FORMATS
+            : DEFAULT_IMAGE_ACCEPTED_FORMATS;
+    const inputFileDialogFilters = id === 'compressor'
+        ? COMPRESSOR_FILE_DIALOG_FILTERS
+        : id === 'info'
+            ? INFO_IMAGE_FILE_DIALOG_FILTERS
+            : DEFAULT_IMAGE_FILE_DIALOG_FILTERS;
     const dropZone = (
         <FileDropZone 
             isActive={isActive}
@@ -4482,7 +4554,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                 }
             }}
             selectedPath={selectedDropPath}
-            acceptedFormats="image/*,.svg"
+            acceptedFormats={acceptedInputFormats}
+            fileDialogFilters={inputFileDialogFilters}
             allowMultiple={true}
             title="拖拽文件 / 文件夹到这里"
             subTitle=""
@@ -4956,6 +5029,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, onBack, isActive = true, on
                                         setRotate={setAdjustRotate}
                                         flipH={adjustFlipH}
                                         setFlipH={setAdjustFlipH}
+                                        flipV={adjustFlipV}
+                                        setFlipV={setAdjustFlipV}
                                     />
                                 </div>
                                 {renderActionSection(true)}

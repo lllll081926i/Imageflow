@@ -153,19 +153,20 @@ export async function resolveSelectedFilePaths(
     runtimeApi?: FilePathRuntime | null,
     options?: ResolveFilePathOptions,
 ): Promise<string[]> {
-    const directPaths = files
-        .map((file) => {
-            const candidate = file as { path?: string | null; pywebviewFullPath?: string | null };
-            const maybePath = typeof candidate?.path === 'string' && candidate.path
-                ? candidate.path
-                : (typeof candidate?.pywebviewFullPath === 'string' ? candidate.pywebviewFullPath : '');
-            return normalizeSavedPath(maybePath);
-        })
-        .filter((path) => path !== '');
+    const directPathsByIndex = files.map((file) => {
+        const candidate = file as { path?: string | null; pywebviewFullPath?: string | null };
+        const maybePath = typeof candidate?.path === 'string' && candidate.path
+            ? candidate.path
+            : (typeof candidate?.pywebviewFullPath === 'string' ? candidate.pywebviewFullPath : '');
+        return normalizeSavedPath(maybePath);
+    });
+    const directPaths = directPathsByIndex.filter((path) => path !== '');
 
     if (directPaths.length === files.length) {
         return directPaths;
     }
+
+    const unresolvedFiles = files.filter((_file, index) => directPathsByIndex[index] === '');
 
     const runtime = runtimeApi ?? ((globalThis as { window?: { runtime?: FilePathRuntime } }).window?.runtime ?? null);
     if (!runtime?.ResolveFilePaths) {
@@ -177,7 +178,7 @@ export async function resolveSelectedFilePaths(
 
     try {
         const timeoutMs = Math.max(0, Number(options?.timeoutMs ?? DEFAULT_FILE_PATH_RESOLVE_TIMEOUT_MS) || 0);
-        const resolvePromise = Promise.resolve(runtime.ResolveFilePaths(files as File[]));
+        const resolvePromise = Promise.resolve(runtime.ResolveFilePaths(unresolvedFiles as File[]));
         const resolved = timeoutMs > 0
             ? await Promise.race([
                 resolvePromise,
@@ -189,8 +190,15 @@ export async function resolveSelectedFilePaths(
         if (!Array.isArray(resolved)) {
             return [];
         }
-        return resolved
+        const resolvedPaths = resolved
             .map((item) => normalizeSavedPath(item))
+            .filter((path) => path !== '');
+        if (resolvedPaths.length !== unresolvedFiles.length) {
+            return [];
+        }
+        let resolvedIndex = 0;
+        return directPathsByIndex
+            .map((path) => path || resolvedPaths[resolvedIndex++] || '')
             .filter((path) => path !== '');
     } catch (error) {
         console.error('Failed to resolve selected file paths:', error);

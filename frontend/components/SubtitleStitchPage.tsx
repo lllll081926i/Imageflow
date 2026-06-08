@@ -11,6 +11,12 @@ import {
 const MIN_CROP_RATIO = 0.1;
 const MAX_CROP_RATIO = 0.35;
 const DEFAULT_CROP_RATIO = 0.18;
+const SCREENSHOT_INPUT_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff'];
+const SCREENSHOT_ACCEPTED_FORMATS = SCREENSHOT_INPUT_EXTENSIONS.join(',');
+const SCREENSHOT_FILE_DIALOG_FILTERS = [{
+    DisplayName: 'Screenshots',
+    Pattern: SCREENSHOT_INPUT_EXTENSIONS.map((ext) => `*${ext}`).join(';'),
+}];
 
 type SubtitleStitchPageProps = {
     isActive?: boolean;
@@ -176,7 +182,13 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
         try {
             const app = getAppBindings() as any;
             if (app?.SelectInputFiles) {
-                const selected = await app.SelectInputFiles();
+                const selected = await app.SelectInputFiles({
+                    title: '选择截图',
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true,
+                    filters: SCREENSHOT_FILE_DIALOG_FILTERS,
+                });
                 const paths = Array.isArray(selected)
                     ? selected.filter((item) => typeof item === 'string' && item.trim())
                     : (typeof selected === 'string' && selected.trim() ? [selected.trim()] : []);
@@ -492,7 +504,7 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                 type="file"
                 className="hidden"
                 multiple
-                accept=".jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff"
+                accept={SCREENSHOT_ACCEPTED_FORMATS}
                 onChange={handleFileInputChange}
             />
         </div>

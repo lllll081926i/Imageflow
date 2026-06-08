@@ -15,38 +15,17 @@ type RuntimeOpenDirectoryDialogOptions = {
     title?: string;
 };
 
-type DesktopRuntime = {
-    Quit?: () => void;
-    WindowMinimise?: () => void;
-    WindowToggleMaximise?: () => void;
-    OnFileDrop?: (callback: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean) => void;
-    OnFileDropOff?: () => void;
-    OpenFileDialog?: (options?: RuntimeOpenFileDialogOptions) => Promise<string | string[] | null | undefined>;
-    OpenDirectoryDialog?: (options?: RuntimeOpenDirectoryDialogOptions) => Promise<string | null | undefined>;
-    ResolveFilePaths?: (files: File[]) => Promise<unknown>;
-    CanResolveFilePaths?: () => boolean;
-};
-
-type PywebviewApi = {
+type PywebviewApi = NonNullable<Window['pywebview']>['api'] & {
     OpenFileDialog?: (options?: RuntimeOpenFileDialogOptions) => Promise<string | string[] | null | undefined>;
     OpenDirectoryDialog?: (options?: RuntimeOpenDirectoryDialogOptions) => Promise<string | null | undefined>;
     Quit?: () => void | Promise<void>;
     WindowMinimise?: () => void | Promise<void>;
     WindowToggleMaximise?: () => void | Promise<void>;
-    ResolveFilePaths?: (files: File[]) => Promise<unknown>;
+    ResolveFilePaths?: (files: File[]) => Promise<unknown> | unknown;
     CanResolveFilePaths?: () => boolean;
 };
 
-declare global {
-    interface Window {
-        pywebview?: {
-            api?: PywebviewApi;
-        };
-        runtime?: DesktopRuntime;
-    }
-}
-
-const getPywebviewApi = () => window.pywebview?.api;
+const getPywebviewApi = (): PywebviewApi | undefined => window.pywebview?.api;
 const FILE_DROP_EVENT = '__imageflow_file_drop__';
 let fileDropListener: ((event: Event) => void) | null = null;
 

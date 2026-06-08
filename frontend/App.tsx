@@ -3,11 +3,12 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
-import DetailView from './components/DetailView';
-import SettingsView from './components/SettingsView';
-import SubtitleStitchPage from './components/SubtitleStitchPage';
 import { ViewState, Theme, FeatureId } from './types';
 import { FEATURES } from './constants';
+
+const DetailView = React.lazy(() => import('./components/DetailView'));
+const SettingsView = React.lazy(() => import('./components/SettingsView'));
+const SubtitleStitchPage = React.lazy(() => import('./components/SubtitleStitchPage'));
 
 const FEATURE_IDS = FEATURES.map((feature) => feature.id) as FeatureId[];
 
@@ -302,27 +303,29 @@ const App: React.FC = () => {
                                 <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
                                     <Dashboard onSelect={handleNavigate} />
                                 </div>
-                                <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
-                                    <SettingsView />
-                                </div>
-                                {isFeatureView && (
-                                    <div className="h-full">
-                                        {activeView === 'subtitle_stitch' ? (
-                                            <SubtitleStitchPage
-                                                isActive={true}
-                                                onTaskFailure={handleTaskFailure}
-                                            />
-                                        ) : (
-                                            <DetailView
-                                                key={activeView}
-                                                id={activeView}
-                                                isActive={true}
-                                                onBack={handleBack}
-                                                onTaskFailure={handleTaskFailure}
-                                            />
-                                        )}
+                                <React.Suspense fallback={<div className="h-full" />}>
+                                    <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
+                                        {activeView === 'settings' && <SettingsView />}
                                     </div>
-                                )}
+                                    {isFeatureView && (
+                                        <div className="h-full">
+                                            {activeView === 'subtitle_stitch' ? (
+                                                <SubtitleStitchPage
+                                                    isActive={true}
+                                                    onTaskFailure={handleTaskFailure}
+                                                />
+                                            ) : (
+                                                <DetailView
+                                                    key={activeView}
+                                                    id={activeView}
+                                                    isActive={true}
+                                                    onBack={handleBack}
+                                                    onTaskFailure={handleTaskFailure}
+                                                />
+                                            )}
+                                        </div>
+                                    )}
+                                </React.Suspense>
                             </div>
                         </div>
                     </div>
