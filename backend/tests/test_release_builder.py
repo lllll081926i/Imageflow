@@ -69,7 +69,7 @@ class ReleaseBuilderTests(unittest.TestCase):
             os.utime(bundle, (newer, newer))
             paths = create_release_paths(project_root=root, version="1.0.11")
 
-            self.assertEqual(ensure_frontend_dist(paths), frontend_dist)
+            self.assertEqual(ensure_frontend_dist(paths).resolve(), frontend_dist.resolve())
 
     def test_build_pyinstaller_command_includes_required_assets(self):
         with tempfile.TemporaryDirectory() as temp_dir:
