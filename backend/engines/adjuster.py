@@ -473,8 +473,7 @@ class ImageAdjuster:
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters

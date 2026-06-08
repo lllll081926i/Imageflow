@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from backend.infrastructure.engine_loader import load_engine_module
 
 DEFAULT_PREVIEW_MAX_BYTES = 4 * 1024 * 1024
@@ -23,6 +21,8 @@ def _resolve_preview_max_bytes() -> int:
 
 
 def build_image_preview(input_path: str) -> dict[str, Any]:
+    from PIL import Image
+
     source = Path(input_path)
     if not source.exists():
         return {"success": False, "error": "文件不存在"}

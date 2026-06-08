@@ -14,8 +14,8 @@ Usage:
 import sys
 import json
 import os
-import io
 import math
+import tempfile
 from pathlib import Path
 from PIL import Image
 from reportlab.lib.pagesizes import (
@@ -35,7 +35,6 @@ from reportlab.lib.pagesizes import (
     LETTER,
     TABLOID,
 )
-from reportlab.lib.units import inch, mm
 from reportlab.platypus import SimpleDocTemplate, PageBreak, Image as RLImage
 from reportlab.pdfgen import canvas
 import logging
@@ -49,11 +48,24 @@ logger = logging.getLogger(__name__)
 def _coerce_images(input_data):
     images = input_data.get("images", [])
     if isinstance(images, list) and images:
-        return images
+        return _coerce_image_references(images)
     image_paths = input_data.get("image_paths", [])
     if isinstance(image_paths, list):
-        return image_paths
+        return _coerce_image_references(image_paths)
     return []
+
+
+def _coerce_image_references(values):
+    paths = []
+    for item in values:
+        if isinstance(item, dict):
+            raw_path = item.get("path") or item.get("input_path") or item.get("image_path")
+        else:
+            raw_path = item
+        path = str(raw_path or "").strip()
+        if path:
+            paths.append(path)
+    return paths
 
 
 def _normalize_layout(value):
@@ -103,10 +115,11 @@ class PDFGenerator:
         """Initialize the PDF generator."""
         logger.info("PDFGenerator initialized")
         self._size_cache: dict[str, tuple[int, int]] = {}
+        self._temp_image_paths: list[str] = []
     
     def generate(self, images, output_path, layout='single',
                  custom_rows=2, custom_cols=2, page_size='A4',
-                 margin=72, title='', author='', portrait=True,
+                 margin=DEFAULT_MARGIN, title='', author='', portrait=True,
                  compression_level=0, fit_mode='contain'):
         """
         Generate a PDF from multiple images.
@@ -184,7 +197,10 @@ class PDFGenerator:
             )
             
             # Generate PDF
-            doc.build(story)
+            try:
+                doc.build(story)
+            finally:
+                self._cleanup_temp_images()
             
             # Get file size
             file_size = os.path.getsize(output_path)
@@ -392,6 +408,7 @@ class PDFGenerator:
 
         # Slow path: need PIL for SVG, compression, or cover crop
         pil_img = open_image_with_svg_support(img_path, format_type="png")
+        working_img = pil_img
         try:
             img_width, img_height = pil_img.size
 
@@ -404,7 +421,6 @@ class PDFGenerator:
 
             fit_mode = self._normalize_fit_mode(fit_mode)
             use_buffer = False
-            working_img = pil_img
 
             if fit_mode == 'cover':
                 target_ratio = avail_width / avail_height
@@ -423,16 +439,16 @@ class PDFGenerator:
                 final_height = img_height * scale_factor
 
             if compression_level > 0:
-                buffer = self._encode_image_for_pdf(working_img, compression_level)
-                img = RLImage(buffer, width=final_width, height=final_height)
-                img._image_buffer = buffer
+                temp_path = self._encode_image_for_pdf(working_img, compression_level)
+                img = RLImage(temp_path, width=final_width, height=final_height)
             elif use_buffer or force_buffer:
-                buffer = io.BytesIO()
                 prepared = self._prepare_png_image(working_img)
-                prepared.save(buffer, format="PNG")
-                buffer.seek(0)
-                img = RLImage(buffer, width=final_width, height=final_height)
-                img._image_buffer = buffer
+                try:
+                    temp_path = self._create_temp_image_file(prepared, ".png", "PNG")
+                finally:
+                    if prepared is not working_img:
+                        prepared.close()
+                img = RLImage(temp_path, width=final_width, height=final_height)
             else:
                 img = RLImage(img_path, width=final_width, height=final_height)
 
@@ -443,6 +459,11 @@ class PDFGenerator:
                 pil_img.close()
             except Exception:
                 pass
+            if working_img is not pil_img:
+                try:
+                    working_img.close()
+                except Exception:
+                    pass
 
     def _estimate_page_count(self, image_count, layout, rows, cols):
         if image_count <= 0:
@@ -463,25 +484,58 @@ class PDFGenerator:
         quality_map = {1: 85, 2: 70, 3: 50}
         quality = quality_map.get(int(compression_level), 70)
 
-        pil_img = self._prepare_jpeg_image(pil_img)
+        prepared = self._prepare_jpeg_image(pil_img)
+        try:
+            return self._create_temp_image_file(
+                prepared,
+                ".jpg",
+                "JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+            )
+        finally:
+            if prepared is not pil_img:
+                prepared.close()
 
-        buffer = io.BytesIO()
-        pil_img.save(
-            buffer,
-            format="JPEG",
-            quality=quality,
-            optimize=True,
-            progressive=True,
+    def _create_temp_image_file(self, pil_img, suffix, image_format, **save_options):
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix="imageflow_pdf_",
+            suffix=suffix,
+            delete=False,
         )
-        buffer.seek(0)
-        return buffer
+        temp_path = temp_file.name
+        temp_file.close()
+        try:
+            pil_img.save(temp_path, format=image_format, **save_options)
+        except Exception:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise
+        self._temp_image_paths.append(temp_path)
+        return temp_path
+
+    def _cleanup_temp_images(self):
+        while self._temp_image_paths:
+            temp_path = self._temp_image_paths.pop()
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning("Failed to remove temporary PDF image %s: %s", temp_path, exc)
 
     def _prepare_jpeg_image(self, pil_img):
         if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
             rgba = pil_img.convert("RGBA")
-            background = Image.new("RGB", rgba.size, (255, 255, 255))
-            background.paste(rgba, mask=rgba.split()[-1])
-            return background
+            try:
+                background = Image.new("RGB", rgba.size, (255, 255, 255))
+                background.paste(rgba, mask=rgba.split()[-1])
+                return background
+            finally:
+                rgba.close()
         if pil_img.mode != "RGB":
             return pil_img.convert("RGB")
         return pil_img
@@ -519,8 +573,7 @@ class PDFGenerator:
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters

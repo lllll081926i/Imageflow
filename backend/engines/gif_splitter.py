@@ -22,7 +22,6 @@ import logging
 import os
 import struct
 import sys
-import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageSequence, UnidentifiedImageError
@@ -38,7 +37,8 @@ MAX_QUALITY = 100
 GIF_MIN_DELAY_MS = 20
 GIF_DELAY_UNIT_MS = 10
 FRAME_OUTPUT_FORMATS = {"png", "bmp"}
-ANIMATED_OUTPUT_FORMATS = {"gif", "apng", "webp"}
+MAX_FRAME_PIXEL_BUDGET = 16_000_000
+MAX_TOTAL_FRAME_PIXEL_BUDGET = 256_000_000
 
 
 def _error_response(code, message, detail=None):
@@ -331,21 +331,23 @@ class GIFTool:
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
-                frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
                 original_width, original_height = gif.size
+                frame_count_hint = int(getattr(gif, "n_frames", 1) or 1)
 
-            target_width = self._sanitize_dimension(width)
-            target_height = self._sanitize_dimension(height)
-            keep_aspect = self._coerce_bool(maintain_aspect, default=True)
-            if target_width <= 0 and target_height <= 0:
-                return _error_response("GIF_RESIZE_INVALID_SIZE", "Missing width or height for resize")
+                target_width = self._sanitize_dimension(width)
+                target_height = self._sanitize_dimension(height)
+                keep_aspect = self._coerce_bool(maintain_aspect, default=True)
+                if target_width <= 0 and target_height <= 0:
+                    return _error_response("GIF_RESIZE_INVALID_SIZE", "Missing width or height for resize")
 
-            resized_size = self._resolve_resize_size(
-                (original_width, original_height),
-                target_width,
-                target_height,
-                keep_aspect,
-            )
+                resized_size = self._resolve_resize_size(
+                    (original_width, original_height),
+                    target_width,
+                    target_height,
+                    keep_aspect,
+                )
+                self._assert_frame_pixel_budget(resized_size, frame_count_hint)
+                frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
             resample = self._get_resample_filter()
             for idx, frame in enumerate(frames):
                 resized = frame.resize(resized_size, resample=resample)
@@ -440,22 +442,6 @@ class GIFTool:
         except Exception as exc:
             logger.error("Animated convert failed: %s", exc, exc_info=True)
             return _error_response("ANIMATED_CONVERT_FAILED", str(exc))
-
-    def _open_gif(self, input_path):
-        gif = Image.open(input_path)
-        if gif.format != "GIF":
-            raise ValueError("Input file is not a GIF")
-        return gif
-
-    def _get_frame_count(self, gif):
-        frame_count = 0
-        try:
-            while True:
-                gif.seek(frame_count)
-                frame_count += 1
-        except EOFError:
-            pass
-        return frame_count
 
     def _extract_gif_frames(self, gif):
         if gif.format != "GIF":
@@ -689,13 +675,6 @@ class GIFTool:
         canvas.paste(img, (0, 0))
         return canvas
 
-    def _choose_canvas_size(self, sizes):
-        if not sizes:
-            return (0, 0)
-        max_w = max(size[0] for size in sizes)
-        max_h = max(size[1] for size in sizes)
-        return (max_w, max_h)
-
     def _clamp_speed_factor(self, value):
         try:
             factor = float(value)
@@ -773,6 +752,22 @@ class GIFTool:
 
         width = max(1, int(round(src_width * (target_height / src_height))))
         return width, max(1, target_height)
+
+    def _assert_frame_pixel_budget(self, size, frame_count=1):
+        width, height = size
+        pixels = int(width) * int(height)
+        if pixels > MAX_FRAME_PIXEL_BUDGET:
+            raise MemoryError(
+                f"Target GIF frame is too large: {width}x{height} "
+                f"({pixels} pixels, limit {MAX_FRAME_PIXEL_BUDGET})"
+            )
+
+        total_pixels = pixels * max(1, int(frame_count or 1))
+        if total_pixels > MAX_TOTAL_FRAME_PIXEL_BUDGET:
+            raise MemoryError(
+                f"GIF resize would process too many pixels: {total_pixels} "
+                f"(limit {MAX_TOTAL_FRAME_PIXEL_BUDGET})"
+            )
 
     def _get_resample_filter(self):
         resampling = getattr(Image, "Resampling", None)

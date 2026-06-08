@@ -24,6 +24,7 @@ import sys
 import json
 import os
 import tempfile
+from io import BytesIO
 from pathlib import Path
 from PIL import Image
 import logging
@@ -54,6 +55,151 @@ except ImportError:
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+JPEG_STRIP_MARKERS = {0xE1, 0xED, 0xFE}
+JPEG_STANDALONE_MARKERS = {0x01, 0xD8, 0xD9, *range(0xD0, 0xD8)}
+COPY_CHUNK_SIZE = 1024 * 1024
+COMPRESSIBLE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".avif",
+    ".ico",
+}
+UNSUPPORTED_COMPRESSION_EXTENSIONS = {".svg", ".gif", ".apng"}
+
+
+def _copy_remaining(src, dst) -> None:
+    while True:
+        chunk = src.read(COPY_CHUNK_SIZE)
+        if not chunk:
+            return
+        dst.write(chunk)
+
+
+def _copy_exact(src, dst, size: int) -> None:
+    remaining = max(0, int(size))
+    while remaining > 0:
+        chunk = src.read(min(COPY_CHUNK_SIZE, remaining))
+        if not chunk:
+            return
+        dst.write(chunk)
+        remaining -= len(chunk)
+
+
+def _skip_exact(src, size: int) -> None:
+    remaining = max(0, int(size))
+    while remaining > 0:
+        chunk = src.read(min(COPY_CHUNK_SIZE, remaining))
+        if not chunk:
+            return
+        remaining -= len(chunk)
+
+
+def _copy_jpeg_without_metadata(src, dst) -> None:
+    header = src.read(2)
+    if header != b"\xff\xd8":
+        dst.write(header)
+        _copy_remaining(src, dst)
+        return
+
+    dst.write(header)
+    while True:
+        prefix = src.read(1)
+        if not prefix:
+            return
+        if prefix != b"\xff":
+            dst.write(prefix)
+            _copy_remaining(src, dst)
+            return
+
+        marker_byte = src.read(1)
+        while marker_byte == b"\xff":
+            marker_byte = src.read(1)
+        if not marker_byte:
+            dst.write(prefix)
+            return
+
+        marker = marker_byte[0]
+        if marker in JPEG_STANDALONE_MARKERS:
+            dst.write(b"\xff" + marker_byte)
+            if marker == 0xD9:
+                _copy_remaining(src, dst)
+                return
+            continue
+
+        length_bytes = src.read(2)
+        if len(length_bytes) < 2:
+            dst.write(b"\xff" + marker_byte + length_bytes)
+            return
+        segment_length = (length_bytes[0] << 8) | length_bytes[1]
+        if segment_length < 2:
+            dst.write(b"\xff" + marker_byte + length_bytes)
+            _copy_remaining(src, dst)
+            return
+
+        payload_length = segment_length - 2
+        if marker in JPEG_STRIP_MARKERS:
+            _skip_exact(src, payload_length)
+        else:
+            dst.write(b"\xff" + marker_byte + length_bytes)
+            _copy_exact(src, dst, payload_length)
+
+        if marker == 0xDA:
+            _copy_remaining(src, dst)
+            return
+
+
+def _strip_jpeg_metadata_bytes(data: bytes) -> bytes:
+    if not data:
+        return data
+    src = BytesIO(data)
+    dst = BytesIO()
+    _copy_jpeg_without_metadata(src, dst)
+    return dst.getvalue()
+
+
+def _copy_file_streaming(input_path: str, output_path: str) -> None:
+    with open(input_path, "rb") as src, open(output_path, "wb") as dst:
+        _copy_remaining(src, dst)
+
+
+def _append_warning(existing: str, message: str) -> str:
+    existing = str(existing or "").strip()
+    if not existing:
+        return message
+    return f"{existing}；{message}"
+
+
+def _unsupported_compression_error(input_path: str) -> str:
+    ext = Path(str(input_path or "")).suffix.lower()
+    if not ext:
+        return ""
+    if ext in UNSUPPORTED_COMPRESSION_EXTENSIONS:
+        return "[UNSUPPORTED_FORMAT] 压缩功能仅支持静态位图输入，SVG 请使用格式转换，GIF/APNG 请使用 GIF 工具"
+    if ext not in COMPRESSIBLE_EXTENSIONS:
+        return f"[UNSUPPORTED_FORMAT] 压缩功能不支持该输入格式: {ext}"
+    return ""
+
+
+def _strip_jpeg_metadata_file(path: str) -> None:
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".imageflow-strip-", suffix=".jpg", dir=directory)
+    os.close(fd)
+    try:
+        with open(path, "rb") as src, open(temp_path, "wb") as dst:
+            _copy_jpeg_without_metadata(src, dst)
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 class CompressionLevel:
@@ -118,12 +264,17 @@ class ImageCompressor:
             dict: Compression result with success status and metadata
         """
         tmp_output_path = None
+        img = None
         try:
             strip_metadata = bool(strip_metadata)
             # Validate compression level
             if not CompressionLevel.validate(level):
                 logger.warning(f"Invalid compression level: {level}, using MEDIUM")
                 level = CompressionLevel.MEDIUM
+
+            unsupported_error = _unsupported_compression_error(input_path)
+            if unsupported_error:
+                return {"success": False, "error": unsupported_error}
 
             input_abs = os.path.abspath(input_path)
             output_abs = os.path.abspath(output_path)
@@ -169,6 +320,7 @@ class ImageCompressor:
 
             engine = str(engine or "").strip().lower()
             warning = ""
+            fallback_used = False
 
             if format_type in ["JPEG", "JPG"]:
                 warning = self._compress_jpeg(
@@ -202,6 +354,7 @@ class ImageCompressor:
                 )
             else:
                 # Fallback to Pillow for other formats
+                fallback_used = True
                 warning = self._compress_fallback(
                     img,
                     input_path,
@@ -214,7 +367,20 @@ class ImageCompressor:
 
             # Explicitly close image to free memory
             img.close()
-            del img
+            img = None
+
+            candidate_size = os.path.getsize(work_output_path)
+            if (
+                original_size > 0
+                and candidate_size > original_size
+                and (not strip_metadata or fallback_used)
+            ):
+                warning = _append_warning(warning, "压缩结果大于原图，已保留原文件内容")
+                if same_file:
+                    os.remove(work_output_path)
+                    tmp_output_path = None
+                else:
+                    _copy_file_streaming(input_path, work_output_path)
 
             if tmp_output_path:
                 os.replace(tmp_output_path, output_path)
@@ -253,6 +419,11 @@ class ImageCompressor:
             logger.error(f"Compression failed: {e}", exc_info=True)
             return {"success": False, "error": f"[INTERNAL] {str(e)}"}
         finally:
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
             try:
                 if tmp_output_path:
                     os.remove(tmp_output_path)
@@ -282,55 +453,6 @@ class ImageCompressor:
         if level == CompressionLevel.LOSSLESS and force_pillow:
             lossless_warning = "已选择 Pillow 引擎，改为字节复制模式以保持无损"
 
-        def strip_jpeg_metadata_bytes(data: bytes) -> bytes:
-            if not data or len(data) < 4:
-                return data
-            if not data.startswith(b"\xFF\xD8"):
-                return data
-
-            out = bytearray(b"\xFF\xD8")
-            i = 2
-            strip_markers = {0xE1, 0xED, 0xFE}
-            data_len = len(data)
-            while i < data_len:
-                if data[i] != 0xFF:
-                    out.extend(data[i:])
-                    break
-                while i < data_len and data[i] == 0xFF:
-                    i += 1
-                if i >= data_len:
-                    break
-                marker = data[i]
-                i += 1
-                if marker == 0xD9:
-                    out.extend(b"\xFF\xD9")
-                    break
-                if marker == 0xD8 or (0xD0 <= marker <= 0xD7) or marker == 0x01:
-                    out.extend(b"\xFF" + bytes([marker]))
-                    continue
-                if i + 2 > data_len:
-                    break
-                seg_len = (data[i] << 8) | data[i + 1]
-                if seg_len < 2:
-                    break
-                seg = data[i : i + seg_len]
-                if marker not in strip_markers:
-                    out.extend(b"\xFF" + bytes([marker]) + seg)
-                i += seg_len
-            return bytes(out)
-
-        def strip_jpeg_metadata_file(path: str) -> None:
-            try:
-                with open(path, "rb") as f:
-                    raw = f.read()
-                stripped = strip_jpeg_metadata_bytes(raw)
-                if stripped != raw:
-                    with open(path, "wb") as f:
-                        f.write(stripped)
-            except OSError as strip_err:
-                logger.warning(f"Failed to strip JPEG metadata for {path}: {strip_err}")
-                return
-
         def save_once(q):
             if img.mode in ("RGBA", "P", "LA"):
                 work = img.convert("RGB")
@@ -341,17 +463,16 @@ class ImageCompressor:
                     jpeg_bytes = f.read()
                 optimized_bytes = mozjpeg_lossless_optimization.optimize(jpeg_bytes)
                 if strip_metadata:
-                    optimized_bytes = strip_jpeg_metadata_bytes(optimized_bytes)
+                    optimized_bytes = _strip_jpeg_metadata_bytes(optimized_bytes)
                 with open(output_path, "wb") as f:
                     f.write(optimized_bytes)
                 return
             if level == CompressionLevel.LOSSLESS and (force_pillow or not use_mozjpeg):
-                with open(input_path, "rb") as f:
-                    jpeg_bytes = f.read()
                 if strip_metadata:
-                    jpeg_bytes = strip_jpeg_metadata_bytes(jpeg_bytes)
-                with open(output_path, "wb") as f:
-                    f.write(jpeg_bytes)
+                    with open(input_path, "rb") as src, open(output_path, "wb") as dst:
+                        _copy_jpeg_without_metadata(src, dst)
+                else:
+                    _copy_file_streaming(input_path, output_path)
                 return
 
             save_quality = 100 if level == CompressionLevel.LOSSLESS else int(q)
@@ -373,7 +494,10 @@ class ImageCompressor:
                 except Exception as e:
                     logger.warning(f"mozjpeg optimize failed: {e}")
             if strip_metadata:
-                strip_jpeg_metadata_file(output_path)
+                try:
+                    _strip_jpeg_metadata_file(output_path)
+                except OSError as strip_err:
+                    logger.warning(f"Failed to strip JPEG metadata for {output_path}: {strip_err}")
 
         if target_bytes > 0 and level == CompressionLevel.LOSSLESS:
             save_once(100)
@@ -473,49 +597,62 @@ class ImageCompressor:
             if use_pngquant and not force_pillow:
                 try:
                     if img.mode in ("RGBA", "LA"):
-                        quantized_img = imagequant.quantize_pil_image(
-                            img,
-                            min_quality=min_q,
-                            max_quality=max_q,
-                            max_colors=256,
-                            dithering_level=1.0,
-                        )
-                        save_kwargs = {"format": "PNG"}
-                        quantized_img.save(output_path, **save_kwargs)
-                        if use_oxipng and not force_pillow:
-                            try:
-                                strip_mode = oxipng.StripChunks.safe()
-                                oxipng.optimize(
-                                    output_path,
-                                    output_path,
-                                    level=oxipng_level_for(level),
-                                    strip=strip_mode,
-                                )
-                            except Exception as e:
-                                logger.warning(f"OxiPNG optimization failed: {e}")
+                        quantized_img = None
+                        try:
+                            quantized_img = imagequant.quantize_pil_image(
+                                img,
+                                min_quality=min_q,
+                                max_quality=max_q,
+                                max_colors=256,
+                                dithering_level=1.0,
+                            )
+                            save_kwargs = {"format": "PNG"}
+                            quantized_img.save(output_path, **save_kwargs)
+                            if use_oxipng and not force_pillow:
+                                try:
+                                    strip_mode = oxipng.StripChunks.safe()
+                                    oxipng.optimize(
+                                        output_path,
+                                        output_path,
+                                        level=oxipng_level_for(level),
+                                        strip=strip_mode,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"OxiPNG optimization failed: {e}")
+                        finally:
+                            if quantized_img is not None:
+                                quantized_img.close()
                         return
                     if img.mode == "RGB":
-                        rgba_img = img.convert("RGBA")
-                        quantized_img = imagequant.quantize_pil_image(
-                            rgba_img,
-                            min_quality=min_q,
-                            max_quality=max_q,
-                            max_colors=256,
-                            dithering_level=1.0,
-                        )
-                        save_kwargs = {"format": "PNG"}
-                        quantized_img.save(output_path, **save_kwargs)
-                        if use_oxipng and not force_pillow:
-                            try:
-                                strip_mode = oxipng.StripChunks.safe()
-                                oxipng.optimize(
-                                    output_path,
-                                    output_path,
-                                    level=oxipng_level_for(level),
-                                    strip=strip_mode,
-                                )
-                            except Exception as e:
-                                logger.warning(f"OxiPNG optimization failed: {e}")
+                        rgba_img = None
+                        quantized_img = None
+                        try:
+                            rgba_img = img.convert("RGBA")
+                            quantized_img = imagequant.quantize_pil_image(
+                                rgba_img,
+                                min_quality=min_q,
+                                max_quality=max_q,
+                                max_colors=256,
+                                dithering_level=1.0,
+                            )
+                            save_kwargs = {"format": "PNG"}
+                            quantized_img.save(output_path, **save_kwargs)
+                            if use_oxipng and not force_pillow:
+                                try:
+                                    strip_mode = oxipng.StripChunks.safe()
+                                    oxipng.optimize(
+                                        output_path,
+                                        output_path,
+                                        level=oxipng_level_for(level),
+                                        strip=strip_mode,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"OxiPNG optimization failed: {e}")
+                        finally:
+                            if quantized_img is not None:
+                                quantized_img.close()
+                            if rgba_img is not None:
+                                rgba_img.close()
                         return
                     if img.mode == "P":
                         save_kwargs = {"format": "PNG", "optimize": True}
@@ -543,19 +680,22 @@ class ImageCompressor:
                 colors = max(2, min(256, colors))
                 quantize_method = 2 if img.mode in ("RGBA", "LA") else 0
                 quantized = img.quantize(colors=colors, method=quantize_method, dither=1)
-                save_kwargs = {"format": "PNG"}
-                quantized.save(output_path, **save_kwargs)
-                if use_oxipng and not force_pillow:
-                    try:
-                        strip_mode = oxipng.StripChunks.safe()
-                        oxipng.optimize(
-                            output_path,
-                            output_path,
-                            level=oxipng_level_for(level),
-                            strip=strip_mode,
-                        )
-                    except Exception as e:
-                        logger.warning(f"OxiPNG optimization failed: {e}")
+                try:
+                    save_kwargs = {"format": "PNG"}
+                    quantized.save(output_path, **save_kwargs)
+                    if use_oxipng and not force_pillow:
+                        try:
+                            strip_mode = oxipng.StripChunks.safe()
+                            oxipng.optimize(
+                                output_path,
+                                output_path,
+                                level=oxipng_level_for(level),
+                                strip=strip_mode,
+                            )
+                        except Exception as e:
+                            logger.warning(f"OxiPNG optimization failed: {e}")
+                finally:
+                    quantized.close()
             else:
                 save_kwargs = {"format": "PNG", "optimize": True, "compress_level": 9}
                 img.save(output_path, **save_kwargs)
@@ -739,8 +879,7 @@ class ImageCompressor:
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters

@@ -459,23 +459,32 @@ class GifSplitterTests(unittest.TestCase):
         self.assertIn("Missing width or height", result.get("error", ""))
         self.assertEqual(result.get("error_code"), "GIF_RESIZE_INVALID_SIZE")
 
-    def test_resize_gif_has_no_frame_pixel_budget_guard(self):
+    def test_resize_gif_rejects_oversized_target_before_extracting_frames(self):
         gif_path = self._make_rect_gif((20, 10))
         output_path = self._path("sample_resize_oom.gif")
-        self.assertFalse(hasattr(gif_splitter, "MAX_FRAME_PIXEL_BUDGET"))
-        self.assertFalse(hasattr(gif_splitter.GIFTool, "_assert_frame_pixel_budget"))
+        original_extract = gif_splitter.GIFTool._extract_gif_frames_with_disposal
 
-        result = handle_request(
-            {
-                "action": "resize",
-                "input_path": gif_path,
-                "output_path": output_path,
-                "width": 20,
-            }
-        )
+        def fail_if_called(self, gif):
+            raise AssertionError("frames should not be extracted after target size exceeds budget")
 
-        self.assertTrue(result.get("success"), result)
-        self.assertTrue(os.path.exists(output_path))
+        gif_splitter.GIFTool._extract_gif_frames_with_disposal = fail_if_called
+        try:
+            result = handle_request(
+                {
+                    "action": "resize",
+                    "input_path": gif_path,
+                    "output_path": output_path,
+                    "width": 100000,
+                    "maintain_aspect": True,
+                }
+            )
+        finally:
+            gif_splitter.GIFTool._extract_gif_frames_with_disposal = original_extract
+
+        self.assertFalse(result.get("success"), result)
+        self.assertEqual(result.get("error_code"), "GIF_MEMORY_LIMIT")
+        self.assertIn("too large", result.get("error", "").lower())
+        self.assertFalse(os.path.exists(output_path))
 
     def test_unsupported_action_returns_error_code(self):
         result = handle_request({"action": "unknown_action"})

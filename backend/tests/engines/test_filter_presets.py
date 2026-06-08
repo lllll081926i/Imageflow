@@ -11,6 +11,7 @@ if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
 from adjuster import ImageAdjuster
+import filter as filter_engine
 from filter import ImageFilterApplier
 
 
@@ -162,6 +163,147 @@ class FilterPresetTests(unittest.TestCase):
             self.assertEqual(img.format, "PNG")
             self.assertGreater(img.size[0], 0)
             self.assertGreater(img.size[1], 0)
+
+    def test_filter_closes_replaced_source_image(self):
+        class FakeImage:
+            format = "PNG"
+            mode = "RGB"
+            size = (24, 24)
+
+            def __init__(self):
+                self.closed = False
+
+            def save(self, path, **_kwargs):
+                with open(path, "wb") as handle:
+                    handle.write(b"fake image")
+
+            def close(self):
+                self.closed = True
+
+        source = FakeImage()
+        filtered = FakeImage()
+        original_open = filter_engine.open_image_with_svg_support
+        original_apply_basic = ImageFilterApplier._apply_basic_filter
+
+        def fake_open(*_args, **_kwargs):
+            return source
+
+        def fake_basic(_applier, img, filter_name, intensity):
+            self.assertIs(img, source)
+            self.assertEqual(filter_name, "grayscale")
+            return filtered
+
+        try:
+            filter_engine.open_image_with_svg_support = fake_open
+            ImageFilterApplier._apply_basic_filter = fake_basic
+
+            out = self._path("fake_filter.png")
+            result = ImageFilterApplier().apply(
+                input_path="virtual-input.png",
+                output_path=out,
+                filter_name="grayscale",
+                intensity=0.5,
+            )
+
+            self.assertTrue(result.get("success"))
+            self.assertTrue(os.path.exists(out))
+            self.assertTrue(source.closed)
+            self.assertTrue(filtered.closed)
+        finally:
+            filter_engine.open_image_with_svg_support = original_open
+            ImageFilterApplier._apply_basic_filter = original_apply_basic
+
+    def test_motion_blur_closes_intermediate_images(self):
+        created_filters = []
+
+        class FakeImage:
+            def __init__(self, name):
+                self.name = name
+                self.closed = False
+
+            def filter(self, _filter):
+                filtered = FakeImage(f"{self.name}-filtered")
+                created_filters.append(filtered)
+                return filtered
+
+            def close(self):
+                self.closed = True
+
+        source = FakeImage("source")
+        blended = FakeImage("blended")
+        original_blend = filter_engine.Image.blend
+
+        def fake_blend(_left, _right, _alpha):
+            return blended
+
+        try:
+            filter_engine.Image.blend = fake_blend
+
+            result = ImageFilterApplier()._apply_advanced_filter(
+                source,
+                "blur_motion",
+                intensity=1.0,
+                blur_radius=2.0,
+                sharpen_factor=2.0,
+                noise_level=0.1,
+                vignette_strength=0.5,
+                color_offset_x=5,
+                color_offset_y=5,
+            )
+
+            self.assertIs(result, blended)
+            self.assertFalse(source.closed)
+            self.assertEqual(len(created_filters), 2)
+            self.assertTrue(all(image.closed for image in created_filters))
+            self.assertFalse(blended.closed)
+        finally:
+            filter_engine.Image.blend = original_blend
+
+    def test_color_offset_closes_split_channels(self):
+        class FakeChannel:
+            def __init__(self, name):
+                self.name = name
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeImage:
+            def split(self):
+                return source_channels
+
+        source_channels = (FakeChannel("r"), FakeChannel("g"), FakeChannel("b"))
+        shifted_r = FakeChannel("shifted-r")
+        shifted_b = FakeChannel("shifted-b")
+        merged = FakeChannel("merged")
+        original_offset = filter_engine.ImageChops.offset
+        original_merge = filter_engine.Image.merge
+
+        def fake_offset(channel, x, y):
+            if channel is source_channels[0]:
+                return shifted_r
+            if channel is source_channels[2]:
+                return shifted_b
+            raise AssertionError("unexpected channel passed to offset")
+
+        def fake_merge(mode, channels):
+            self.assertEqual(mode, "RGB")
+            self.assertEqual(channels, (shifted_r, source_channels[1], shifted_b))
+            return merged
+
+        try:
+            filter_engine.ImageChops.offset = fake_offset
+            filter_engine.Image.merge = fake_merge
+
+            result = ImageFilterApplier()._add_color_offset(FakeImage(), 3, 2)
+
+            self.assertIs(result, merged)
+            for channel in (*source_channels, shifted_r, shifted_b):
+                self.assertTrue(channel.closed)
+            self.assertFalse(merged.closed)
+        finally:
+            filter_engine.ImageChops.offset = original_offset
+            filter_engine.Image.merge = original_merge
 
 
 if __name__ == "__main__":

@@ -48,6 +48,14 @@ class ImageFilterApplier:
     def __init__(self):
         """Initialize the filter applier."""
         logger.info("ImageFilterApplier initialized")
+
+    def _replace_image(self, current, replacement):
+        if replacement is not current:
+            try:
+                current.close()
+            except Exception:
+                pass
+        return replacement
     
     def apply(self, input_path, output_path, filter_name, intensity=1.0,
               blur_radius=2.0, sharpen_factor=2.0, noise_level=0.1,
@@ -98,13 +106,16 @@ class ImageFilterApplier:
             if filter_name in ("", "none", "original", "raw"):
                 pass
             elif filter_name in self.PRESET_FILTERS:
-                img = self._apply_preset_filter(img, filter_name, intensity)
+                img = self._replace_image(img, self._apply_preset_filter(img, filter_name, intensity))
             elif filter_name in self.BASIC_FILTERS:
-                img = self._apply_basic_filter(img, filter_name, intensity)
+                img = self._replace_image(img, self._apply_basic_filter(img, filter_name, intensity))
             elif filter_name in self.ADVANCED_FILTERS:
-                img = self._apply_advanced_filter(
-                    img, filter_name, intensity, blur_radius, sharpen_factor,
-                    noise_level, vignette_strength, color_offset_x, color_offset_y
+                img = self._replace_image(
+                    img,
+                    self._apply_advanced_filter(
+                        img, filter_name, intensity, blur_radius, sharpen_factor,
+                        noise_level, vignette_strength, color_offset_x, color_offset_y
+                    ),
                 )
             else:
                 return {
@@ -118,18 +129,18 @@ class ImageFilterApplier:
             except (TypeError, ValueError):
                 grain_level = 0.0
             if grain_level > 0:
-                img = self._add_noise(img, grain_level)
+                img = self._replace_image(img, self._add_noise(img, grain_level))
 
             try:
                 vignette_level = max(0.0, min(1.0, float(vignette)))
             except (TypeError, ValueError):
                 vignette_level = 0.0
             if vignette_level > 0:
-                img = self._add_vignette(img, vignette_level)
+                img = self._replace_image(img, self._add_vignette(img, vignette_level))
 
             # Reattach preserved alpha channel
             if alpha_channel is not None:
-                img = img.convert('RGBA')
+                img = self._replace_image(img, img.convert('RGBA'))
                 img.putalpha(alpha_channel)
                 alpha_channel.close()
                 alpha_channel = None
@@ -206,36 +217,63 @@ class ImageFilterApplier:
         if filter_name == 'grayscale':
             # Convert to grayscale
             gray_img = img.convert('L')
-            # Blend with original based on intensity
-            if intensity < 1.0:
-                img_rgb = img.convert('RGB')
-                gray_rgb = gray_img.convert('RGB')
-                img = Image.blend(img_rgb, gray_rgb, intensity)
-            else:
-                img = gray_img.convert('RGB')
+            try:
+                # Blend with original based on intensity
+                if intensity < 1.0:
+                    img_rgb = img.convert('RGB')
+                    gray_rgb = gray_img.convert('RGB')
+                    try:
+                        img = Image.blend(img_rgb, gray_rgb, intensity)
+                    finally:
+                        img_rgb.close()
+                        gray_rgb.close()
+                else:
+                    img = gray_img.convert('RGB')
+            finally:
+                gray_img.close()
         
         elif filter_name == 'sepia':
             # Sepia tone effect (use fast PIL operations)
             gray_img = ImageOps.grayscale(img)
-            sepia_img = ImageOps.colorize(gray_img, '#704214', '#F5E7C8')
+            try:
+                sepia_img = ImageOps.colorize(gray_img, '#704214', '#F5E7C8')
+            finally:
+                gray_img.close()
             if intensity < 1.0:
-                img = Image.blend(img, sepia_img, intensity)
+                try:
+                    img = Image.blend(img, sepia_img, intensity)
+                finally:
+                    sepia_img.close()
             else:
                 img = sepia_img
         
         elif filter_name == 'cool':
             # Cool blue tone
-            cool_img = ImageOps.colorize(img.convert('L'), (0, 0, 50), (0, 100, 255))
+            gray_img = img.convert('L')
+            try:
+                cool_img = ImageOps.colorize(gray_img, (0, 0, 50), (0, 100, 255))
+            finally:
+                gray_img.close()
             if intensity < 1.0:
-                img = Image.blend(img, cool_img, intensity)
+                try:
+                    img = Image.blend(img, cool_img, intensity)
+                finally:
+                    cool_img.close()
             else:
                 img = cool_img
         
         elif filter_name == 'warm':
             # Warm orange tone
-            warm_img = ImageOps.colorize(img.convert('L'), (50, 0, 0), (255, 150, 50))
+            gray_img = img.convert('L')
+            try:
+                warm_img = ImageOps.colorize(gray_img, (50, 0, 0), (255, 150, 50))
+            finally:
+                gray_img.close()
             if intensity < 1.0:
-                img = Image.blend(img, warm_img, intensity)
+                try:
+                    img = Image.blend(img, warm_img, intensity)
+                finally:
+                    warm_img.close()
             else:
                 img = warm_img
         
@@ -248,10 +286,13 @@ class ImageFilterApplier:
         elif filter_name == 'soft':
             # Soft focus effect
             blurred = img.filter(ImageFilter.GaussianBlur(radius=2))
-            if intensity < 1.0:
-                img = Image.blend(img, blurred, intensity * 0.5)
-            else:
-                img = Image.blend(img, blurred, 0.5)
+            try:
+                if intensity < 1.0:
+                    img = Image.blend(img, blurred, intensity * 0.5)
+                else:
+                    img = Image.blend(img, blurred, 0.5)
+            finally:
+                blurred.close()
         
         return img
 
@@ -467,9 +508,14 @@ class ImageFilterApplier:
             radius = int(blur_radius * intensity)
             if radius > 0:
                 # Apply directional blur
-                img = img.filter(ImageFilter.BoxBlur(radius))
-                # Blend to soften
-                img = Image.blend(img.filter(ImageFilter.BoxBlur(radius)), img, 0.5)
+                blurred = img.filter(ImageFilter.BoxBlur(radius))
+                softer = blurred.filter(ImageFilter.BoxBlur(radius))
+                try:
+                    # Blend to soften
+                    img = Image.blend(softer, blurred, 0.5)
+                finally:
+                    softer.close()
+                    blurred.close()
         
         elif filter_name == 'sharpen':
             # Sharpen
@@ -600,19 +646,27 @@ class ImageFilterApplier:
             return img
         
         r, g, b = img.split()
-        
-        # Shift channels
-        r = ImageChops.offset(r, offset_x, offset_y)
-        b = ImageChops.offset(b, -offset_x, -offset_y)
-        
-        # Merge back
-        return Image.merge('RGB', (r, g, b))
+        shifted_r = None
+        shifted_b = None
+        try:
+            # Shift channels
+            shifted_r = ImageChops.offset(r, offset_x, offset_y)
+            shifted_b = ImageChops.offset(b, -offset_x, -offset_y)
+
+            # Merge back
+            return Image.merge('RGB', (shifted_r, g, shifted_b))
+        finally:
+            for channel in (shifted_r, shifted_b, r, g, b):
+                if channel is not None:
+                    try:
+                        channel.close()
+                    except Exception:
+                        pass
 
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters

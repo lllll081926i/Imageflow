@@ -22,7 +22,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from PIL import Image
 import logging
@@ -31,6 +30,7 @@ import time
 # Configure logging
 logger = logging.getLogger(__name__)
 _PROFILE_ENABLED = os.getenv("IMAGEFLOW_PROFILE") == "1"
+SVG_DIMENSION_SCAN_BYTES = 256 * 1024
 
 
 def decode_svg_text(data: bytes) -> str:
@@ -47,10 +47,6 @@ def decode_svg_text(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="ignore")
-
-
-def contains_unsafe_svg_xml(text: str) -> bool:
-    return bool(re.search(r"<!\s*(DOCTYPE|ENTITY)\b", text or "", re.IGNORECASE))
 
 
 def extract_svg_root_fragment(text: str):
@@ -108,22 +104,7 @@ def parse_svg_intrinsic_size_from_text(text: str):
 
 def parse_svg_intrinsic_size_from_bytes(data: bytes):
     text = decode_svg_text(data)
-    if contains_unsafe_svg_xml(text):
-        return parse_svg_intrinsic_size_from_text(text)
-
-    try:
-        # Defense-in-depth: strip any entity declarations before parsing
-        safe_text = re.sub(r"<!\s*(ENTITY|DOCTYPE)\b[^>]*>", "", text, flags=re.IGNORECASE)
-        safe_data = safe_text.encode("utf-8") if safe_text != text else data
-        root = ET.fromstring(safe_data)
-    except (ET.ParseError, UnicodeDecodeError):
-        return parse_svg_intrinsic_size_from_text(text)
-
-    return parse_svg_intrinsic_size_from_attrs(
-        root.attrib.get("width", ""),
-        root.attrib.get("height", ""),
-        root.attrib.get("viewBox", "") or root.attrib.get("viewbox", ""),
-    )
+    return parse_svg_intrinsic_size_from_text(text)
 
 
 def _profile_log(message: str) -> None:
@@ -180,6 +161,23 @@ def _can_convert_in_place(input_path: str, output_path: str, format_type: str) -
     return current_ext in _format_extensions(format_type)
 
 
+def _with_single_ico_size_suffix(output_path: str, ico_sizes) -> str:
+    if not output_path or not isinstance(ico_sizes, list) or len(ico_sizes) != 1:
+        return output_path
+    try:
+        size = int(ico_sizes[0])
+    except (TypeError, ValueError):
+        return output_path
+    if size <= 0:
+        return output_path
+
+    target = Path(output_path)
+    suffix = target.suffix or ".ico"
+    stem = re.sub(r"_ico\d+$", "", target.stem, flags=re.IGNORECASE)
+    next_name = f"{stem}_ico{size}{suffix}"
+    return str(target.with_name(next_name))
+
+
 class ImageConverter:
     """Handles image format conversion operations."""
     
@@ -194,9 +192,18 @@ class ImageConverter:
         """Initialize the converter."""
         logger.info("ImageConverter initialized")
 
+    def _replace_image(self, current, replacement):
+        if replacement is not current:
+            try:
+                current.close()
+            except Exception:
+                pass
+        return replacement
+
     def _parse_svg_intrinsic_size(self, svg_path: str):
         try:
-            data = Path(svg_path).read_bytes()
+            with open(svg_path, "rb") as handle:
+                data = handle.read(SVG_DIMENSION_SCAN_BYTES)
         except OSError:
             return None
         return parse_svg_intrinsic_size_from_bytes(data)
@@ -275,7 +282,10 @@ class ImageConverter:
             img = Image.open(io.BytesIO(png_data))
             img.load()
             if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
-                img = img.resize((render_width, render_height), Image.Resampling.LANCZOS)
+                img = self._replace_image(
+                    img,
+                    img.resize((render_width, render_height), Image.Resampling.LANCZOS),
+                )
             return img
         except ImportError:
             logger.debug("cairosvg not available, fallback to svglib/inkscape")
@@ -307,7 +317,10 @@ class ImageConverter:
             img = Image.open(io.BytesIO(png_bytes))
             img.load()
             if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
-                img = img.resize((render_width, render_height), Image.Resampling.LANCZOS)
+                img = self._replace_image(
+                    img,
+                    img.resize((render_width, render_height), Image.Resampling.LANCZOS),
+                )
             return img
         except ImportError:
             logger.debug("svglib/reportlab not available, fallback to inkscape")
@@ -334,7 +347,10 @@ class ImageConverter:
                 img = Image.open(tmp_path)
                 img.load()
                 if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
-                    img = img.resize((render_width, render_height), Image.Resampling.LANCZOS)
+                    img = self._replace_image(
+                        img,
+                        img.resize((render_width, render_height), Image.Resampling.LANCZOS),
+                    )
                 return img
             except Exception as e:
                 logger.warning(f"Inkscape SVG render failed: {e}")
@@ -379,17 +395,20 @@ class ImageConverter:
         max_edge = max(sizes) if sizes else source_edge
 
         if img.mode != 'RGBA':
-            img = img.convert('RGBA')
+            img = self._replace_image(img, img.convert('RGBA'))
 
         w, h = img.size
         edge = max(w, h)
         if w != h:
             canvas = Image.new('RGBA', (edge, edge), (0, 0, 0, 0))
             canvas.paste(img, ((edge - w) // 2, (edge - h) // 2))
-            img = canvas
+            img = self._replace_image(img, canvas)
 
         if edge != max_edge:
-            img = img.resize((max_edge, max_edge), Image.Resampling.LANCZOS)
+            img = self._replace_image(
+                img,
+                img.resize((max_edge, max_edge), Image.Resampling.LANCZOS),
+            )
 
         return img, sizes
     
@@ -418,6 +437,7 @@ class ImageConverter:
         Returns:
             dict: Conversion result with success status and metadata
         """
+        img = None
         try:
             # Validate format
             format_type = format_type.lower()
@@ -483,7 +503,10 @@ class ImageConverter:
                 pct = max(1, int(scale_percent))
                 new_w = max(1, int(img.size[0] * pct / 100))
                 new_h = max(1, int(img.size[1] * pct / 100))
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                img = self._replace_image(
+                    img,
+                    img.resize((new_w, new_h), Image.Resampling.LANCZOS),
+                )
                 resized = True
             elif mode == 'long_edge' and int(long_edge or 0) > 0:
                 le = max(1, int(long_edge))
@@ -492,15 +515,18 @@ class ImageConverter:
                     scale = le / float(max(w0, h0))
                     new_w = max(1, int(w0 * scale))
                     new_h = max(1, int(h0 * scale))
-                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    img = self._replace_image(
+                        img,
+                        img.resize((new_w, new_h), Image.Resampling.LANCZOS),
+                    )
                     resized = True
             elif mode == 'fixed':
                 if width > 0 or height > 0:
-                    img = self._resize_image(img, width, height, maintain_ar)
+                    img = self._replace_image(img, self._resize_image(img, width, height, maintain_ar))
                     resized = True
             else:
                 if width > 0 or height > 0:
-                    img = self._resize_image(img, width, height, maintain_ar)
+                    img = self._replace_image(img, self._resize_image(img, width, height, maintain_ar))
                     resized = True
 
             if _PROFILE_ENABLED and resized:
@@ -508,8 +534,9 @@ class ImageConverter:
             
             if format_type == 'ico':
                 img, ico_sizes = self._prepare_ico_image(img, ico_sizes)
+                output_path = _with_single_ico_size_suffix(output_path, ico_sizes)
 
-            img = self._prepare_for_output(img, format_type)
+            img = self._replace_image(img, self._prepare_for_output(img, format_type))
 
             # Prepare save parameters based on format
             save_params = self._get_save_params(format_type, quality, compress_level, ico_sizes)
@@ -556,10 +583,6 @@ class ImageConverter:
                 except OSError as cleanup_err:
                     logger.warning(f"Failed to cleanup temp output file {tmp_output_path}: {cleanup_err}")
 
-            # Explicitly close image to free memory
-            img.close()
-            del img
-
             if _PROFILE_ENABLED:
                 total_elapsed = time.perf_counter() - total_start
                 _profile_log(
@@ -591,6 +614,12 @@ class ImageConverter:
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
     
     def _resize_image(self, img, target_width, target_height, maintain_ar):
         """
@@ -642,16 +671,21 @@ class ImageConverter:
         if img.mode in ('RGBA', 'LA'):
             return self._flatten_alpha(img)
         if img.mode == 'P' and 'transparency' in img.info:
-            return self._flatten_alpha(img.convert('RGBA'))
+            return self._flatten_alpha(img)
         if img.mode != 'RGB':
             return img.convert('RGB')
         return img
 
     def _flatten_alpha(self, img, background=(255, 255, 255)):
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
+        rgba = img if img.mode == 'RGBA' else img.convert('RGBA')
         base = Image.new('RGB', img.size, background)
-        base.paste(img, mask=img.split()[3])
+        alpha = rgba.split()[3]
+        try:
+            base.paste(rgba, mask=alpha)
+        finally:
+            alpha.close()
+            if rgba is not img:
+                rgba.close()
         return base
     
     def _get_save_params(self, format_type, quality, compress_level=6, ico_sizes=None):
@@ -750,8 +784,7 @@ def open_image_with_svg_support(input_path, *, format_type="png", ico_sizes=None
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters

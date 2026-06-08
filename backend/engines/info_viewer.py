@@ -15,14 +15,12 @@ import sys
 import traceback
 import zlib
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
 import exifread
 import piexif
 from PIL import Image, UnidentifiedImageError
 
 from converter import (
-    contains_unsafe_svg_xml,
     extract_svg_attribute,
     extract_svg_root_fragment,
     parse_svg_intrinsic_size_from_text,
@@ -524,28 +522,6 @@ class InfoViewer:
                     return int(int(parts[0]) / int(parts[1]))
         return None
 
-    def _parse_float(self, value):
-        if value is None:
-            return 0.0
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            text = value.strip()
-            if "/" in text:
-                parts = text.split("/")
-                if (
-                    len(parts) == 2
-                    and parts[0].strip("-").isdigit()
-                    and parts[1].strip("-").isdigit()
-                    and int(parts[1]) != 0
-                ):
-                    return float(int(parts[0]) / int(parts[1]))
-            try:
-                return float(text)
-            except ValueError:
-                return 0.0
-        return 0.0
-
     def _read_format_info(self, input_path):
         warnings = []
         container_info = {
@@ -758,7 +734,21 @@ class InfoViewer:
                         break
                     length = struct.unpack(">I", length_bytes)[0]
                     chunk_type = f.read(4)
-                    data = f.read(length)
+                    if chunk_type in {
+                        b"IHDR",
+                        b"tEXt",
+                        b"zTXt",
+                        b"iTXt",
+                        b"pHYs",
+                        b"gAMA",
+                        b"sRGB",
+                        b"iCCP",
+                    }:
+                        data = f.read(length)
+                    else:
+                        data = b""
+                        if length > 0:
+                            f.seek(length, os.SEEK_CUR)
                     f.read(4)
 
                     if chunk_type == b"IHDR" and len(data) >= 13:
@@ -1199,7 +1189,22 @@ class InfoViewer:
                         break
                     chunk_type = chunk_header[:4]
                     chunk_size = struct.unpack("<I", chunk_header[4:])[0]
-                    data = f.read(chunk_size)
+                    if chunk_type == b"VP8X":
+                        read_size = min(chunk_size, 10)
+                    elif chunk_type == b"VP8L":
+                        read_size = min(chunk_size, 5)
+                    elif chunk_type == b"VP8 ":
+                        read_size = min(chunk_size, 10)
+                    elif chunk_type == b"ANIM":
+                        read_size = min(chunk_size, 6)
+                    elif chunk_type in (b"EXIF", b"XMP "):
+                        read_size = chunk_size
+                    else:
+                        read_size = 0
+                    data = f.read(read_size) if read_size > 0 else b""
+                    remaining = chunk_size - read_size
+                    if remaining > 0:
+                        f.seek(remaining, os.SEEK_CUR)
                     if chunk_size % 2 == 1:
                         f.read(1)
 
@@ -1323,21 +1328,10 @@ class InfoViewer:
                 warnings.append(
                     {
                         "code": "SVG_UNSAFE_XML",
-                        "message": "SVG contains DOCTYPE or ENTITY declarations; skipped XML parser and used limited text scan",
+                        "message": "SVG contains DOCTYPE or ENTITY declarations; used limited text scan",
                     }
                 )
-                self._fill_svg_info_from_text(text, info, extra, details)
-                return info, extra, details, warnings
-
-            root = ET.fromstring(text)
-            self._fill_svg_info_from_root(root, info, extra, details)
-        except ET.ParseError as exc:
-            warnings.append({"code": "SVG_PARSE_FAILED", "message": str(exc)})
-            try:
-                text, _ = self._read_text_limited(input_path, self.SVG_SCAN_BYTES)
-                self._fill_svg_info_from_text(text, info, extra, details)
-            except Exception:
-                pass
+            self._fill_svg_info_from_text(text, info, extra, details)
         except Exception as exc:
             warnings.append({"code": "SVG_READ_FAILED", "message": str(exc)})
         return info, extra, details, warnings
@@ -1424,7 +1418,7 @@ class InfoViewer:
                 return data.decode("latin-1", errors="replace")
 
     def _contains_unsafe_svg_xml(self, text):
-        return contains_unsafe_svg_xml(text)
+        return bool(re.search(r"<!\s*(DOCTYPE|ENTITY)\b", text or "", re.IGNORECASE))
 
     def _extract_svg_root_fragment(self, text):
         return extract_svg_root_fragment(text)
@@ -1461,21 +1455,6 @@ class InfoViewer:
             details["svg.width_attr"] = width_raw
         if height_raw:
             details["svg.height_attr"] = height_raw
-
-    def _fill_svg_info_from_root(self, root, info, extra, details):
-        width_raw = root.attrib.get("width")
-        height_raw = root.attrib.get("height")
-        view_box = root.attrib.get("viewBox") or root.attrib.get("viewbox")
-        self._apply_svg_dimensions(width_raw, height_raw, view_box, info, details)
-
-        title = root.find(".//{http://www.w3.org/2000/svg}title")
-        desc = root.find(".//{http://www.w3.org/2000/svg}desc")
-        if title is not None and title.text:
-            extra["SVG:Title"] = self._stringify_value(title.text.strip())
-        if desc is not None and desc.text:
-            extra["SVG:Description"] = self._stringify_value(desc.text.strip())
-
-        details["svg.root_tag"] = root.tag.rsplit("}", 1)[-1]
 
     def _fill_svg_info_from_text(self, text, info, extra, details):
         svg_tag = self._extract_svg_root_fragment(text)

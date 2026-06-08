@@ -1,7 +1,11 @@
+import builtins
 import os
+import struct
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as stdlib_et
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
@@ -14,6 +18,13 @@ if str(ENGINE_DIR) not in sys.path:
 from info_viewer import InfoViewer
 
 
+class GuardedReadBytesIO(BytesIO):
+    def read(self, size=-1):
+        if size is None or size < 0 or size > 128:
+            raise AssertionError("metadata reader must skip large image data chunks")
+        return super().read(size)
+
+
 class InfoViewerMetadataTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -23,6 +34,68 @@ class InfoViewerMetadataTests(unittest.TestCase):
 
     def _path(self, name):
         return os.path.join(self.temp_dir.name, name)
+
+    def _read_with_guarded_open(self, target_path, data, callback):
+        original_open = builtins.open
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            if path == target_path and "b" in mode:
+                return GuardedReadBytesIO(data)
+            return original_open(path, mode, *args, **kwargs)
+
+        builtins.open = fake_open
+        try:
+            return callback(target_path)
+        finally:
+            builtins.open = original_open
+
+    def test_png_reader_skips_large_image_data_chunks(self):
+        def chunk(chunk_type, payload):
+            return (
+                struct.pack(">I", len(payload))
+                + chunk_type
+                + payload
+                + b"\x00\x00\x00\x00"
+            )
+
+        ihdr = struct.pack(">IIBBBBB", 12, 8, 8, 2, 0, 0, 0)
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", b"x" * 2048)
+            + chunk(b"IEND", b"")
+        )
+
+        viewer = InfoViewer()
+        info, extra, details, warnings = self._read_with_guarded_open(
+            "guarded.png",
+            png_bytes,
+            viewer._read_png_info,
+        )
+
+        self.assertEqual(info["width"], 12)
+        self.assertEqual(info["height"], 8)
+        self.assertEqual(warnings, [])
+
+    def test_webp_reader_skips_large_image_data_chunks(self):
+        def riff_chunk(chunk_type, payload):
+            padding = b"\x00" if len(payload) % 2 else b""
+            return chunk_type + struct.pack("<I", len(payload)) + payload + padding
+
+        vp8x = bytes([0, 0, 0, 0, 15, 0, 0, 9, 0, 0])
+        chunks = riff_chunk(b"VP8X", vp8x) + riff_chunk(b"VP8 ", b"x" * 2048)
+        webp_bytes = b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WEBP" + chunks
+
+        viewer = InfoViewer()
+        info, extra, details, warnings = self._read_with_guarded_open(
+            "guarded.webp",
+            webp_bytes,
+            viewer._read_webp_info,
+        )
+
+        self.assertEqual(info["width"], 16)
+        self.assertEqual(info["height"], 10)
+        self.assertEqual(warnings, [])
 
     def test_jpeg_exif_metadata(self):
         img = Image.new("RGB", (16, 16), (255, 0, 0))
@@ -155,6 +228,37 @@ class InfoViewerMetadataTests(unittest.TestCase):
 
         warnings = info.get("warnings", [])
         self.assertTrue(any(item.get("code") == "SVG_UNSAFE_XML" for item in warnings))
+
+    def test_svg_metadata_reader_does_not_require_xml_parser(self):
+        path = self._path("text-scan.svg")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                """<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80">
+                <title>Text Scan SVG</title>
+                <desc>Parsed without XML parser</desc>
+                <rect width="120" height="80" fill="red" />
+                </svg>"""
+            )
+
+        original_fromstring = stdlib_et.fromstring
+
+        def fail_if_xml_parser_is_used(_text):
+            raise AssertionError("XML parser should not be used for SVG metadata")
+
+        try:
+            stdlib_et.fromstring = fail_if_xml_parser_is_used
+
+            info = InfoViewer().get_info(path)
+
+            self.assertTrue(info.get("success"))
+            basic = info.get("basic", {})
+            self.assertEqual(basic.get("width"), 120)
+            self.assertEqual(basic.get("height"), 80)
+            fields = info.get("fields", [])
+            self.assertTrue(any(field.get("key") == "svg.title" for field in fields))
+            self.assertTrue(any(field.get("key") == "svg.description" for field in fields))
+        finally:
+            stdlib_et.fromstring = original_fromstring
 
     def test_edit_metadata(self):
         img = Image.new("RGB", (16, 16), (10, 20, 30))

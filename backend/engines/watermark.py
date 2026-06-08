@@ -49,13 +49,6 @@ def _resolve_request_payload(input_data):
 class WatermarkApplier:
     """Handles watermark application to images."""
     
-    # Supported watermark positions
-    POSITIONS = [
-        'top-left', 'top-center', 'top-right',
-        'center-left', 'center', 'center-right',
-        'bottom-left', 'bottom-center', 'bottom-right'
-    ]
-    
     def __init__(self):
         """Initialize the watermark applier."""
         logger.info("WatermarkApplier initialized")
@@ -537,8 +530,7 @@ class WatermarkApplier:
 
 def process(input_data):
     """
-    Process function for worker mode.
-    This function is called by the worker.py script for process reuse.
+    Process function used by the desktop API engine bridge.
 
     Args:
         input_data (dict): Input parameters
