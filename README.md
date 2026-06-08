@@ -46,8 +46,7 @@ flowchart LR
     Host --> API[backend/api/DesktopAPI]
     API --> App[application 层<br/>task_manager / image_ops / preview]
     App --> Engines[backend/engines]
-    Engines --> Worker[worker.py / multiprocessing]
-    Worker --> Libs[Pillow + ReportLab + piexif + exifread]
+    Engines --> Libs[Pillow + ReportLab + piexif + exifread]
     Libs --> IO[本地文件读写]
 ```
 
@@ -116,7 +115,6 @@ Imageflow/
 │   ├── components/              # 核心界面组件
 │   ├── runtime/                 # 桌面宿主运行时兼容层
 │   ├── types/                   # 前后端绑定与模型定义
-│   ├── wailsjs/                 # 历史生成绑定（前端兼容层仍会复用类型）
 │   └── ...
 ├── backend/                     # 纯 Python 后端
 │   ├── api/                     # 前端可调用 API
@@ -207,8 +205,12 @@ uv run python -m backend.main
 
 ## 支持格式（当前代码实现）
 
-### 输入（拖拽/目录展开层面）
-- `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `tiff`, `tif`, `heic`, `heif`, `svg`
+### 普通处理输入（转换、压缩、PDF、水印、调整、滤镜、GIF 工具）
+- `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `ico`, `tiff`, `tif`, `svg`
+
+### 信息查看输入
+- 普通处理输入格式
+- `heic`, `heif`（读取容器头部信息；当前未作为普通处理/转换输入）
 
 ### 转换输出（转换模块）
 - `jpg`, `jpeg`, `png`, `webp`, `bmp`, `tiff`, `tif`, `ico`, `avif`
@@ -222,7 +224,6 @@ uv run python -m backend.main
 
 - 默认并发 `8`，可在设置中调节 `1-32`。
 - `backend/application/image_ops.py` 基于 `multiprocessing` 调度多进程执行。
-- `backend/engines/worker.py` 保留模块预热与脚本级兼容能力。
 - 批处理任务通过 `TaskManager` 管理取消与进程回收。
 - 大图预览支持阈值控制，防止前端内存飙升。
 
@@ -236,6 +237,9 @@ uv run python -m backend.main
 |---|---|
 | `IMAGEFLOW_PREVIEW_MAX_BYTES` | 预览文件大小阈值（字节） |
 | `IMAGEFLOW_PROFILE=1` | 打开 Python 侧性能/能力检测日志 |
+| `IMAGEFLOW_SETTINGS_FILE` | 测试或特殊环境覆盖设置文件路径，必须指向已存在目录下的 `.json` 文件 |
+| `IMAGEFLOW_FRONTEND_URL` | 开发模式下指定 pywebview 加载的前端地址 |
+| `IMAGEFLOW_DEBUG_TRACEBACK=1` | 调试模式下允许后端错误响应包含 traceback |
 
 ### 全局设置（UI）
 
@@ -296,7 +300,7 @@ npm run build
 
 ### 1. 启动时找不到 Python
 - 先执行 `uv sync` 创建 `.venv`
-- 或显式设置 `IMAGEFLOW_PYTHON_EXE` 为 Python 3 路径
+- 从仓库根目录使用 `uv run python -m backend.main` 或 `npm run dev` 启动，确保使用 uv 管理的 Python 环境
 
 ### 2. 找不到 Python 脚本目录
 - 检查 `backend/engines` 是否完整

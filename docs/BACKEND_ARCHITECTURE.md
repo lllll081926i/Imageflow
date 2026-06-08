@@ -1,419 +1,270 @@
 # ImageFlow Backend Architecture
 
-## Overview
+## 概览
 
-ImageFlow backend is built using **Go** as the main application layer and **Python (Pillow)** as the image processing engine. This hybrid architecture leverages Go's excellent concurrency and performance for task scheduling, while Python's rich ecosystem (Pillow, reportlab) handles actual image processing.
+ImageFlow 当前采用 **React 前端 + Python 后端 + pywebview 桌面宿主**。后端不再包含 Go/Wails 层；前端通过 pywebview 的 `js_api` 调用 `backend.api.DesktopAPI`，后端再由应用层调度 `backend/engines/` 中的图像处理引擎。
 
-## Architecture Diagram
+核心目标：
 
-```
+- 保持桌面 API 调用面稳定，兼容前端现有绑定。
+- 将窗口宿主、API 编排、路径规则、设置存储、图像引擎和发布构建分层。
+- 对批量任务使用受控并发，避免大图处理时过度占用 CPU 和内存。
+- 所有 Python 依赖由 `uv` 管理，确保开发、测试、发布使用一致环境。
+
+## 架构图
+
+```text
 ┌─────────────────────────────────────────────────────────────┐
-│                     Wails v3 Framework                     │
-│                  (Go <-> Frontend Bridge)                   │
-└─────────────────────────────────────────────────────────────┘
-                               ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Go Application Layer                      │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              App (main.go, app.go)                   │  │
-│  │  - Exposes methods to frontend via Wails             │  │
-│  │  - Manages service lifecycle                         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                           ↓                               │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │                  Service Layer                        │  │
-│  │  - ConverterService    (Format conversion)           │  │
-│  │  - CompressorService   (Image compression)            │  │
-│  │  - PDFGeneratorService (PDF generation)               │  │
-│  │  - GIFSplitterService  (GIF splitting)              │  │
-│  │  - InfoViewerService  (Image metadata)              │  │
-│  │  - WatermarkService   (Watermark application)        │  │
-│  │  - AdjusterService    (Image adjustments)            │  │
-│  │  - FilterService      (Filter application)            │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                           ↓                               │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │                  Utility Layer                        │  │
-│  │  - PythonExecutor (Go-Python communication)         │  │
-│  │  - Logger (Logging infrastructure)                  │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                               ↓
-                    Standard I/O (Pipes)
-                               ↓
-┌─────────────────────────────────────────────────────────────┐
-│                 Python Processing Engine                    │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              CLI-based Scripts                        │  │
-│  │  - converter.py      (Format conversion)            │  │
-│  │  - compressor.py     (Image compression)            │  │
-│  │  - pdf_generator.py (PDF generation)                │  │
-│  │  - gif_splitter.py  (GIF splitting)                │  │
-│  │  - info_viewer.py   (Image metadata)                │  │
-│  │  - watermark.py     (Watermark application)          │  │
-│  │  - adjuster.py      (Image adjustments)            │  │
-│  │  - filter.py        (Filter application)            │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                           ↓                               │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │              Python Libraries                        │  │
-│  │  - Pillow      (Core image processing)               │  │
-│  │  - reportlab   (PDF generation)                     │  │
-│  │  - piexif     (EXIF manipulation)                  │  │
-│  └──────────────────────────────────────────────────────┘  │
+│                   React + TypeScript Frontend                │
+│  components / runtime / types / Vite build output            │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ pywebview js_api
+┌───────────────────────────────▼─────────────────────────────┐
+│                         pywebview Host                       │
+│  backend/main.py                                              │
+│  backend/host/window.py                                       │
+│  - create_window                                              │
+│  - frontend entry resolution                                  │
+│  - file drop dispatch                                         │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ method calls
+┌───────────────────────────────▼─────────────────────────────┐
+│                         Desktop API                          │
+│  backend/api/desktop_api.py                                   │
+│  - settings                                                   │
+│  - dialogs                                                    │
+│  - path expansion and output path resolving                   │
+│  - operation methods exposed to frontend                      │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ orchestration
+┌───────────────────────────────▼─────────────────────────────┐
+│                       Application Layer                      │
+│  backend/application/task_manager.py                          │
+│  backend/application/image_ops.py                             │
+│  backend/application/preview.py                               │
+│  - cancellation state                                         │
+│  - multiprocessing worker lifecycle                           │
+│  - preview generation                                         │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ allow-listed engine loading
+┌───────────────────────────────▼─────────────────────────────┐
+│                      Image Processing Engines                │
+│  backend/engines/*.py                                         │
+│  - converter / compressor / gif_splitter                      │
+│  - pdf_generator / watermark / adjuster / filter              │
+│  - metadata_tool / info_viewer / subtitle_stitcher            │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                Pillow / ReportLab / piexif / exifread        │
+│                         Local File System                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Key Design Decisions
+## 分层职责
 
-### 1. Go as Orchestrator, Python as Worker
+### 宿主层
 
-**Why?**
-- Go provides excellent concurrency (goroutines, channels) for batch processing
-- Go's type system and compiled nature ensure reliability
-- Python's Pillow library has decades of optimization (C/C++ cores)
-- Avoids reinventing the wheel - Pillow handles all edge cases
+`backend/main.py` 是桌面入口：
 
-**Trade-offs:**
-- ✅ Fast development (use existing Python libraries)
-- ✅ Proven reliability (Pillow is battle-tested)
-- ✅ High concurrency (Go handles parallel tasks)
-- ⚠️ Process overhead (Go → Python communication)
-- ⚠️ Dependency on Python installation
+- 调用 `multiprocessing.freeze_support()` 支持 Windows 打包运行。
+- 创建 frameless pywebview 窗口。
+- 通过 `build_window_api()` 将 `DesktopAPI` 暴露给前端。
+- 调用 `configure_window()` 注册拖拽和窗口状态事件。
 
-### 2. JSON over Standard I/O
+`backend/host/window.py` 负责：
 
-**Why?**
-- Language-agnostic communication
-- Easy debugging (can test Python scripts independently)
-- No need for complex IPC mechanisms
-- Minimal overhead for typical image processing workloads
+- 解析前端入口：优先使用显式 URL 或 `IMAGEFLOW_FRONTEND_URL`，否则回退到 `frontend/dist/index.html`。
+- 注册 pywebview DOM 拖拽事件，将本地文件路径转发为 `__imageflow_file_drop__` 事件。
+- 同步窗口最大化、恢复、最小化状态。
 
-**Data Flow:**
+### API 层
+
+`backend/api/desktop_api.py` 是前端调用面的稳定边界。它负责：
+
+- 将前端 payload 中的路径字段标准化。
+- 调用设置存储、系统对话框、字体列表和预览生成。
+- 为转换、压缩、PDF、GIF、水印、调整、滤镜、元数据等操作选择对应引擎。
+- 对批处理调用 `execute_engine_batch()`，对单文件操作调用 `execute_engine()`。
+- 提供 PascalCase 方法，兼容历史 Wails 风格绑定名称。
+
+### 应用层
+
+`TaskManager` 保存任务 ID、取消标记、当前任务和已挂载子进程。取消逻辑会先 `terminate()`，等待超时后再 `kill()`。
+
+`image_ops.py` 管理 multiprocessing 生命周期：
+
+- 单任务：每次启动一个子进程，结果通过 `Queue` 返回。
+- 批处理：按 `max_concurrency` 启动有限数量 worker，从任务队列取 payload，按原始索引回填结果。
+- 所有队列都在 `finally` 中关闭并 `join_thread()`，避免文件描述符和 feeder 线程泄漏。
+- worker 启动失败时清理已启动进程，避免半启动状态残留。
+
+`preview.py` 生成前端预览图：
+
+- 使用 `IMAGEFLOW_PREVIEW_MAX_BYTES` 限制预览输入大小。
+- 将大图缩略到 `1280` 边以内并输出 JPEG data URL。
+- 通过引擎加载器复用 SVG 打开逻辑。
+
+### 领域与基础设施
+
+`backend/domain/paths.py` 集中处理：
+
+- 支持的输入扩展名。
+- 用户路径基础校验和标准化。
+- 目录拖拽展开。
+- 输出路径冲突重命名。
+- Windows 系统字体列表。
+
+`backend/infrastructure/settings_store.py` 负责：
+
+- 从系统用户配置目录读取 `imageflow/settings.json`。
+- 支持测试或特殊环境通过 `IMAGEFLOW_SETTINGS_FILE` 覆盖设置路径。
+- 保存前规范化设置字段。
+- 使用临时文件加 `os.replace()` 原子写入，降低设置文件损坏风险。
+
+`backend/infrastructure/engine_loader.py` 负责：
+
+- 维护允许加载的引擎白名单。
+- 从 `backend/engines/<module>.py` 精确文件路径加载模块，避免被 `sys.path` 中同名模块遮蔽。
+- 校验引擎存在 `process()` 且返回 `dict`。
+
+## 数据流
+
+单文件转换的典型链路：
+
+```text
+用户在前端选择文件
+  ↓
+DesktopAPI.Convert(payload)
+  ↓
+_normalize_payload_paths(payload)
+  ↓
+_run_operation(lambda: execute_engine("converter", payload, task_manager))
+  ↓
+multiprocessing.Process(target=_process_worker)
+  ↓
+invoke_engine_process("converter", payload)
+  ↓
+backend/engines/converter.py::process()
+  ↓
+Pillow / SVG 渲染后端 / 本地文件写入
+  ↓
+Queue 返回 {"success": true, "output_path": "..."}
 ```
-Go → JSON → stdin → Python script → stdout → JSON → Go
+
+批处理转换的典型链路：
+
+```text
+DesktopAPI.ConvertBatch(payloads)
+  ↓
+读取 AppSettings.max_concurrency
+  ↓
+execute_engine_batch("converter", payloads, settings, task_manager)
+  ↓
+创建 task_queue / result_queue
+  ↓
+启动 N 个 worker 进程
+  ↓
+worker 重复处理队列任务并回填原始 index
+  ↓
+按输入顺序返回结果列表
 ```
 
-### 3. Service-Based Architecture
+## 错误处理约定
 
-**Why?**
-- Clear separation of concerns
-- Easy to test individual services
-- Simple to add new features
-- Consistent error handling patterns
-
-## Directory Structure
-
-```
-backend/
-├── main.go              # Application entry point
-├── app.go               # Main application struct and Wails bindings
-├── go.mod               # Go module dependencies
-├── models/
-│   └── types.go         # Data structures for all operations
-├── services/
-│   ├── converter.go      # Format conversion service
-│   ├── compressor.go     # Image compression service
-│   ├── pdf_generator.go  # PDF generation service
-│   ├── gif_splitter.go  # GIF splitting service
-│   ├── info_viewer.go   # Image information service
-│   ├── watermark.go      # Watermark service
-│   ├── adjuster.go      # Image adjustment service
-│   └── filter.go        # Filter service
-└── utils/
-    ├── python_executor.go # Python script execution
-    └── logger.go        # Logging utilities
-
-python/
-├── converter.py         # Format conversion script
-├── compressor.py        # Image compression script
-├── pdf_generator.py     # PDF generation script
-├── gif_splitter.py      # GIF splitting script
-├── info_viewer.py       # Image information script
-├── watermark.py         # Watermark script
-├── adjuster.py         # Image adjustment script
-├── filter.py           # Filter script
-└── requirements.txt     # Python dependencies
-```
-
-## Communication Protocol
-
-### Request Format (Go → Python)
-
-All Python scripts accept JSON input via `stdin`:
-
-```json
-{
-  "input_path": "/path/to/image.jpg",
-  "output_path": "/path/to/output.jpg",
-  "format": "png",
-  "quality": 95,
-  ...
-}
-```
-
-### Response Format (Python → Go)
-
-All Python scripts return JSON output via `stdout`:
+后端对前端返回的数据以字典为主：
 
 ```json
 {
   "success": true,
-  "input_path": "/path/to/image.jpg",
-  "output_path": "/path/to/output.jpg",
-  "file_size": 102400,
-  ...
+  "output_path": "D:/Images/out.png"
 }
 ```
 
-### Error Handling
-
-Errors are returned with a descriptive message:
+失败时：
 
 ```json
 {
   "success": false,
-  "error": "File not found: /path/to/image.jpg"
+  "error": "[BAD_INPUT] 路径不能为空"
 }
 ```
 
-## Concurrency Model
+约定：
 
-### Batch Processing
+- 入口 API 尽量捕获异常并返回 `success: false`。
+- 引擎内部使用带前缀的错误码表达可识别错误，例如 `[BAD_INPUT]`、`[NOT_FOUND]`、`[UNSUPPORTED_FORMAT]`、`[PY_CANCELLED]`。
+- worker 默认不返回 traceback；需要调试时可设置 `IMAGEFLOW_DEBUG_TRACEBACK=1`。
 
-All services implement batch processing with goroutines:
+## 并发与性能
 
-```go
-// Process images concurrently
-for i, req := range requests {
-    go func(idx int, r models.ConvertRequest) {
-        result, err := s.Convert(r)
-        resultChan <- result
-    }(i, req)
-}
+- 默认并发数为 `8`，保存设置时限制在 `1-32`。
+- 单文件操作独立子进程执行，避免图像库异常影响宿主进程。
+- 批处理复用固定数量 worker，减少一次一个进程的启动成本。
+- 预览生成有文件大小阈值和缩略尺寸上限，避免前端渲染大图时内存过高。
+- SVG 转位图优先尝试 CairoSVG，其次 svglib/reportlab，最后尝试系统 Inkscape。
 
-// Collect results
-for i := 0; i < len(requests); i++ {
-    results[i] = <-resultChan
-}
-```
+## 安全边界
 
-### Progress Updates
+当前安全策略：
 
-Batch operations send progress updates via channels:
+- 引擎加载使用白名单，并按精确文件路径加载。
+- 用户路径拒绝空路径、空字符和以 `..` 开头的相对父级跳转。
+- pywebview 文件拖拽 payload 使用 JSON 序列化后分发给前端。
+- 设置保存使用原子替换，降低中断写入导致的配置损坏。
+- SVG 内在尺寸解析遇到 `DOCTYPE` 或 `ENTITY` 时回退到根标签属性解析，避免直接解析不安全声明。
 
-```go
-progressChan := make(chan *models.ProgressUpdate)
-go func() {
-    for progress := range progressChan {
-        app.EmitEvent("convert_progress", progress)
-    }
-}()
-```
+仍需持续关注：
 
-## Performance Considerations
+- 绝对路径目前按桌面工具语义允许访问本机文件；如未来需要沙箱，应在 `domain/paths.py` 增加统一允许目录策略。
+- 部分文档和历史类型仍保留 Wails 兼容命名，这是前端兼容面，不代表存在 Go 后端。
 
-### Optimizations
+## 发布架构
 
-1. **Concurrent Processing**: Goroutines handle parallel image operations
-2. **Efficient JSON**: Compact JSON structure minimizes serialization overhead
-3. **Python Optimization**: Pillow uses optimized C/C++ code
-4. **Streaming**: Large files are handled efficiently by Pillow
-
-### Bottlenecks
-
-1. **Process Creation**: Each Python script execution creates a new process
-   - **Mitigation**: Batch operations reuse processes when possible
-   
-2. **JSON Serialization**: Large images with extensive metadata
-   - **Mitigation**: Compact histograms (normalized 0-100 range)
-
-3. **Memory Usage**: Processing multiple large images
-   - **Mitigation**: Limit concurrent operations, use streaming
-
-## Security Considerations
-
-### Input Validation
-
-1. **File Path Validation**: Ensure paths are within allowed directories
-2. **Format Validation**: Only process supported formats
-3. **Parameter Clamping**: Validate all numeric parameters (e.g., quality 1-100)
-
-### Python Execution
-
-1. **Sandboxing**: Scripts run with restricted permissions
-2. **Input Sanitization**: All inputs are parsed via JSON (not shell injection)
-3. **Error Handling**: Graceful degradation on script failures
-
-## Extending the Backend
-
-### Adding a New Service
-
-1. **Define Data Models** in `models/types.go`
-2. **Create Service** in `services/new_feature.go`
-3. **Implement Python Script** in `python/new_feature.py`
-4. **Wire Up** in `app.go` (expose methods)
-5. **Add Dependencies** if needed (Python: `requirements.txt`, Go: `go.mod`)
-
-### Example: Adding a Resize Service
-
-1. **Model** (`models/types.go`):
-```go
-type ResizeRequest struct {
-    InputPath  string `json:"input_path"`
-    OutputPath string `json:"output_path"`
-    Width      int    `json:"width"`
-    Height     int    `json:"height"`
-    MaintainAR  bool   `json:"maintain_ar"`
-}
-```
-
-2. **Service** (`services/resizer.go`):
-```go
-type ResizerService struct {
-    executor *utils.PythonExecutor
-    logger   *utils.Logger
-}
-
-func (s *ResizerService) Resize(req models.ResizeRequest) (models.ResizeResult, error) {
-    // Implementation
-}
-```
-
-3. **Python Script** (`python/resizer.py`):
-```python
-def resize(input_path, output_path, width, height, maintain_ar):
-    img = Image.open(input_path)
-    # Resize logic
-    img.save(output_path)
-```
-
-4. **App Binding** (`app.go`):
-```go
-func (a *App) Resize(req models.ResizeRequest) (models.ResizeResult, error) {
-    return a.resizerService.Resize(req)
-}
-```
-
-## Testing
-
-### Unit Tests
-
-Each service should have unit tests for:
-- Input validation
-- Error handling
-- Data transformation
-
-### Integration Tests
-
-Test the complete flow:
-- Go → Python communication
-- File I/O operations
-- Batch processing
-
-### Manual Testing
-
-Use Python scripts directly:
+发布构建由根目录 `package.json` 脚本驱动：
 
 ```bash
-# Test converter
-echo '{"input_path": "test.jpg", "output_path": "test.png", "format": "png"}' | \
-  python3 python/converter.py
+npm run build:frontend
+npm run build:portable
+npm run build:installer
+npm run build:release
 ```
 
-## Logging
+`backend/packaging/release_builder.py` 执行：
 
-### Log Levels
+1. 校验 `frontend/dist/index.html` 存在且不是旧构建。
+2. 使用 PyInstaller 从 `backend/main.py` 构建 onedir 应用。
+3. 将 `frontend/dist` 和 `ico.png` 加入发布包。
+4. 收集后端运行时包和 pywebview 子模块。
+5. 便携版通过 zip 输出。
+6. 安装版通过 Inno Setup 6 输出。
 
-- **DEBUG**: Detailed information for debugging
-- **INFO**: General informational messages
-- **WARN**: Warning messages
-- **ERROR**: Error messages
-- **FATAL**: Critical errors causing application termination
+## 测试策略
 
-### Log Files
-
-Logs are stored in the `logs/` directory with timestamps:
-- `imageflow_20260113_153045.log`
-
-### Log Format
-
-```
-[2026-01-13 15:30:45.123] [INFO] Starting image conversion: test.jpg -> test.png
-[2026-01-13 15:30:45.456] [DEBUG] Resizing from 1920x1080 to 1280x720
-[2026-01-13 15:30:45.789] [INFO] Conversion completed successfully
-```
-
-## Deployment
-
-### Requirements
-
-- Go 1.21+
-- Python 3.11+
-- Required Python packages (see `python/requirements.txt`)
-
-### Building
+当前测试命令：
 
 ```bash
-# Build Go backend
-cd backend
-go build -o imageflow-backend
-
-# Install Python dependencies
-cd python
-pip install -r requirements.txt
+uv run python -m unittest discover -s backend/tests -v
+uv run python -m unittest discover -s backend/tests/engines -v
+npm --prefix frontend run test
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
 ```
 
-### Running
+覆盖重点：
 
-```bash
-# Run backend (desktop mode)
-./imageflow-backend
+- `backend/tests/test_desktop_api.py`：前端 API 行为、路径解析、设置、预览和取消竞态。
+- `backend/tests/test_task_manager.py`：任务状态、取消、子进程清理和队列关闭。
+- `backend/tests/test_engine_bridge.py`：API 到引擎的真实桥接、批处理顺序、引擎加载安全。
+- `backend/tests/engines/`：各图像处理引擎的格式、边界和回归行为。
+- `frontend/**/*.test.ts`：前端运行时兼容层、GIF 辅助逻辑和错误映射。
 
-# Run backend (development server mode)
-./imageflow-backend -server
-```
+## 扩展现有能力的约束
 
-## Troubleshooting
+当前维护目标是不新增功能。修复或优化现有能力时应遵守：
 
-### Common Issues
-
-1. **Python not found**
-   - Ensure Python 3.11+ is in PATH
-   - Or bundle Python with the application
-
-2. **Script execution failed**
-   - Check logs for detailed error messages
-   - Verify Python dependencies are installed
-   - Test script manually via command line
-
-3. **Memory errors**
-   - Reduce batch size
-   - Process images sequentially instead of concurrently
-   - Check for memory leaks in Python scripts
-
-4. **Slow performance**
-   - Verify Pillow is using optimized backends (libjpeg, etc.)
-   - Reduce image sizes if processing very large images
-   - Check system resources (CPU, memory, disk I/O)
-
-## Future Improvements
-
-### Completed (v1.1.0)
-
-1. ✅ **Worker Pool**: Implemented controlled concurrency with max 10 workers
-2. ✅ **Timeout Control**: Added 60-second timeout for Python script execution
-3. ✅ **Input Validation**: Comprehensive validation for all inputs
-4. ✅ **Python Version Check**: Automatic verification of Python 3.11+ requirement
-5. ✅ **Non-blocking Progress**: Progress updates no longer block processing
-6. ✅ **Graceful Shutdown**: Proper resource cleanup on application exit
-
-See [IMPROVEMENTS.md](IMPROVEMENTS.md) for detailed information.
-
-### Planned
-
-1. **Caching**: Cache frequently processed images
-2. **GPU Acceleration**: Use CUDA/OpenCL for supported operations
-3. **Process Pool**: Reuse Python processes for batch operations (30-50% performance gain)
-4. **Streaming API**: Support real-time streaming for large files
-5. **Compression Pipeline**: Apply multiple operations in a single pass
+- 优先补充失败测试，再修改实现。
+- 不改变前端已使用的 DesktopAPI 方法名和 payload 字段，除非同步修改兼容层和测试。
+- 不绕过 `engine_loader.py` 加载引擎。
+- 图像处理引擎新增共享逻辑时优先抽到现有模块内的窄函数，避免引入大范围架构重排。
+- 修改发布流程时同步更新 `package.json`、`README.md` 和本文件中的命令说明。

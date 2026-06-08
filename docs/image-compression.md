@@ -1,182 +1,122 @@
-# Image Compression Feature Documentation
+# 图片压缩模块说明
 
-## Overview
+## 概览
 
-The Image Compression feature provides advanced image optimization using specialized compression libraries. It supports multiple compression levels with automatic algorithm selection based on image format and quality requirements.
+图片压缩功能由当前 Python 后端直接提供，前端通过 pywebview 暴露的 `DesktopAPI.Compress` / `DesktopAPI.CompressBatch` 调用 `backend/engines/compressor.py`。依赖由根目录 `pyproject.toml` 和 `uv.lock` 管理，不再经过 Go/Wails 后端，也不依赖独立 `requirements.txt`。
 
-## Supported Compression Libraries
+压缩模块支持单图和批量处理，批量任务由 `backend/application/image_ops.py` 使用多进程调度，最大并发由全局设置 `max_concurrency` 控制。
 
-The implementation uses three high-quality compression libraries:
+## 压缩库
 
-1. **MoZJPEG** - For JPEG compression with quality control and lossless optimization
-2. **PNGQuant (imagequant)** - For lossy PNG compression with palette optimization
-3. **OxiPNG** - For lossless PNG optimization and metadata stripping
+当前实现会按图片格式和可用依赖选择压缩路径：
 
-## Supported Image Formats
+1. `mozjpeg-lossless-optimization`：JPEG 无损优化。
+2. `imagequant`：PNG 有损量化压缩。
+3. `pyoxipng`：PNG 无损优化和 chunk 清理。
+4. Pillow：JPEG、PNG、WEBP 以及兜底保存路径。
 
-- **JPEG/JPG** - Optimized using MoZJPEG for both lossy and lossless compression
-- **PNG** - Uses PNGQuant for lossy compression or OxiPNG for lossless optimization
-- **WEBP** - Uses Pillow's WEBP encoder with quality control
+如果高级压缩库不可用，代码会退回到 Pillow 路径并返回可处理结果或结构化错误。
 
-## Compression Levels
+## 支持格式
 
-The system provides 5 compression levels, mapped to integer values 1-5:
+- `JPEG/JPG`：支持无损优化、质量压缩、渐进式保存和可选元数据剥离。
+- `PNG`：支持 OxiPNG 无损优化、imagequant 有损压缩和可选元数据剥离。
+- `WEBP`：使用 Pillow WEBP 编码器，支持无损和有损压缩。
+- `BMP`、`TIFF/TIF`、`AVIF`、`ICO`：会走 Pillow 兜底保存逻辑。
+- `SVG`、`GIF/APNG` 不走普通图片压缩：SVG 请使用格式转换输出为位图，GIF/APNG 请使用 GIF 工具。
 
-| Level | Name | Quality | Description |
-|-------|------|---------|-------------|
-| 1 | Lossless | 100% | No quality loss, uses lossless algorithms |
-| 2 | Light | 90% | Minimal quality loss, ~10% reduction |
-| 3 | Medium | 75% | Balanced quality/compression, ~25% reduction |
-| 4 | Heavy | 60% | Significant compression, ~40% reduction |
-| 5 | Extreme | 40% | Maximum compression, ~60% reduction |
+## 压缩等级
 
-### Algorithm Selection by Level and Format
+| 等级 | 名称 | 质量基准 | 说明 |
+|---|---|---|---|
+| `1` | Lossless | 100% | 优先使用无损优化 |
+| `2` | Light | 90% | 轻量压缩 |
+| `3` | Medium | 75% | 默认平衡压缩 |
+| `4` | Heavy | 60% | 更高压缩率 |
+| `5` | Extreme | 40% | 最大压缩倾向 |
 
-#### JPEG Images
-- **Level 1 (Lossless)**: Uses MoZJPEG lossless optimization on existing JPEGs, or saves at 100% quality for new images
-- **Levels 2-5**: Uses MoZJPEG with progressive JPEG encoding and optimized Huffman tables
+非法等级会回退为 `Medium`。
 
-#### PNG Images
-- **Level 1 (Lossless)**: Uses OxiPNG for lossless optimization (level 4, safe metadata stripping)
-- **Levels 2-5**: Uses imagequant for lossy compression with adaptive quality ranges:
-  - Level 2: 80-100% quality range
-  - Level 3: 65-80% quality range
-  - Level 4: 40-65% quality range
-  - Level 5: 20-40% quality range
+## API 契约
 
-#### WEBP Images
-- **Level 1 (Lossless)**: Uses lossless WEBP encoding
-- **Levels 2-5**: Uses lossy WEBP with quality percentages as above
+前端调用面：
 
-## API Usage
+- `Compress(payload)`
+- `CompressBatch(payloads)`
 
-### Backend (Go) API
+请求字段：
 
-The compression is exposed through a Go backend using Wails framework.
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `input_path` | `string` | 输入图片路径 |
+| `output_path` | `string` | 输出图片路径 |
+| `level` | `number` | 压缩等级，范围 `1-5` |
+| `engine` | `string` | 可选压缩引擎偏好 |
+| `target_size_kb` | `number` | 可选目标大小，未设置或 `0` 表示不限制 |
+| `strip_metadata` | `boolean` | 是否剥离元数据 |
 
-#### Request/Response Structures
+响应字段：
 
-**CompressRequest**:
-- `input_path` (string): Path to input image file
-- `output_path` (string): Path where compressed image will be saved
-- `level` (int): Compression level (1-5)
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `success` | `boolean` | 是否成功 |
+| `input_path` | `string` | 输入路径 |
+| `output_path` | `string` | 输出路径 |
+| `original_size` | `number` | 原始字节数 |
+| `compressed_size` | `number` | 输出字节数 |
+| `compression_rate` | `number` | 压缩比例 |
+| `compression_level` | `number` | 实际使用等级 |
+| `warning` | `string` | 可选警告，例如目标大小未达成 |
+| `error` | `string` | 失败原因 |
 
-**CompressResult**:
-- `success` (bool): true if compression succeeded
-- `input_path` (string): Original input path
-- `output_path` (string): Output path where file was saved
-- `original_size` (int64): Original file size in bytes
-- `compressed_size` (int64): Compressed file size in bytes
-- `compression_rate` (float64): Percentage saved (0-100)
-- `compression_level` (int): Level used (1-5)
-- `error` (string): Error message if success=false
+## 错误处理
 
-#### Single and Batch Operations
+常见错误包括：
 
-The API supports both single image compression and batch processing of multiple images concurrently.
+1. 输入或输出路径缺失。
+2. 输入文件不存在。
+3. 图片格式不受当前编码路径支持。
+4. 输出目录无写入权限。
+5. 目标大小过低，无法在当前格式和质量范围内达成。
 
-### Frontend (TypeScript/React) API
+错误通过 `{ success: false, error: string }` 返回给前端；批量处理中单项失败不会阻断其他项，前端会按单项结果展示失败通知。
 
-The frontend calls the compression API through Wails bindings, supporting both individual and batch compression operations.
+## 性能与内存
 
-### Python Script Interface
+- 压缩引擎会完整打开图片，超大图片会占用较多内存。
+- 批量处理会按 `max_concurrency` 开多个进程，过高并发可能增加内存峰值。
+- `target_size_kb` 会触发质量搜索，处理时间会比普通等级压缩更长。
+- 元数据剥离会额外读写文件，但可减少隐私信息和部分文件体积。
 
-The backend communicates with a Python script via JSON stdin/stdout interface.
+## 依赖安装
 
-#### Input/Output JSON Format
+使用 uv 同步依赖：
 
-Input expects a JSON object with `input_path`, `output_path`, and `level` fields. Output returns a JSON object with compression results or error information.
-
-## Error Handling
-
-### Common Error Scenarios
-
-1. **File Not Found**: Input file does not exist
-2. **Unsupported Format**: Image format not supported
-3. **Permission Denied**: Cannot write to output path
-4. **Invalid Compression Level**: Automatically clamped to valid range (1-5)
-
-### Error Recovery
-
-- Invalid levels are automatically corrected
-- File I/O errors are caught and reported
-- Library failures fall back to basic Pillow compression
-
-## Performance Considerations
-
-### Compression Speed vs Quality Trade-offs
-
-| Level | Typical Speed | Quality Loss | Use Case |
-|-------|---------------|--------------|----------|
-| 1 (Lossless) | Slowest | None | Archival, medical images |
-| 2 (Light) | Fast | Minimal | Web images, slight optimization |
-| 3 (Medium) | Medium | Moderate | General web use, social media |
-| 4 (Heavy) | Fast | High | Thumbnails, mobile apps |
-| 5 (Extreme) | Fastest | Very High | Icons, very small previews |
-
-### Memory Usage
-
-- Images are loaded entirely into memory
-- Large images (>100MB) may cause memory issues
-- Automatic garbage collection after each compression
-
-### Library Availability
-
-The system gracefully degrades if libraries are not available, falling back to Pillow for basic compression.
-
-## Dependencies
-
-### Python Requirements
-
-```txt
-# Core image processing
-Pillow>=10.0.0
-
-# Advanced compression libraries
-mozjpeg-lossless-optimization>=1.1.0  # JPEG lossless optimization
-imagequant>=1.0.0                     # PNG lossy compression
-pyoxipng>=1.0.0                       # PNG lossless optimization
-
-# Other utilities
-loguru>=0.7.0                         # Enhanced logging
-typing-extensions>=4.0.0              # Type hints
+```bash
+uv sync
 ```
 
-## Testing
+发布构建前同步构建依赖：
 
-### Unit Tests
+```bash
+uv sync --group build
+```
 
-The compression functionality includes comprehensive tests covering all compression levels, supported formats, error conditions, and library availability fallbacks.
+相关依赖在 `pyproject.toml` 中声明，锁定版本记录在 `uv.lock`。
 
-### Integration Tests
+## 测试
 
-Tests verify end-to-end compression workflows and API integration.
+压缩模块测试位于 `backend/tests/engines/test_compressor.py`。常用验证命令：
 
-## Limitations
+```bash
+npm run test:backend:engines
+```
 
-1. **Large Images**: Very large images (>500MB) may cause memory issues
-2. **Format Conversion**: Only optimizes within the same format (JPEG→JPEG, PNG→PNG)
-3. **Metadata**: EXIF data is preserved but not optimized
-4. **Animation**: GIF/WEBP animations are treated as single frames
-5. **Color Profiles**: ICC profiles are maintained but may be stripped in lossless PNG optimization
+完整本地验证还应运行：
 
-## Future Enhancements
-
-Potential improvements include progressive loading support, custom quality ranges, batch processing optimizations, GPU acceleration, and advanced metadata handling.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Library Not Found**: Ensure all Python dependencies are installed
-2. **Permission Errors**: Check write permissions on output directory
-3. **Memory Errors**: Reduce image size or use lower quality levels
-4. **Unsupported Format**: Check that input format is JPEG, PNG, or WEBP
-
-### Debug Mode
-
-Enable detailed logging to troubleshoot issues.
-
-### Performance Monitoring
-
-Monitor compression ratios and processing times for optimization.
+```bash
+npm run test:backend
+npm --prefix frontend run test
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```

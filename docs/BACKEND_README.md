@@ -1,348 +1,180 @@
 # ImageFlow Backend
 
-ImageFlow backend is a high-performance image processing system built with **Go** and **Python**. It provides 8 core image processing features through a clean, maintainable API designed for integration with Wails v3 applications.
+ImageFlow 当前后端是 **Python + pywebview** 桌面宿主，不再使用 Go/Wails 后端。Python 代码同时负责窗口宿主、前端 API、任务编排、进程管理和图像处理引擎调用；依赖由根目录 `pyproject.toml` 和 `uv.lock` 管理。
 
-## 🚀 Features
+## 当前能力
 
-- **Image Format Conversion**: Convert between 13+ input formats and 7+ output formats
-- **Image Compression**: Lossy, lossless, and smart compression with automatic optimization
-- **PDF Generation**: Create PDFs from multiple images with flexible layouts
-- **GIF Splitting**: Extract frames from animated GIFs with range selection
-- **Image Information**: View EXIF metadata, basic info, and histograms
-- **Watermarking**: Add text or image watermarks with flexible positioning
-- **Image Adjustments**: Rotate, flip, and adjust brightness/contrast/saturation/hue
-- **Image Filters**: 12+ filters including blur, sharpen, vintage, and artistic effects
+- 格式转换：JPG、PNG、WEBP、AVIF、TIFF、BMP、ICO 等输出。
+- 图片压缩：多档压缩、目标体积、元数据剥离。
+- PDF 生成：多图合并、页面尺寸、方向、边距和布局。
+- GIF 工具：拆帧、倒放、变速、压缩、格式互转。
+- 信息查看：基础信息、EXIF、直方图和多格式元数据解析。
+- 元数据处理：EXIF 编辑和隐私清理。
+- 图片水印：文字/图片水印、九宫格定位、平铺、混合与阴影。
+- 图片调整与滤镜：旋转、翻转、裁剪、色彩调整和预设滤镜。
 
-## 📋 Requirements
+## 运行要求
 
-- **Go**: 1.21 or higher
-- **Python**: 3.11 or higher
-- **Python Libraries**:
-  - Pillow >= 10.0.0
-  - reportlab >= 4.0.0
-  - piexif >= 1.1.3
+- Python `>=3.10`
+- uv
+- Node.js LTS
+- Windows 桌面运行时依赖 pywebview；发布构建依赖 PyInstaller，安装包构建依赖 Inno Setup 6。
 
-## 🏗️ Architecture
+Python 依赖以 `uv sync` 安装，不使用 `backend/go.mod` 或 `python/requirements.txt`。
 
-ImageFlow uses a hybrid architecture that combines the strengths of both Go and Python:
+## 目录职责
 
-```
-Frontend (React) → Wails v3 Bridge → Go Backend → Python Scripts → Pillow Library
-```
-
-### Why This Architecture?
-
-- **Go**: Handles concurrency, task scheduling, and provides a type-safe API
-- **Python**: Leverages the mature, optimized Pillow library for actual image processing
-- **Communication**: JSON over Standard I/O for language-agnostic, debuggable protocol
-
-## 📁 Project Structure
-
-```
-imageflow/
-├── backend/
-│   ├── main.go              # Application entry point
-│   ├── app.go               # Main application and Wails bindings
-│   ├── go.mod               # Go dependencies
-│   ├── models/
-│   │   └── types.go         # Data structures
-│   ├── services/             # 8 service modules
-│   │   ├── converter.go
-│   │   ├── compressor.go
-│   │   ├── pdf_generator.go
-│   │   ├── gif_splitter.go
-│   │   ├── info_viewer.go
-│   │   ├── watermark.go
-│   │   ├── adjuster.go
-│   │   └── filter.go
-│   └── utils/
-│       ├── python_executor.go  # Python script execution
-│       └── logger.go         # Logging utilities
-│
-├── python/                  # Python processing scripts
-│   ├── converter.py
-│   ├── compressor.py
-│   ├── pdf_generator.py
-│   ├── gif_splitter.py
-│   ├── info_viewer.py
-│   ├── watermark.py
-│   ├── adjuster.py
-│   ├── filter.py
-│   └── requirements.txt
-│
-└── docs/
-    ├── BACKEND_ARCHITECTURE.md  # Detailed architecture docs
-    └── SERVICES_GUIDE.md        # Service API documentation
+```text
+backend/
+├── main.py                  # pywebview 桌面入口
+├── app.py                   # 创建 DesktopAPI 实例
+├── api/desktop_api.py       # 暴露给前端的桌面 API
+├── application/             # 任务管理、进程调度、预览编排
+├── contracts/               # 设置等共享数据结构
+├── domain/                  # 路径、扩展名和输出命名规则
+├── engines/                 # 图像处理引擎
+├── host/                    # 窗口创建、拖拽桥接、前端入口解析
+├── infrastructure/          # 设置存储、对话框、引擎加载、窗口操作
+├── packaging/               # PyInstaller / Inno 发布构建
+└── tests/                   # 后端与引擎回归测试
 ```
 
-## 🚦 Getting Started
+## 调用链
 
-### 1. Install Dependencies
-
-**Go dependencies:**
-```bash
-cd backend
-go mod download
+```text
+React UI
+  ↓
+frontend/runtime/desktopRuntime.ts
+  ↓
+pywebview js_api
+  ↓
+backend/api/DesktopAPI
+  ↓
+backend/application/image_ops.py
+  ↓
+backend/infrastructure/engine_loader.py
+  ↓
+backend/engines/*.py
+  ↓
+Pillow / ReportLab / piexif / exifread / 文件系统
 ```
 
-**Python dependencies:**
-```bash
-cd python
-pip install -r requirements.txt
-```
-
-### 2. Build the Backend
+## 开发命令
 
 ```bash
-cd backend
-go build -o imageflow-backend
+# 安装 Python 依赖
+uv sync
+
+# 安装前端依赖
+npm --prefix frontend install
+
+# 同时启动 Vite 和 pywebview 宿主
+npm run dev
+
+# 仅运行发布态后端入口，需先构建前端 dist
+npm run build:frontend
+uv run python -m backend.main
 ```
 
-### 3. Run the Backend
+`npm run dev` 会启动前端 Vite 服务，并通过 `IMAGEFLOW_FRONTEND_URL` 把开发服务器地址传给 Python 宿主。`scripts/dev.mjs` 会监听 `backend/**/*.py` 的宿主层变更并重启后端。
 
-**Desktop mode (with Wails):**
-```bash
-./imageflow-backend
-```
-
-**Development server mode:**
-```bash
-./imageflow-backend -server
-```
-
-## 📖 Usage
-
-### Example: Convert an Image
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/imageflow/backend/models"
-)
-
-func main() {
-    app, _ := NewApp()
-    
-    req := models.ConvertRequest{
-        InputPath:  "input.jpg",
-        OutputPath: "output.png",
-        Format:     "png",
-        Quality:    95,
-    }
-    
-    result, err := app.Convert(req)
-    if err != nil {
-        fmt.Printf("Error: %v\n", err)
-        return
-    }
-    
-    fmt.Printf("Converted %d bytes to %d bytes\n",
-        result.OriginalSize, result.FileSize)
-}
-```
-
-### Example: Batch Processing
-
-```go
-requests := []models.ConvertRequest{
-    {InputPath: "img1.jpg", OutputPath: "out1.png", Format: "png"},
-    {InputPath: "img2.jpg", OutputPath: "out2.png", Format: "png"},
-    {InputPath: "img3.jpg", OutputPath: "out3.png", Format: "png"},
-}
-
-results, err := app.ConvertBatch(requests)
-if err != nil {
-    fmt.Printf("Error: %v\n", err)
-    return
-}
-
-successCount := 0
-for _, result := range results {
-    if result.Success {
-        successCount++
-    }
-}
-
-fmt.Printf("Completed: %d/%d successful\n", successCount, len(results))
-```
-
-## 📚 Documentation
-
-- **[Backend Architecture](docs/BACKEND_ARCHITECTURE.md)**: Detailed architecture, design decisions, and implementation guide
-- **[Services Guide](docs/SERVICES_GUIDE.md)**: Complete API reference for all 8 services
-
-## 🧪 Testing
-
-### Test Python Scripts Directly
+## 测试与检查
 
 ```bash
-# Test converter
-echo '{"input_path": "test.jpg", "output_path": "test.png", "format": "png"}' | \
-  python3 python/converter.py
+# 后端主测试
+uv run python -m unittest discover -s backend/tests -v
 
-# Test compressor
-echo '{"input_path": "large.jpg", "output_path": "small.jpg", "mode": "smart"}' | \
-  python3 python/compressor.py
+# 引擎专项回归测试
+uv run python -m unittest discover -s backend/tests/engines -v
+
+# 前端单元测试
+npm --prefix frontend run test
+
+# 前端类型检查
+npm --prefix frontend run typecheck
+
+# 前端生产构建
+npm --prefix frontend run build
 ```
 
-### Test Go Services
+## 构建发布
 
-```go
-// Run service tests
-go test ./services/...
+```bash
+# 同步运行与打包依赖
+uv sync --group build
+
+# 构建前端
+npm run build:frontend
+
+# 构建便携版
+npm run build:portable
+
+# 构建安装版
+npm run build:installer
+
+# 同时构建便携版和安装版
+npm run build:release
 ```
 
-## 🔧 Configuration
+发布脚本在 `backend/packaging/release_builder.py` 中：
 
-### Logging
+- 使用 PyInstaller 从 `backend/main.py` 构建 Windows 桌面程序。
+- 将 `frontend/dist` 作为 `frontend/dist` 数据目录打包。
+- 收集 `backend.api`、`backend.application`、`backend.contracts`、`backend.domain`、`backend.engines`、`backend.host`、`backend.infrastructure` 等运行时包。
+- 安装包由 Inno Setup 6 生成；`ISCC.exe` 不在 `PATH` 时可设置 `INNO_SETUP_ISCC`。
 
-Logging is configured in `backend/main.go`:
+## 并发与取消
 
-```go
-logger, err := utils.NewLogger(utils.InfoLevel, true)
+- `TaskManager` 跟踪当前任务、取消状态和已挂载子进程。
+- 单任务通过 `execute_engine()` 启动独立子进程执行引擎。
+- 批处理通过 `execute_engine_batch()` 根据 `settings.max_concurrency` 启动有限数量 worker。
+- 取消任务时先 `terminate()`，超时后 `kill()`，并在 `finally` 中关闭 multiprocessing 队列。
+
+## 配置
+
+设置结构定义在 `backend/contracts/settings.py`，默认值包括：
+
+| 字段 | 默认值 | 说明 |
+|---|---:|---|
+| `max_concurrency` | `8` | 批处理并发数，保存时限制在 `1-32` |
+| `output_prefix` | `IF` | 输出文件前缀 |
+| `output_template` | `{prefix}{basename}` | 输出命名模板 |
+| `preserve_folder_structure` | `true` | 目录拖拽时保留相对层级 |
+| `conflict_strategy` | `rename` | 冲突时自动重命名 |
+| `default_output_dir` | 空 | 默认输出目录 |
+| `recent_input_dirs` | `[]` | 最近输入目录，最多 4 个 |
+| `recent_output_dirs` | `[]` | 最近输出目录，最多 4 个 |
+
+设置文件默认写入系统用户配置目录下的 `imageflow/settings.json`。测试或特殊环境可通过 `IMAGEFLOW_SETTINGS_FILE` 指定路径。
+
+## 故障排查
+
+### 启动后界面空白
+
+先确认前端构建存在：
+
+```bash
+npm run build:frontend
+uv run python -m backend.main
 ```
 
-Options:
-- `DebugLevel`: Verbose debug information
-- `InfoLevel`: General informational messages (default)
-- `WarnLevel`: Warning messages
-- `ErrorLevel`: Error messages only
-- `enableFile`: Enable logging to file (true/false)
+开发模式下确认 `npm run dev` 输出的 Vite 地址能访问，并且 `IMAGEFLOW_FRONTEND_URL` 是 `http://` 或 `https://` URL。
 
-### Python Detection
+### Python 依赖缺失
 
-The backend automatically detects Python in the following order:
-1. `python3`
-2. `python`
-3. Bundled Python (if available)
-
-## 🎯 Key Features
-
-### Concurrent Processing
-
-All batch operations use Go goroutines for concurrent processing:
-
-```go
-// Services automatically spawn goroutines for each item
-results, err := app.ConvertBatch(requests)
-// Images are processed in parallel
+```bash
+uv sync
+uv run python -m unittest discover -s backend/tests -v
 ```
 
-### Progress Updates
+### 打包失败
 
-Batch operations send real-time progress updates:
+- 先运行 `uv sync --group build`。
+- 确认 `frontend/dist/index.html` 是最新构建产物。
+- 构建安装版前确认 Inno Setup 6 可用，或设置 `INNO_SETUP_ISCC`。
 
-```go
-// Listen for progress events
-app.On("convert_progress", func(event *application.WailsEvent) {
-    progress := event.Data.(*models.ProgressUpdate)
-    fmt.Printf("Progress: %.1f%%\n", progress.Percentage)
-})
-```
+### 图片处理失败
 
-### Error Handling
-
-Comprehensive error handling at every level:
-
-- Input validation
-- File existence checks
-- Python script execution monitoring
-- Detailed error messages
-
-## 🐛 Troubleshooting
-
-### Python Not Found
-
-**Problem**: `Failed to find Python: python: command not found`
-
-**Solution**:
-- Ensure Python 3.11+ is installed
-- Add Python to your PATH
-- Or bundle Python with the application
-
-### Script Execution Failed
-
-**Problem**: `script execution failed: [Python error]`
-
-**Solution**:
-- Check logs in `logs/` directory
-- Test Python script manually via command line
-- Verify Python dependencies are installed
-
-### Performance Issues
-
-**Problem**: Processing is slow
-
-**Solution**:
-- Reduce batch size
-- Use PNG instead of JPEG for transparency
-- Check system resources (CPU, memory, disk I/O)
-
-## 🚀 Performance
-
-### Benchmarks (typical values on modern hardware)
-
-| Operation | Single Image | Batch (10 images) |
-|-----------|--------------|-------------------|
-| Format Conversion | 200-500ms | 2-3s |
-| Compression | 400-800ms | 3-5s |
-| PDF Generation (10 images) | 1-2s | N/A |
-| GIF Split (50 frames) | 800ms-1.2s | N/A |
-| Basic Adjustments | 100-300ms | 1-2s |
-| Basic Filters | 200-500ms | 2-3s |
-
-### Memory Usage
-
-- **Idle**: < 50MB (Go) + 20MB (Python)
-- **Processing Single Image**: < 200MB
-- **Batch Processing (10 images)**: < 500MB
-
-## 🔒 Security
-
-- Input validation on all parameters
-- File path validation to prevent directory traversal
-- JSON-based communication (no shell injection)
-- Error messages don't expose sensitive paths
-
-## 📝 Development
-
-### Adding a New Service
-
-1. Define data models in `models/types.go`
-2. Create service in `services/new_service.go`
-3. Implement Python script in `python/new_service.py`
-4. Wire up in `app.go`
-5. Add tests
-
-See [Backend Architecture](docs/BACKEND_ARCHITECTURE.md) for detailed guide.
-
-### Code Style
-
-- Follow Go best practices
-- Use descriptive variable names
-- Add comments for complex logic
-- Keep functions focused and small
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📞 Support
-
-For issues, questions, or contributions, please refer to the project documentation or create an issue in the repository.
-
----
-
-**Built with ❤️ using Go and Python (Pillow)**
+- 查看 API 返回的 `success` 和 `error` 字段。
+- 对应引擎位于 `backend/engines/`，优先补充 `backend/tests/engines/` 回归测试后再修复。
+- 对 SVG 支持依赖当前 Python 环境中的 CairoSVG、svglib/reportlab 或 Inkscape 可用性。
