@@ -5,13 +5,12 @@ import re
 import sys
 from pathlib import Path
 
-from backend.api import DesktopAPI
-from backend.infrastructure.window_ops import set_window_maximized
-
 logger = logging.getLogger(__name__)
 
 
-def build_window_api() -> DesktopAPI:
+def build_window_api():
+    from backend.api import DesktopAPI
+
     return DesktopAPI()
 
 
@@ -44,6 +43,7 @@ def _dispatch_file_drop(window, event: dict) -> None:
 
 
 def configure_window(window) -> None:
+    from backend.infrastructure.window_ops import set_window_maximized
     from webview.dom import DOMEventHandler
 
     def handle_loaded() -> None:

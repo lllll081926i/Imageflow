@@ -1,5 +1,3 @@
-import multiprocessing
-
 from backend.host.window import build_window_api, configure_window, resolve_frontend_entry
 
 
@@ -21,7 +19,11 @@ def main() -> None:
 
 
 def bootstrap() -> None:
-    multiprocessing.freeze_support()
+    multiprocessing_module = globals().get("multiprocessing")
+    if multiprocessing_module is None:
+        import multiprocessing as multiprocessing_module
+
+    multiprocessing_module.freeze_support()
     main()
 
 

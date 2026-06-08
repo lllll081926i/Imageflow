@@ -137,6 +137,46 @@ class DesktopAPITests(unittest.TestCase):
         self.assertFalse(result["has_directory"])
         self.assertEqual([item["input_path"] for item in result["files"]], [str(image.resolve())])
 
+    def test_select_input_files_forwards_dialog_filters(self):
+        app = create_app()
+        captured_options = {}
+        filters = [{"DisplayName": "Compressible bitmaps", "Pattern": "*.jpg;*.png"}]
+        original_open_file_dialog = desktop_api.open_file_dialog
+
+        def fake_open_file_dialog(options=None):
+            captured_options.update(options or {})
+            return ["D:/input/a.png"]
+
+        try:
+            desktop_api.open_file_dialog = fake_open_file_dialog
+
+            result = app.select_input_files({"filters": filters})
+
+            self.assertEqual(result, ["D:/input/a.png"])
+            self.assertEqual(captured_options.get("filters"), filters)
+            self.assertTrue(captured_options.get("allowsMultipleSelection"))
+        finally:
+            desktop_api.open_file_dialog = original_open_file_dialog
+
+    def test_select_input_files_preserves_single_selection_option(self):
+        app = create_app()
+        captured_options = {}
+        original_open_file_dialog = desktop_api.open_file_dialog
+
+        def fake_open_file_dialog(options=None):
+            captured_options.update(options or {})
+            return "D:/input/a.png"
+
+        try:
+            desktop_api.open_file_dialog = fake_open_file_dialog
+
+            result = app.select_input_files({"allowsMultipleSelection": False})
+
+            self.assertEqual(result, ["D:/input/a.png"])
+            self.assertFalse(captured_options.get("allowsMultipleSelection"))
+        finally:
+            desktop_api.open_file_dialog = original_open_file_dialog
+
     def test_get_image_preview_returns_data_url(self):
         app = create_app()
         preview = app.get_image_preview(
@@ -186,6 +226,34 @@ class DesktopAPITests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("路径不能为空", result["error"])
+
+    def test_generate_pdf_preserves_image_object_payloads_when_normalizing_paths(self):
+        app = create_app()
+        captured_payload = {}
+        original_execute_engine = desktop_api.execute_engine
+
+        image_path = str((Path(self.temp_dir.name) / "page.png").resolve())
+
+        def fake_execute_engine(module_name, payload, *_args, **_kwargs):
+            captured_payload["module_name"] = module_name
+            captured_payload["payload"] = payload
+            return {"success": True}
+
+        try:
+            desktop_api.execute_engine = fake_execute_engine
+
+            result = app.generate_pdf(
+                {
+                    "images": [{"path": image_path}],
+                    "output_path": str((Path(self.temp_dir.name) / "out.pdf").resolve()),
+                }
+            )
+
+            self.assertTrue(result["success"])
+            self.assertEqual(captured_payload["module_name"], "pdf_generator")
+            self.assertEqual(captured_payload["payload"]["images"], [{"path": image_path}])
+        finally:
+            desktop_api.execute_engine = original_execute_engine
 
     def test_resolve_file_paths_extracts_absolute_paths_from_runtime_payloads(self):
         app = create_app()
@@ -336,6 +404,32 @@ class DesktopAPITests(unittest.TestCase):
         finally:
             desktop_api.execute_engine = original_execute_engine
             task_manager.finish_task(operation_task_id)
+
+    def test_default_task_manager_respects_module_level_replacement(self):
+        calls: list[str] = []
+
+        class FakeTaskManager:
+            def __init__(self):
+                calls.append("created")
+
+            def cancel_current_task(self):
+                calls.append("cancelled")
+                return True
+
+        sentinel = object()
+        original_task_manager = desktop_api.__dict__.get("TaskManager", sentinel)
+        try:
+            desktop_api.TaskManager = FakeTaskManager
+            app = desktop_api.DesktopAPI()
+
+            self.assertTrue(app.cancel_processing())
+
+            self.assertEqual(calls, ["created", "cancelled"])
+        finally:
+            if original_task_manager is sentinel:
+                desktop_api.__dict__.pop("TaskManager", None)
+            else:
+                desktop_api.TaskManager = original_task_manager
 
     def test_get_info_registers_new_active_task_atomically(self):
         task_manager = desktop_api.TaskManager()

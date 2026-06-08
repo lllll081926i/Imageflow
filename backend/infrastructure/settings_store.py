@@ -95,20 +95,28 @@ def settings_from_dict(data: dict[str, Any]) -> AppSettings:
     return AppSettings(**values)
 
 
-def _settings_file_path() -> Path:
+def _settings_file_path() -> tuple[Path, bool]:
     override = os.getenv("IMAGEFLOW_SETTINGS_FILE", "").strip()
     if override:
-        return Path(override).resolve()
+        path = Path(override).resolve()
+        if path.suffix.lower() != ".json":
+            raise ValueError("IMAGEFLOW_SETTINGS_FILE must point to a .json file")
+        if not path.parent.exists():
+            raise ValueError("IMAGEFLOW_SETTINGS_FILE parent directory must already exist")
+        return path, True
 
     appdata = os.getenv("APPDATA", "").strip()
     if appdata:
-        return Path(appdata) / "imageflow" / "settings.json"
+        return Path(appdata) / "imageflow" / "settings.json", False
 
-    return Path.home() / ".config" / "imageflow" / "settings.json"
+    return Path.home() / ".config" / "imageflow" / "settings.json", False
 
 
 def load_settings() -> AppSettings:
-    path = _settings_file_path()
+    try:
+        path, _is_override = _settings_file_path()
+    except (OSError, ValueError):
+        return default_app_settings()
     if not path.exists():
         return default_app_settings()
 
@@ -125,8 +133,9 @@ def load_settings() -> AppSettings:
 def save_settings(settings: AppSettings) -> AppSettings:
     import tempfile
     normalized = normalize_settings(settings)
-    path = _settings_file_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path, is_override = _settings_file_path()
+    if not is_override:
+        path.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:

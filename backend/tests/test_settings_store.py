@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from backend.contracts.settings import AppSettings
-from backend.infrastructure.settings_store import load_settings, normalize_settings
+from backend.infrastructure.settings_store import load_settings, normalize_settings, save_settings
 
 
 class SettingsStoreTests(unittest.TestCase):
@@ -90,6 +90,50 @@ class SettingsStoreTests(unittest.TestCase):
 
             self.assertEqual(loaded.max_concurrency, 10)
             self.assertEqual(loaded.output_prefix, "SAFE")
+
+    def test_load_settings_falls_back_to_defaults_for_override_path_with_non_json_suffix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "settings.txt"
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            loaded = load_settings()
+
+            self.assertEqual(loaded.max_concurrency, 8)
+            self.assertEqual(loaded.output_prefix, "IF")
+
+    def test_load_settings_falls_back_to_defaults_when_override_parent_directory_is_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "missing" / "settings.json"
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            loaded = load_settings()
+
+            self.assertEqual(loaded.max_concurrency, 8)
+            self.assertEqual(loaded.output_prefix, "IF")
+
+    def test_save_settings_rejects_override_path_with_non_json_suffix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "settings.txt"
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            with self.assertRaises(ValueError):
+                save_settings(AppSettings(output_prefix="BAD"))
+
+            self.assertFalse(settings_file.exists())
+
+    def test_save_settings_rejects_override_path_when_parent_directory_is_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_file = Path(temp_dir) / "missing" / "settings.json"
+            os.environ["IMAGEFLOW_SETTINGS_FILE"] = str(settings_file)
+            self.addCleanup(lambda: os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None))
+
+            with self.assertRaises(ValueError):
+                save_settings(AppSettings(output_prefix="BAD"))
+
+            self.assertFalse(settings_file.parent.exists())
 
 
 if __name__ == "__main__":

@@ -5,26 +5,115 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from PIL import Image, UnidentifiedImageError
 
-from backend.application.image_ops import execute_engine, execute_engine_batch
-from backend.application.preview import build_image_preview
-from backend.application.task_manager import TaskManager
-from backend.contracts.settings import AppSettings
-from backend.domain.paths import (
-    expand_input_paths,
-    list_system_fonts,
-    normalize_optional_user_supplied_path,
-    normalize_user_supplied_path,
-    resolve_output_path,
-)
-from backend.infrastructure.dialogs import open_directory_dialog, open_file_dialog
-from backend.infrastructure.settings_store import load_settings, save_settings, settings_from_dict
-from backend.infrastructure.window_ops import (
-    runtime_quit,
-    runtime_window_minimise,
-    runtime_window_toggle_maximise,
-)
+def _load_task_manager_class():
+    from backend.application.task_manager import TaskManager as TaskManagerClass
+
+    globals()["TaskManager"] = TaskManagerClass
+    return TaskManagerClass
+
+
+def _get_task_manager_class():
+    existing = globals().get("TaskManager")
+    if existing is not None:
+        return existing
+    return _load_task_manager_class()
+
+
+def __getattr__(name: str):
+    if name == "TaskManager":
+        return _load_task_manager_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def expand_input_paths(paths: list[str]) -> dict:
+    from backend.domain.paths import expand_input_paths as expand_paths
+
+    return expand_paths(paths)
+
+
+def list_system_fonts() -> list[str]:
+    from backend.domain.paths import list_system_fonts as load_fonts
+
+    return load_fonts()
+
+
+def normalize_optional_user_supplied_path(value: str) -> str:
+    from backend.domain.paths import normalize_optional_user_supplied_path as normalize_optional_path
+
+    return normalize_optional_path(value)
+
+
+def normalize_user_supplied_path(value: str) -> str:
+    from backend.domain.paths import normalize_user_supplied_path as normalize_path
+
+    return normalize_path(value)
+
+
+def resolve_output_path(base_path: str, reserved: list[str]) -> str:
+    from backend.domain.paths import resolve_output_path as resolve_path
+
+    return resolve_path(base_path, reserved)
+
+
+def open_file_dialog(options: dict | None = None):
+    from backend.infrastructure.dialogs import open_file_dialog as show_file_dialog
+
+    return show_file_dialog(options)
+
+
+def open_directory_dialog(options: dict | None = None):
+    from backend.infrastructure.dialogs import open_directory_dialog as show_directory_dialog
+
+    return show_directory_dialog(options)
+
+
+def load_settings():
+    from backend.infrastructure.settings_store import load_settings as read_settings
+
+    return read_settings()
+
+
+def save_settings(settings):
+    from backend.infrastructure.settings_store import save_settings as write_settings
+
+    return write_settings(settings)
+
+
+def settings_from_dict(payload: dict):
+    from backend.infrastructure.settings_store import settings_from_dict as build_settings
+
+    return build_settings(payload)
+
+
+def runtime_quit() -> None:
+    from backend.infrastructure.window_ops import runtime_quit as quit_window
+
+    quit_window()
+
+
+def runtime_window_minimise() -> None:
+    from backend.infrastructure.window_ops import runtime_window_minimise as minimise_window
+
+    minimise_window()
+
+
+def runtime_window_toggle_maximise() -> None:
+    from backend.infrastructure.window_ops import runtime_window_toggle_maximise as toggle_window_maximise
+
+    toggle_window_maximise()
+
+
+def execute_engine(module_name: str, payload: dict, task_manager: Any, task_id: int | None = None) -> dict:
+    from backend.application.image_ops import execute_engine as run_engine
+
+    return run_engine(module_name, payload, task_manager, task_id=task_id)
+
+
+def execute_engine_batch(module_name: str, payloads: list[dict], settings: Any, task_manager: Any) -> list[dict]:
+    from backend.application.image_ops import execute_engine_batch as run_engine_batch
+
+    return run_engine_batch(module_name, payloads, settings, task_manager)
 
 
 def _normalize_recent_path(value: str) -> str:
@@ -74,9 +163,11 @@ def _normalize_payload_paths(payload: Any) -> Any:
     for field in ("input_path", "output_path", "output_dir", "watermark_path", "image_path"):
         if field in normalized:
             normalized[field] = normalize_optional_user_supplied_path(str(normalized.get(field) or ""))
-    for field in ("input_paths", "image_paths", "images"):
+    for field in ("input_paths", "image_paths"):
         if field in normalized and isinstance(normalized[field], list):
             normalized[field] = [normalize_user_supplied_path(str(item)) for item in normalized[field] if str(item).strip()]
+    if isinstance(normalized.get("images"), list):
+        normalized["images"] = [_normalize_payload_paths(item) for item in normalized["images"]]
     return normalized
 
 
@@ -101,6 +192,8 @@ def _extract_runtime_file_path(file_ref: Any) -> str:
 
 
 def _probe_animated_path(input_path: str) -> dict[str, Any]:
+    from PIL import Image, UnidentifiedImageError
+
     raw_path = str(input_path or "").strip()
     normalized_path = raw_path
     try:
@@ -144,13 +237,22 @@ def _probe_animated_path(input_path: str) -> dict[str, Any]:
 
 
 class DesktopAPI:
-    def __init__(self, task_manager: TaskManager | None = None):
-        self._task_manager = task_manager or TaskManager()
+    def __init__(self, task_manager: Any | None = None):
+        self._task_manager_instance = task_manager
+        self._task_manager_lock = Lock()
         self._info_task_lock = Lock()
         self._settings_lock = Lock()
         self._active_info_task_id: int | None = None
 
-    def _settings(self) -> AppSettings:
+    @property
+    def _task_manager(self):
+        if self._task_manager_instance is None:
+            with self._task_manager_lock:
+                if self._task_manager_instance is None:
+                    self._task_manager_instance = _get_task_manager_class()()
+        return self._task_manager_instance
+
+    def _settings(self):
         return load_settings()
 
     def _run_operation(self, handler):
@@ -181,8 +283,13 @@ class DesktopAPI:
             saved = save_settings(current)
         return asdict(saved)
 
-    def select_input_files(self) -> list[str]:
-        result = open_file_dialog({"title": "选择文件", "allowsMultipleSelection": True})
+    def select_input_files(self, options: dict | None = None) -> list[str]:
+        dialog_options = dict(options) if isinstance(options, dict) else {}
+        dialog_options.setdefault("title", "选择文件")
+        dialog_options["allowsMultipleSelection"] = bool(
+            dialog_options.get("allowsMultipleSelection", True)
+        )
+        result = open_file_dialog(dialog_options)
         if isinstance(result, list):
             return [str(item) for item in result if str(item).strip()]
         if isinstance(result, str) and result.strip():
@@ -212,6 +319,8 @@ class DesktopAPI:
         return list_system_fonts()
 
     def get_image_preview(self, payload: dict) -> dict:
+        from backend.application.preview import build_image_preview
+
         normalized = _normalize_payload_paths(payload)
         input_path = normalized.get("input_path")
         if not input_path:
@@ -360,8 +469,8 @@ class DesktopAPI:
     def UpdateRecentPaths(self, payload: dict) -> dict:
         return self.update_recent_paths(payload)
 
-    def SelectInputFiles(self) -> list[str]:
-        return self.select_input_files()
+    def SelectInputFiles(self, options: dict | None = None) -> list[str]:
+        return self.select_input_files(options)
 
     def SelectInputDirectory(self) -> str:
         return self.select_input_directory()

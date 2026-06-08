@@ -1,4 +1,5 @@
 import sys
+import subprocess
 import tempfile
 import types
 import unittest
@@ -155,6 +156,66 @@ class WindowConfigTests(unittest.TestCase):
             else:
                 main_module.multiprocessing = original_multiprocessing
             main_module.main = original_main
+
+    def test_importing_startup_modules_does_not_load_ui_or_operation_dependencies(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = (
+            "import sys; "
+            "import backend.main; "
+            "startup_deferred = ("
+            "'backend.api.desktop_api', "
+            "'backend.application.image_ops', "
+            "'backend.application.preview', "
+            "'backend.domain.paths', "
+            "'backend.infrastructure.dialogs', "
+            "'backend.infrastructure.settings_store', "
+            "'PIL.Image', "
+            "'multiprocessing'"
+            "); "
+            "loaded = [name for name in startup_deferred if name in sys.modules]; "
+            "print(','.join(loaded)); "
+            "raise SystemExit(1 if loaded else 0)"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_building_window_api_defers_operation_dependencies_until_first_use(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script = (
+            "import sys; "
+            "from backend.host.window import build_window_api; "
+            "api = build_window_api(); "
+            "api_deferred = ("
+            "'backend.application.image_ops', "
+            "'backend.application.preview', "
+            "'backend.domain.paths', "
+            "'backend.infrastructure.dialogs', "
+            "'backend.infrastructure.settings_store', "
+            "'PIL.Image', "
+            "'multiprocessing'"
+            "); "
+            "loaded = [name for name in api_deferred if name in sys.modules]; "
+            "print(type(api).__name__ + ':' + ','.join(loaded)); "
+            "raise SystemExit(1 if loaded else 0)"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
