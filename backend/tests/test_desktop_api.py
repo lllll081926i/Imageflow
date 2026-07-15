@@ -9,6 +9,7 @@ from PIL import Image
 
 from backend.api import desktop_api
 from backend.app import create_app
+from backend.contracts.settings import default_app_settings
 from backend.infrastructure import dialogs
 
 
@@ -29,7 +30,7 @@ class DesktopAPITests(unittest.TestCase):
         self.assertEqual(app.ping(), "pong")
 
         settings = app.get_settings()
-        self.assertEqual(settings["max_concurrency"], 4)
+        self.assertEqual(settings["max_concurrency"], default_app_settings().max_concurrency)
         self.assertEqual(settings["output_prefix"], "IF")
 
         saved = app.save_settings(
