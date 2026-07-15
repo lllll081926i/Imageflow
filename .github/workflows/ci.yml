@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Optional existing release tag to upload cloud-built packages, for example v2.0.1"
+        description: "Optional existing release tag to upload cloud-built packages, for example v2.1.0"
         required: false
         type: string
 
