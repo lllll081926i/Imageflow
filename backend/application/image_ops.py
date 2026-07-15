@@ -1,66 +1,156 @@
+from __future__ import annotations
+
+import atexit
+import os
+import threading
 import time
-from multiprocessing import Process, Queue
-from queue import Empty
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from typing import Any
 
 from backend.application.task_manager import TaskManager
 from backend.contracts.settings import AppSettings
 from backend.infrastructure.engine_loader import invoke_engine_process
 
+_pool_lock = threading.Lock()
+_pool: ProcessPoolExecutor | None = None
+_pool_size = 0
+_pool_disabled = str(os.getenv("IMAGEFLOW_DISABLE_PROCESS_POOL", "") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
-def _join_process(process: Any, timeout: float | None = None) -> None:
-    join = getattr(process, "join", None)
-    if not callable(join):
-        return
-    if timeout is None:
-        join()
-        return
+
+def _invoke_engine_job(module_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Top-level worker entry so ProcessPoolExecutor can pickle it on Windows."""
     try:
-        join(timeout=timeout)
-    except TypeError:
-        join()
-
-
-def _terminate_process(process: Any, join_timeout: float = 5, kill_timeout: float = 2) -> None:
-    terminate = getattr(process, "terminate", None)
-    if callable(terminate):
-        terminate()
-    _join_process(process, join_timeout)
-    is_alive = getattr(process, "is_alive", None)
-    if callable(is_alive) and is_alive():
-        kill = getattr(process, "kill", None)
-        if callable(kill):
-            kill()
-            _join_process(process, kill_timeout)
-
-
-def _process_worker(module_name: str, payload: dict[str, Any], queue: Queue) -> None:
-    try:
-        queue.put(invoke_engine_process(module_name, payload))
+        return invoke_engine_process(module_name, payload)
     except Exception as exc:
-        queue.put({"success": False, "error": str(exc)})
+        return {"success": False, "error": str(exc)}
 
 
-def _batch_process_worker(module_name: str, task_queue: Queue, result_queue: Queue) -> None:
-    while True:
-        item = task_queue.get()
-        if item is None:
-            return
-        index, payload = item
+def _desired_pool_size(requested: int | None = None) -> int:
+    if requested is not None:
+        return max(1, min(32, int(requested)))
+    env = str(os.getenv("IMAGEFLOW_PROCESS_POOL_SIZE", "") or "").strip()
+    if env:
         try:
-            result = invoke_engine_process(module_name, payload)
-        except Exception as exc:
-            result = {"success": False, "error": str(exc)}
-        result_queue.put((index, result))
+            return max(1, min(32, int(env)))
+        except ValueError:
+            pass
+    cpu = os.cpu_count() or 4
+    if os.name == "nt":
+        return max(1, min(4, max(2, cpu // 2)))
+    return max(1, min(8, cpu))
 
 
-def _close_queue(queue: Queue) -> None:
-    close = getattr(queue, "close", None)
-    if callable(close):
-        close()
-    join_thread = getattr(queue, "join_thread", None)
-    if callable(join_thread):
-        join_thread()
+def _shutdown_pool() -> None:
+    global _pool, _pool_size
+    with _pool_lock:
+        if _pool is not None:
+            try:
+                _pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                _pool.shutdown(wait=False)
+            except Exception:
+                pass
+        _pool = None
+        _pool_size = 0
+
+
+atexit.register(_shutdown_pool)
+
+
+def reset_process_pool_for_tests() -> None:
+    """Test helper to drop the global pool between cases."""
+    _shutdown_pool()
+
+
+def warm_process_pool(min_size: int | None = None) -> int:
+    """Pre-create the process pool so first user action avoids cold spawn."""
+    if _pool_disabled:
+        return 0
+    size = _desired_pool_size(min_size)
+    pool = _get_pool(size)
+    # Touch pool object to ensure workers can start lazily on first submit.
+    return getattr(pool, "_max_workers", size)
+
+
+def _get_pool(min_size: int = 1) -> ProcessPoolExecutor:
+    global _pool, _pool_size
+    target = max(_desired_pool_size(), max(1, int(min_size)))
+    target = min(32, target)
+    with _pool_lock:
+        if _pool is not None and _pool_size >= target:
+            return _pool
+        if _pool is not None:
+            try:
+                _pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                _pool.shutdown(wait=False)
+            except Exception:
+                pass
+            _pool = None
+        _pool = ProcessPoolExecutor(max_workers=target)
+        _pool_size = target
+        return _pool
+
+
+def _run_jobs(
+    module_name: str,
+    payloads: list[dict[str, Any]],
+    max_workers: int,
+    task_manager: TaskManager | None = None,
+    task_id: int | None = None,
+) -> list[dict[str, Any]]:
+    if not payloads:
+        return []
+
+    if _pool_disabled:
+        results: list[dict[str, Any]] = []
+        for payload in payloads:
+            if task_manager is not None and task_id is not None and task_manager.is_cancelled(task_id):
+                results.append({"success": False, "error": "[PY_CANCELLED] operation cancelled"})
+                continue
+            results.append(_invoke_engine_job(module_name, payload))
+        return results
+
+    worker_count = max(1, min(int(max_workers), len(payloads)))
+    pool = _get_pool(worker_count)
+    futures = [pool.submit(_invoke_engine_job, module_name, payload) for payload in payloads]
+    results: list[dict[str, Any]] = [{"success": False, "error": "处理失败"} for _ in payloads]
+    pending = set(futures)
+    future_to_index = {future: index for index, future in enumerate(futures)}
+
+    try:
+        while pending:
+            if task_manager is not None and task_id is not None and task_manager.is_cancelled(task_id):
+                for future in list(pending):
+                    future.cancel()
+                    index = future_to_index[future]
+                    results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+                break
+
+            done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+            if not done:
+                continue
+            for future in done:
+                index = future_to_index[future]
+                try:
+                    value = future.result()
+                    if isinstance(value, dict):
+                        results[index] = value
+                    else:
+                        results[index] = {"success": False, "error": "处理返回格式异常"}
+                except Exception as exc:
+                    results[index] = {"success": False, "error": str(exc)}
+    finally:
+        if task_manager is not None and task_id is not None and task_manager.is_cancelled(task_id):
+            for future in futures:
+                future.cancel()
+
+    return results
 
 
 def execute_engine(
@@ -72,35 +162,18 @@ def execute_engine(
     effective_task_id = task_id if task_id is not None else (task_manager.current_task_id if task_manager else None)
     if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
         return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-    queue: Queue = Queue()
-    process = Process(target=_process_worker, args=(module_name, payload, queue))
-    try:
-        process.start()
-        if task_manager and effective_task_id is not None:
-            task_manager.attach_process(effective_task_id, process)
 
-        while process.is_alive():
-            if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
-                _terminate_process(process)
-                return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-            _join_process(process, 0.5)
-
-        _join_process(process, 5)
-        try:
-            result = queue.get_nowait()
-        except Empty:
-            exitcode = process.exitcode
-            if exitcode is not None and exitcode < 0:
-                result = {"success": False, "error": f"进程被信号 {-exitcode} 终止 (exit code: {exitcode})"}
-            else:
-                result = {"success": False, "error": f"处理失败 (exit code: {exitcode})"}
-        if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
-            return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-        return result
-    finally:
-        if task_manager and effective_task_id is not None:
-            task_manager.detach_process(effective_task_id, process)
-        _close_queue(queue)
+    results = _run_jobs(
+        module_name,
+        [payload],
+        max_workers=1,
+        task_manager=task_manager,
+        task_id=effective_task_id,
+    )
+    result = results[0] if results else {"success": False, "error": "处理失败"}
+    if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
+        return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+    return result
 
 
 def execute_engine_batch(
@@ -114,65 +187,10 @@ def execute_engine_batch(
 
     task_id = task_manager.current_task_id
     max_workers = max(1, min(settings.max_concurrency, len(payloads)))
-    results: list[dict[str, Any] | None] = [None] * len(payloads)
-    task_queue: Queue = Queue()
-    result_queue: Queue = Queue()
-    workers: list[Process] = []
-
-    for item in enumerate(payloads):
-        task_queue.put(item)
-    for _ in range(max_workers):
-        task_queue.put(None)
-
-    completed = 0
-    try:
-        for _ in range(max_workers):
-            process = Process(target=_batch_process_worker, args=(module_name, task_queue, result_queue))
-            process.start()
-            if task_id is not None:
-                task_manager.attach_process(task_id, process)
-            workers.append(process)
-
-        while completed < len(payloads):
-            if task_id is not None and task_manager.is_cancelled(task_id):
-                for process in workers:
-                    if process.is_alive():
-                        _terminate_process(process)
-                for index, result in enumerate(results):
-                    if result is None:
-                        results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-                break
-
-            try:
-                index, result = result_queue.get(timeout=0.5)
-            except Empty:
-                if all(not process.is_alive() for process in workers):
-                    for process in workers:
-                        _join_process(process, 5)
-                    while completed < len(payloads):
-                        try:
-                            index, result = result_queue.get_nowait()
-                        except Empty:
-                            break
-                        if 0 <= index < len(results) and results[index] is None:
-                            results[index] = result
-                            completed += 1
-                    break
-                continue
-
-            if 0 <= index < len(results) and results[index] is None:
-                results[index] = result
-                completed += 1
-
-        for process in workers:
-            _join_process(process, 5)
-    finally:
-        for process in workers:
-            if process.is_alive():
-                _terminate_process(process)
-            if task_id is not None:
-                task_manager.detach_process(task_id, process)
-        _close_queue(task_queue)
-        _close_queue(result_queue)
-
-    return [result if result is not None else {"success": False, "error": "处理失败"} for result in results]
+    return _run_jobs(
+        module_name,
+        payloads,
+        max_workers=max_workers,
+        task_manager=task_manager,
+        task_id=task_id,
+    )

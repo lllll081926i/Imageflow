@@ -148,27 +148,27 @@ class PDFGenerator:
                     'success': False,
                     'error': 'No valid images found'
                 }
-            
+
             image_count = len(valid_images)
             page_count = self._estimate_page_count(image_count, layout, custom_rows, custom_cols)
             logger.info(f"Generating PDF with {image_count} images")
-            
+
             page_size_key = str(page_size or '').strip()
             pagesize = self.PAGE_SIZES.get(page_size_key)
             if pagesize is None:
                 pagesize = self.PAGE_SIZES.get(page_size_key.upper())
             if pagesize is None:
                 pagesize = A4
-            
+
             # Swap dimensions for landscape
             if not portrait:
                 pagesize = (pagesize[1], pagesize[0])
-            
+
             # Create output directory if it doesn't exist
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-            
+
             # Create PDF document
             safe_margin = max(0, float(margin))
             doc = SimpleDocTemplate(
@@ -179,11 +179,11 @@ class PDFGenerator:
                 topMargin=safe_margin,
                 bottomMargin=safe_margin
             )
-            
+
             # Set metadata
             doc.title = title
             doc.author = author
-            
+
             # Build content based on layout
             story = self._build_content(
                 valid_images,
@@ -195,18 +195,15 @@ class PDFGenerator:
                 compression_level,
                 fit_mode,
             )
-            
+
             # Generate PDF
-            try:
-                doc.build(story)
-            finally:
-                self._cleanup_temp_images()
-            
+            doc.build(story)
+
             # Get file size
             file_size = os.path.getsize(output_path)
-            
+
             logger.info(f"PDF generated: {output_path} ({file_size} bytes)")
-            
+
             return {
                 'success': True,
                 'output_path': output_path,
@@ -214,22 +211,29 @@ class PDFGenerator:
                 'image_count': image_count,
                 'page_count': page_count,
             }
-            
+
         except Exception as e:
             logger.error(f"PDF generation failed: {e}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e)
             }
+        finally:
+            self._cleanup_temp_images()
     
     def _validate_images(self, images):
         """Validate that all image files exist and can be opened, caching sizes."""
         valid_images = []
         self._size_cache.clear()
+        from PIL import Image, UnidentifiedImageError
 
         for img_path in images:
-            if os.path.exists(img_path):
-                try:
+            if not os.path.exists(img_path):
+                logger.warning(f"Image not found: {img_path}")
+                continue
+            try:
+                # Prefer header-only size for ordinary bitmaps; full open for SVG.
+                if str(img_path).lower().endswith(".svg"):
                     img = open_image_with_svg_support(img_path, format_type="png")
                     try:
                         self._size_cache[img_path] = img.size
@@ -238,11 +242,15 @@ class PDFGenerator:
                             img.close()
                         except Exception:
                             pass
-                    valid_images.append(img_path)
-                except Exception as e:
-                    logger.warning(f"Cannot open image {img_path}: {e}")
-            else:
-                logger.warning(f"Image not found: {img_path}")
+                else:
+                    with Image.open(img_path) as img:
+                        # Do not call load(); size is available from headers for common formats.
+                        self._size_cache[img_path] = img.size
+                valid_images.append(img_path)
+            except UnidentifiedImageError as e:
+                logger.warning(f"Cannot open image {img_path}: {e}")
+            except Exception as e:
+                logger.warning(f"Cannot open image {img_path}: {e}")
 
         return valid_images
     

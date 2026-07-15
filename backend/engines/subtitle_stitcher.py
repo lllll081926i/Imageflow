@@ -23,6 +23,8 @@ MIN_SUBTITLE_RATIO = 0.10
 MAX_SUBTITLE_RATIO = 0.35
 DEFAULT_MIN_STRIP_HEIGHT = 24
 DEFAULT_DEDUP_THRESHOLD = 2
+MAX_CANVAS_PIXELS = 64_000_000
+MAX_CANVAS_EDGE = 32766
 
 
 def _error_response(code: str, message: str, detail: Optional[Exception] = None):
@@ -204,6 +206,16 @@ def handle_request(input_data):
 
         canvas_width = max(block.width for block in blocks)
         canvas_height = sum(block.height for block in blocks)
+        if canvas_width > MAX_CANVAS_EDGE or canvas_height > MAX_CANVAS_EDGE:
+            return _error_response(
+                "SUBTITLE_CANVAS_TOO_LARGE",
+                f"Stitched image edge exceeds limit ({canvas_width}x{canvas_height}, max edge {MAX_CANVAS_EDGE})",
+            )
+        if canvas_width * canvas_height > MAX_CANVAS_PIXELS:
+            return _error_response(
+                "SUBTITLE_CANVAS_TOO_LARGE",
+                f"Stitched image exceeds pixel budget ({canvas_width * canvas_height} > {MAX_CANVAS_PIXELS})",
+            )
         background = (0, 0, 0, 0) if render_mode == "RGBA" else (0, 0, 0)
         canvas = Image.new(render_mode, (canvas_width, canvas_height), background)
 

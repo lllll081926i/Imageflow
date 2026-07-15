@@ -82,7 +82,7 @@ class SVGConversionTests(unittest.TestCase):
         with Image.open(fixed_output) as img:
             self.assertEqual(img.size, (320, 320))
 
-    def test_svg_with_doctype_keeps_intrinsic_dimensions(self):
+    def test_svg_with_doctype_is_rejected(self):
         svg_path = self._path("unsafe.svg")
         secret_path = self._path("secret.txt")
         output_path = self._path("unsafe.png")
@@ -111,11 +111,10 @@ class SVGConversionTests(unittest.TestCase):
             }
         )
 
-        self.assertTrue(result.get("success"))
-        with Image.open(output_path) as img:
-            self.assertEqual(img.size, (120, 80))
+        self.assertFalse(result.get("success"))
+        self.assertIn("disallowed", str(result.get("error") or "").lower())
 
-    def test_utf16_svg_with_external_entity_keeps_intrinsic_dimensions(self):
+    def test_utf16_svg_with_external_entity_is_rejected(self):
         svg_path = self._path("unsafe-utf16.svg")
         secret_path = self._path("secret.txt")
         output_path = self._path("unsafe-utf16.png")
@@ -141,9 +140,75 @@ class SVGConversionTests(unittest.TestCase):
             }
         )
 
-        self.assertTrue(result.get("success"))
-        with Image.open(output_path) as img:
-            self.assertEqual(img.size, (120, 80))
+        self.assertFalse(result.get("success"))
+        self.assertIn("disallowed", str(result.get("error") or "").lower())
+
+    def test_svg_with_external_href_is_rejected(self):
+        svg_path = self._path("href.svg")
+        output_path = self._path("href.png")
+        with open(svg_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                """<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <image width="10" height="10" xlink:href="file:///etc/passwd"/>
+</svg>
+"""
+            )
+        result = convert_process(
+            {
+                "input_path": svg_path,
+                "output_path": output_path,
+                "format": "png",
+            }
+        )
+        self.assertFalse(result.get("success"))
+
+    def test_clamp_svg_render_size_limits_pixels(self):
+        width, height = converter.clamp_svg_render_size(100_000, 100_000)
+        self.assertLessEqual(width * height, converter.MAX_SVG_PIXELS)
+        self.assertLessEqual(max(width, height), converter.MAX_SVG_EDGE)
+
+    def test_assert_svg_render_safe_rejects_use_href_http(self):
+        svg_path = self._path("use-http.svg")
+        with open(svg_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                """<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <use xlink:href="http://example.com/icon.svg#g"/>
+</svg>
+"""
+            )
+        with self.assertRaises(RuntimeError):
+            converter.assert_svg_render_safe(svg_path)
+
+    def test_open_image_with_svg_support_rejects_disallowed_svg(self):
+        svg_path = self._path("open-unsafe.svg")
+        with open(svg_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                """<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"""
+            )
+        with self.assertRaises(RuntimeError):
+            converter.open_image_with_svg_support(svg_path, format_type="png")
+
+    def test_svg_calculate_render_size_is_clamped_for_huge_intrinsic(self):
+        svg_path = self._path("huge.svg")
+        with open(svg_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                '<svg width="100000" height="100000" xmlns="http://www.w3.org/2000/svg">'
+                '<rect width="100000" height="100000" fill="#0f0"/></svg>'
+            )
+        engine = converter.ImageConverter()
+        width, height = engine._calculate_svg_render_size(
+            svg_path,
+            resize_mode="",
+            scale_percent=0,
+            long_edge=0,
+            width=0,
+            height=0,
+            maintain_ar=True,
+            format_type="png",
+            ico_sizes=None,
+        )
+        self.assertLessEqual(width * height, converter.MAX_SVG_PIXELS)
+        self.assertLessEqual(max(width, height), converter.MAX_SVG_EDGE)
 
     def test_svg_intrinsic_size_parser_does_not_require_xml_parser(self):
         original_fromstring = stdlib_et.fromstring

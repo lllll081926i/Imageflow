@@ -26,7 +26,7 @@ const MAX_RECENT_PATHS = 4;
 const DEFAULT_FILE_PATH_RESOLVE_TIMEOUT_MS = 1500;
 
 export const DEFAULT_APP_SETTINGS: AppSettingsSnapshot = {
-    max_concurrency: 8,
+    max_concurrency: 4,
     output_prefix: 'IF',
     output_template: '{prefix}{basename}',
     preserve_folder_structure: true,

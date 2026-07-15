@@ -131,6 +131,43 @@ class PDFGenerationTests(unittest.TestCase):
         self.assertEqual(generator._temp_image_paths, [])
         self.assertTrue(all(not os.path.exists(path) for path in created_paths))
 
+    def test_generate_cleans_temp_images_when_build_content_fails(self):
+        image_path = self._path("source-fail.png")
+        out = self._path("fail.pdf")
+        Image.new("RGB", (32, 24), (10, 20, 30)).save(image_path)
+
+        generator = PDFGenerator()
+        created_paths: list[str] = []
+        original_create_temp = generator._create_temp_image_file
+
+        def record_temp_file(*args, **kwargs):
+            temp_path = original_create_temp(*args, **kwargs)
+            created_paths.append(temp_path)
+            return temp_path
+
+        def boom_build(*_args, **_kwargs):
+            # Simulate a mid-build failure after temp assets were staged.
+            staged = original_create_temp(Image.new("RGB", (8, 8), (1, 2, 3)), ".jpg", "JPEG", quality=80)
+            created_paths.append(staged)
+            raise RuntimeError("build content failed")
+
+        generator._create_temp_image_file = record_temp_file
+        generator._build_content = boom_build
+
+        result = generator.generate(
+            images=[image_path],
+            output_path=out,
+            page_size="A4",
+            layout="single",
+            compression_level=1,
+        )
+
+        self.assertFalse(result.get("success"))
+        self.assertIn("build content failed", str(result.get("error") or ""))
+        self.assertEqual(generator._temp_image_paths, [])
+        self.assertGreater(len(created_paths), 0)
+        self.assertTrue(all(not os.path.exists(path) for path in created_paths))
+
 
 if __name__ == "__main__":
     unittest.main()

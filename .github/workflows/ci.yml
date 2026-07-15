@@ -64,9 +64,11 @@ jobs:
         run: npm run build
 
       - name: Run Python tests
+        # backend/tests/engines is a package, so a single discover covers API + engines.
         run: uv run python -m unittest discover -s backend/tests -v
 
       - name: Run Python engine tests
+        # Keep an explicit engines-only step for targeted CI signal.
         run: uv run python -m unittest discover -s backend/tests/engines -v
 
       - name: Compile Python sources

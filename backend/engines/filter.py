@@ -564,26 +564,13 @@ class ImageFilterApplier:
                 base.close()
             return result
         except Exception:
-            return self._add_noise_slow(img, level)
+            logger.warning("Fast noise path failed; refusing slow per-pixel fallback for safety")
+            raise RuntimeError("Noise filter is unavailable in this environment")
 
     def _add_noise_slow(self, img, noise_level):
-        import random
+        # Kept for reference/tests; production path must not silently degrade to O(n²) loops.
+        raise RuntimeError("Slow noise fallback is disabled")
 
-        pixels = img.load()
-        width, height = img.size
-
-        for y in range(height):
-            for x in range(width):
-                r, g, b = pixels[x, y]
-                noise = int((random.random() - 0.5) * 256 * noise_level)
-                pixels[x, y] = (
-                    max(0, min(255, r + noise)),
-                    max(0, min(255, g + noise)),
-                    max(0, min(255, b + noise))
-                )
-
-        return img
-    
     def _add_vignette(self, img, strength):
         """Add a vignette effect to an image."""
         try:
@@ -611,40 +598,17 @@ class ImageFilterApplier:
             gradient.close()
             return result
         except Exception:
-            return self._add_vignette_slow(img, level)
+            logger.warning("Fast vignette path failed; refusing slow ellipse fallback for safety")
+            raise RuntimeError("Vignette filter is unavailable in this environment")
 
     def _add_vignette_slow(self, img, strength):
-        width, height = img.size
+        raise RuntimeError("Slow vignette fallback is disabled")
 
-        overlay = Image.new('L', (width, height), 0)
-        draw = ImageDraw.Draw(overlay)
-
-        center_x, center_y = width // 2, height // 2
-        max_radius = int((width ** 2 + height ** 2) ** 0.5 / 2)
-
-        for radius in range(max_radius, 0, -1):
-            alpha = int(255 * (1 - (radius / max_radius) ** 2) * strength)
-            draw.ellipse([
-                center_x - radius, center_y - radius,
-                center_x + radius, center_y + radius
-            ], fill=alpha)
-
-        img_with_vignette = img.copy()
-        img_with_vignette.putalpha(overlay)
-
-        vignette_rgb = img_with_vignette.convert('RGB')
-        result = Image.blend(img, vignette_rgb, strength)
-        # Close intermediates
-        vignette_rgb.close()
-        img_with_vignette.close()
-        overlay.close()
-        return result
-    
     def _add_color_offset(self, img, offset_x, offset_y):
         """Add RGB color offset (chromatic aberration effect)."""
         if offset_x == 0 and offset_y == 0:
             return img
-        
+
         r, g, b = img.split()
         shifted_r = None
         shifted_b = None

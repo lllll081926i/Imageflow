@@ -61,7 +61,10 @@ backend/embedded_python_runtime/
 
 # Release outputs
 artifacts/
+build/
 build/release/
+*.md5
+.tmp*
 
 # Test outputs & local fixtures
 test/

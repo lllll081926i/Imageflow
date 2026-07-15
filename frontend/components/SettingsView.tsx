@@ -27,7 +27,7 @@ const SettingsView: React.FC = () => {
             setLoading(true);
             const app = getAppBindings();
             if (!app?.GetSettings) {
-                setMessage('未检测到 Wails 运行环境');
+                setMessage('未检测到桌面宿主运行环境');
                 setLoading(false);
                 return;
             }

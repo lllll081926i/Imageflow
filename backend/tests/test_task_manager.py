@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest import mock
 
 from backend.application import image_ops
 from backend.application.task_manager import TaskManager
@@ -6,6 +8,16 @@ from backend.contracts.settings import AppSettings
 
 
 class TaskManagerTests(unittest.TestCase):
+    def setUp(self):
+        os.environ["IMAGEFLOW_DISABLE_PROCESS_POOL"] = "1"
+        image_ops._pool_disabled = True
+        image_ops.reset_process_pool_for_tests()
+
+    def tearDown(self):
+        os.environ.pop("IMAGEFLOW_DISABLE_PROCESS_POOL", None)
+        image_ops._pool_disabled = False
+        image_ops.reset_process_pool_for_tests()
+
     def test_begin_and_cancel_task(self):
         manager = TaskManager()
 
@@ -40,205 +52,115 @@ class TaskManagerTests(unittest.TestCase):
         self.assertTrue(manager.cancel_current_task())
         self.assertTrue(manager.is_cancelled(second))
 
-    def test_execute_engine_batch_reuses_worker_processes(self):
-        original_process = image_ops.Process
-        original_queue = image_ops.Queue
-        original_invoke = image_ops.invoke_engine_process
-        started_processes: list[object] = []
+    def test_execute_engine_batch_preserves_order_with_pool_disabled(self):
+        original_job = image_ops._invoke_engine_job
+        calls: list[int] = []
 
-        class InMemoryQueue:
-            def __init__(self):
-                self.items = []
-
-            def put(self, item):
-                self.items.append(item)
-
-            def get(self, timeout=None):
-                if not self.items:
-                    raise image_ops.Empty()
-                return self.items.pop(0)
-
-            def get_nowait(self):
-                return self.get()
-
-        class FakeProcess:
-            def __init__(self, target, args):
-                self._target = target
-                self._args = args
-                self._alive = False
-
-            def start(self):
-                started_processes.append(self)
-                self._alive = True
-                self._target(*self._args)
-                self._alive = False
-
-            def is_alive(self):
-                return self._alive
-
-            def terminate(self):
-                self._alive = False
-
-            def join(self):
-                return None
+        def fake_job(_module, payload):
+            calls.append(payload["value"])
+            return {"success": True, "value": payload["value"]}
 
         try:
-            image_ops.Process = FakeProcess
-            image_ops.Queue = InMemoryQueue
-            image_ops.invoke_engine_process = lambda _module, payload: {"success": True, "value": payload["value"]}
+            image_ops._invoke_engine_job = fake_job
             manager = TaskManager()
             task_id = manager.begin_task("batch")
-
             results = image_ops.execute_engine_batch(
                 "converter",
                 [{"value": index} for index in range(5)],
                 AppSettings(max_concurrency=2),
                 manager,
             )
-
             self.assertEqual([item["value"] for item in results], [0, 1, 2, 3, 4])
-            self.assertEqual(len(started_processes), 2)
+            self.assertEqual(calls, [0, 1, 2, 3, 4])
             manager.finish_task(task_id)
         finally:
-            image_ops.Process = original_process
-            image_ops.Queue = original_queue
-            image_ops.invoke_engine_process = original_invoke
+            image_ops._invoke_engine_job = original_job
 
-    def test_execute_engine_skips_starting_process_for_cancelled_task(self):
-        original_process = image_ops.Process
-        process_started = False
+    def test_execute_engine_skips_work_for_cancelled_task(self):
+        called = {"value": False}
 
-        class FailingProcess:
-            def __init__(self, target, args):
-                self._target = target
-                self._args = args
+        def boom(_module, _payload):
+            called["value"] = True
+            raise AssertionError("cancelled task should not run")
 
-            def start(self):
-                nonlocal process_started
-                process_started = True
-                raise AssertionError("cancelled task should not start a process")
-
+        original_job = image_ops._invoke_engine_job
         try:
-            image_ops.Process = FailingProcess
+            image_ops._invoke_engine_job = boom
             manager = TaskManager()
             task_id = manager.begin_task("info", set_current=False)
             manager.cancel_task(task_id)
-
             result = image_ops.execute_engine("info_viewer", {"input_path": "D:/dummy.png"}, manager, task_id=task_id)
-
             self.assertEqual(result, {"success": False, "error": "[PY_CANCELLED] operation cancelled"})
-            self.assertFalse(process_started)
+            self.assertFalse(called["value"])
         finally:
-            image_ops.Process = original_process
+            image_ops._invoke_engine_job = original_job
 
-    def test_execute_engine_closes_queue_when_process_start_fails(self):
-        original_process = image_ops.Process
-        original_queue = image_ops.Queue
-        closed_queues: list[object] = []
+    def test_execute_engine_batch_marks_remaining_cancelled(self):
+        original_job = image_ops._invoke_engine_job
 
-        class FakeQueue:
-            def close(self):
-                closed_queues.append(self)
-
-            def join_thread(self):
-                return None
-
-        class FailingProcess:
-            def __init__(self, target, args):
-                self._target = target
-                self._args = args
-
-            def start(self):
-                raise RuntimeError("start failed")
+        def fake_job(_module, payload):
+            return {"success": True, "value": payload["value"]}
 
         try:
-            image_ops.Process = FailingProcess
-            image_ops.Queue = FakeQueue
-
-            with self.assertRaises(RuntimeError):
-                image_ops.execute_engine("converter", {"input_path": "D:/dummy.png"})
-
-            self.assertEqual(len(closed_queues), 1)
-        finally:
-            image_ops.Process = original_process
-            image_ops.Queue = original_queue
-
-    def test_execute_engine_batch_cleans_started_workers_when_later_start_fails(self):
-        original_process = image_ops.Process
-        original_queue = image_ops.Queue
-        original_invoke = image_ops.invoke_engine_process
-        created_processes: list[object] = []
-        closed_queues: list[object] = []
-
-        class FakeQueue:
-            def __init__(self):
-                self.items = []
-
-            def put(self, item):
-                self.items.append(item)
-
-            def get(self, timeout=None):
-                if not self.items:
-                    raise image_ops.Empty()
-                return self.items.pop(0)
-
-            def get_nowait(self):
-                return self.get()
-
-            def close(self):
-                closed_queues.append(self)
-
-            def join_thread(self):
-                return None
-
-        class SometimesFailingProcess:
-            def __init__(self, target, args):
-                self._target = target
-                self._args = args
-                self._alive = False
-                self.terminated = False
-                created_processes.append(self)
-
-            def start(self):
-                if len(created_processes) == 2:
-                    raise RuntimeError("second worker failed")
-                self._alive = True
-
-            def is_alive(self):
-                return self._alive
-
-            def terminate(self):
-                self.terminated = True
-                self._alive = False
-
-            def kill(self):
-                self._alive = False
-
-            def join(self, timeout=None):
-                return None
-
-        try:
-            image_ops.Process = SometimesFailingProcess
-            image_ops.Queue = FakeQueue
-            image_ops.invoke_engine_process = lambda _module, payload: {"success": True, "value": payload["value"]}
+            image_ops._invoke_engine_job = fake_job
             manager = TaskManager()
             task_id = manager.begin_task("batch")
+            manager.cancel_task(task_id)
+            results = image_ops.execute_engine_batch(
+                "converter",
+                [{"value": 1}, {"value": 2}],
+                AppSettings(max_concurrency=2),
+                manager,
+            )
+            self.assertTrue(all(item.get("success") is False for item in results))
+            self.assertTrue(all("[PY_CANCELLED]" in str(item.get("error") or "") for item in results))
+            manager.finish_task(task_id)
+        finally:
+            image_ops._invoke_engine_job = original_job
 
-            with self.assertRaises(RuntimeError):
-                image_ops.execute_engine_batch(
+    def test_process_pool_enabled_uses_executor(self):
+        # Temporarily enable pool path and stub executor.
+        image_ops._pool_disabled = False
+        image_ops.reset_process_pool_for_tests()
+        submit_calls: list[tuple] = []
+
+        class FakeFuture:
+            def __init__(self, value):
+                self._value = value
+
+            def done(self):
+                return True
+
+            def result(self, timeout=None):
+                return self._value
+
+            def cancel(self):
+                return True
+
+        class FakePool:
+            def submit(self, fn, module_name, payload):
+                submit_calls.append((module_name, payload))
+                return FakeFuture({"success": True, "value": payload["value"]})
+
+            def shutdown(self, wait=False, cancel_futures=False):
+                return None
+
+        with mock.patch.object(image_ops, "_get_pool", return_value=FakePool()):
+            with mock.patch.object(image_ops, "wait", side_effect=lambda done_set, timeout=None, return_when=None: (set(done_set), set())):
+                manager = TaskManager()
+                task_id = manager.begin_task("batch")
+                results = image_ops.execute_engine_batch(
                     "converter",
-                    [{"value": index} for index in range(3)],
+                    [{"value": 7}, {"value": 8}],
                     AppSettings(max_concurrency=2),
                     manager,
                 )
+                manager.finish_task(task_id)
 
-            self.assertTrue(created_processes[0].terminated)
-            self.assertEqual(len(closed_queues), 2)
-            manager.finish_task(task_id)
-        finally:
-            image_ops.Process = original_process
-            image_ops.Queue = original_queue
-            image_ops.invoke_engine_process = original_invoke
+        self.assertEqual([item["value"] for item in results], [7, 8])
+        self.assertEqual(len(submit_calls), 2)
+        image_ops._pool_disabled = True
+        image_ops.reset_process_pool_for_tests()
 
 
 if __name__ == "__main__":

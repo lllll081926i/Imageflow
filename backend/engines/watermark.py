@@ -293,8 +293,9 @@ class WatermarkApplier:
 
     def _build_text_watermark(self, text, font, font_size, font_color, opacity, shadow):
         try:
+            safe_font_size = max(8, min(int(font_size or 36), 512))
             try:
-                pil_font = ImageFont.truetype(font, font_size)
+                pil_font = ImageFont.truetype(font, safe_font_size)
             except Exception:
                 logger.warning(f"Font '{font}' not found, using default font")
                 pil_font = ImageFont.load_default()
@@ -306,6 +307,22 @@ class WatermarkApplier:
             text_height = max(1, bbox[3] - bbox[1])
             tmp.close()
 
+            # Cap text canvas so extreme font_size/text length cannot OOM the worker.
+            max_text_edge = 4096
+            if text_width > max_text_edge or text_height > max_text_edge:
+                scale = min(max_text_edge / float(text_width), max_text_edge / float(text_height))
+                safe_font_size = max(8, int(safe_font_size * scale))
+                try:
+                    pil_font = ImageFont.truetype(font, safe_font_size)
+                except Exception:
+                    pil_font = ImageFont.load_default()
+                tmp = Image.new('RGBA', (10, 10), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(tmp)
+                bbox = draw.textbbox((0, 0), text, font=pil_font)
+                text_width = max(1, min(max_text_edge, bbox[2] - bbox[0]))
+                text_height = max(1, min(max_text_edge, bbox[3] - bbox[1]))
+                tmp.close()
+
             color = self._parse_color(font_color, opacity)
             text_img = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
             text_draw = ImageDraw.Draw(text_img)
@@ -314,8 +331,8 @@ class WatermarkApplier:
             if not shadow:
                 return text_img
 
-            shadow_offset = max(2, int(font_size * 0.08))
-            shadow_radius = max(1, int(font_size * 0.06))
+            shadow_offset = max(2, int(safe_font_size * 0.08))
+            shadow_radius = max(1, int(safe_font_size * 0.06))
             shadow_color = (0, 0, 0, int(255 * opacity * 0.5))
             shadow_canvas = Image.new(
                 'RGBA',
@@ -326,6 +343,7 @@ class WatermarkApplier:
             shadow_draw.text((shadow_offset, shadow_offset), text, font=pil_font, fill=shadow_color)
             shadow_canvas = shadow_canvas.filter(ImageFilter.GaussianBlur(radius=shadow_radius))
             shadow_canvas.paste(text_img, (shadow_offset, shadow_offset), text_img)
+            text_img.close()
             return shadow_canvas
         except Exception as e:
             logger.error(f"Failed to build text watermark: {e}")

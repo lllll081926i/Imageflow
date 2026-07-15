@@ -198,6 +198,7 @@ def _probe_animated_path(input_path: str) -> dict[str, Any]:
     normalized_path = raw_path
     try:
         normalized_path = normalize_user_supplied_path(raw_path)
+        # Only need container metadata; avoid full pixel decode when possible.
         with Image.open(normalized_path) as image:
             frame_count = int(getattr(image, "n_frames", 1) or 1)
             return {
@@ -236,6 +237,33 @@ def _probe_animated_path(input_path: str) -> dict[str, Any]:
         }
 
 
+_probe_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
+_PROBE_CACHE_MAX = 256
+
+
+def _probe_cache_key(path: str) -> tuple[str, int, int] | None:
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    return (path, int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))), int(st.st_size))
+
+
+def _probe_animated_path_cached(input_path: str) -> dict[str, Any]:
+    key = _probe_cache_key(str(input_path or "").strip())
+    if key is not None:
+        cached = _probe_cache.get(key)
+        if cached is not None:
+            return dict(cached)
+    result = _probe_animated_path(input_path)
+    if key is not None and not result.get("error"):
+        _probe_cache[key] = dict(result)
+        if len(_probe_cache) > _PROBE_CACHE_MAX:
+            # Drop an arbitrary old entry (FIFO-ish via iterator order).
+            _probe_cache.pop(next(iter(_probe_cache)), None)
+    return result
+
+
 class DesktopAPI:
     def __init__(self, task_manager: Any | None = None):
         self._task_manager_instance = task_manager
@@ -261,6 +289,47 @@ class DesktopAPI:
             return handler()
         except Exception as exc:
             return {"success": False, "error": str(exc)}
+        finally:
+            self._task_manager.finish_task(task_id)
+
+    def _run_batch_operation(self, payloads: list[dict], handler):
+        """Always return list[dict] so frontend never mistakes an error envelope for success."""
+        items = list(payloads or [])
+        if not items:
+            return []
+        task_id = self._task_manager.begin_task("operation")
+        try:
+            result = handler()
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict):
+                error = str(result.get("error") or "批处理失败")
+                return [
+                    {
+                        "success": False,
+                        "error": error,
+                        "input_path": str(item.get("input_path") or ""),
+                    }
+                    for item in items
+                ]
+            return [
+                {
+                    "success": False,
+                    "error": "批处理返回格式异常",
+                    "input_path": str(item.get("input_path") or ""),
+                }
+                for item in items
+            ]
+        except Exception as exc:
+            error = str(exc)
+            return [
+                {
+                    "success": False,
+                    "error": error,
+                    "input_path": str(item.get("input_path") or ""),
+                }
+                for item in items
+            ]
         finally:
             self._task_manager.finish_task(task_id)
 
@@ -315,17 +384,34 @@ class DesktopAPI:
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
+    def resolve_output_paths(self, payload: dict) -> dict:
+        """Batch resolve unique output paths to avoid N bridge round-trips."""
+        try:
+            items = payload.get("items") if isinstance(payload, dict) else None
+            if not isinstance(items, list):
+                return {"success": False, "error": "Missing items list", "paths": []}
+            reserved = [str(item) for item in (payload.get("reserved") or []) if str(item).strip()]
+            resolved: list[str] = []
+            for raw in items:
+                base = normalize_user_supplied_path(str(raw or ""))
+                output_path = resolve_output_path(base, reserved)
+                resolved.append(output_path)
+                reserved.append(output_path)
+            return {"success": True, "paths": resolved}
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "paths": []}
+
     def list_system_fonts(self) -> list[str]:
         return list_system_fonts()
 
     def get_image_preview(self, payload: dict) -> dict:
-        from backend.application.preview import build_image_preview
+        from backend.application.preview import build_image_preview_smart
 
         normalized = _normalize_payload_paths(payload)
         input_path = normalized.get("input_path")
         if not input_path:
             return {"success": False, "error": "Missing input_path in payload"}
-        return build_image_preview(input_path)
+        return build_image_preview_smart(str(input_path))
 
     def get_info(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
@@ -361,8 +447,9 @@ class DesktopAPI:
 
     def convert_batch(self, payloads: list[dict]) -> list[dict]:
         normalized = [_normalize_payload_paths(item) for item in payloads]
-        return self._run_operation(
-            lambda: execute_engine_batch("converter", normalized, self._settings(), self._task_manager)
+        return self._run_batch_operation(
+            normalized,
+            lambda: execute_engine_batch("converter", normalized, self._settings(), self._task_manager),
         )
 
     def compress(self, payload: dict) -> dict:
@@ -371,8 +458,9 @@ class DesktopAPI:
 
     def compress_batch(self, payloads: list[dict]) -> list[dict]:
         normalized = [_normalize_payload_paths(item) for item in payloads]
-        return self._run_operation(
-            lambda: execute_engine_batch("compressor", normalized, self._settings(), self._task_manager)
+        return self._run_batch_operation(
+            normalized,
+            lambda: execute_engine_batch("compressor", normalized, self._settings(), self._task_manager),
         )
 
     def generate_pdf(self, payload: dict) -> dict:
@@ -385,7 +473,7 @@ class DesktopAPI:
 
     def probe_animated_paths(self, paths: list[str]) -> list[dict]:
         normalized_paths = [str(path) for path in paths if str(path).strip()]
-        return [_probe_animated_path(path) for path in normalized_paths]
+        return [_probe_animated_path_cached(path) for path in normalized_paths]
 
     def generate_subtitle_long_image(self, payload: dict) -> dict:
         normalized = _normalize_payload_paths(payload)
@@ -397,8 +485,9 @@ class DesktopAPI:
 
     def add_watermark_batch(self, payloads: list[dict]) -> list[dict]:
         normalized = [_normalize_payload_paths(item) for item in payloads]
-        return self._run_operation(
-            lambda: execute_engine_batch("watermark", normalized, self._settings(), self._task_manager)
+        return self._run_batch_operation(
+            normalized,
+            lambda: execute_engine_batch("watermark", normalized, self._settings(), self._task_manager),
         )
 
     def adjust(self, payload: dict) -> dict:
@@ -407,8 +496,9 @@ class DesktopAPI:
 
     def adjust_batch(self, payloads: list[dict]) -> list[dict]:
         normalized = [_normalize_payload_paths(item) for item in payloads]
-        return self._run_operation(
-            lambda: execute_engine_batch("adjuster", normalized, self._settings(), self._task_manager)
+        return self._run_batch_operation(
+            normalized,
+            lambda: execute_engine_batch("adjuster", normalized, self._settings(), self._task_manager),
         )
 
     def apply_filter(self, payload: dict) -> dict:
@@ -417,8 +507,9 @@ class DesktopAPI:
 
     def apply_filter_batch(self, payloads: list[dict]) -> list[dict]:
         normalized = [_normalize_payload_paths(item) for item in payloads]
-        return self._run_operation(
-            lambda: execute_engine_batch("filter", normalized, self._settings(), self._task_manager)
+        return self._run_batch_operation(
+            normalized,
+            lambda: execute_engine_batch("filter", normalized, self._settings(), self._task_manager),
         )
 
     def cancel_processing(self) -> bool:
@@ -483,6 +574,9 @@ class DesktopAPI:
 
     def ResolveOutputPath(self, payload: dict) -> dict:
         return self.resolve_output_path(payload)
+
+    def ResolveOutputPaths(self, payload: dict) -> dict:
+        return self.resolve_output_paths(payload)
 
     def ListSystemFonts(self) -> list[str]:
         return self.list_system_fonts()

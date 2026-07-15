@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import { WindowControls } from './components/WindowControls';
 import Icon from './components/Icon';
+import ErrorBoundary from './components/ErrorBoundary';
 import { ViewState, Theme, FeatureId } from './types';
 import { FEATURES } from './constants';
 
@@ -304,27 +305,29 @@ const App: React.FC = () => {
                                     <Dashboard onSelect={handleNavigate} />
                                 </div>
                                 <React.Suspense fallback={<div className="h-full" />}>
-                                    <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
-                                        {activeView === 'settings' && <SettingsView />}
-                                    </div>
-                                    {isFeatureView && (
-                                        <div className="h-full">
-                                            {activeView === 'subtitle_stitch' ? (
-                                                <SubtitleStitchPage
-                                                    isActive={true}
-                                                    onTaskFailure={handleTaskFailure}
-                                                />
-                                            ) : (
-                                                <DetailView
-                                                    key={activeView}
-                                                    id={activeView}
-                                                    isActive={true}
-                                                    onBack={handleBack}
-                                                    onTaskFailure={handleTaskFailure}
-                                                />
-                                            )}
+                                    <ErrorBoundary title="页面渲染出错">
+                                        <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
+                                            {activeView === 'settings' && <SettingsView />}
                                         </div>
-                                    )}
+                                        {isFeatureView && (
+                                            <div className="h-full">
+                                                {activeView === 'subtitle_stitch' ? (
+                                                    <SubtitleStitchPage
+                                                        isActive={true}
+                                                        onTaskFailure={handleTaskFailure}
+                                                    />
+                                                ) : (
+                                                    <DetailView
+                                                        key={activeView}
+                                                        id={activeView}
+                                                        isActive={true}
+                                                        onBack={handleBack}
+                                                        onTaskFailure={handleTaskFailure}
+                                                    />
+                                                )}
+                                            </div>
+                                        )}
+                                    </ErrorBoundary>
                                 </React.Suspense>
                             </div>
                         </div>

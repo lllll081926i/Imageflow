@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef, memo } from 'react';
-import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
@@ -17,6 +16,40 @@ import {
 import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
+import { useThrottledProgress } from './hooks/useThrottledProgress';
+import { useImagePreview } from './hooks/useImagePreview';
+import {
+    useConverterParams,
+    useCompressorParams,
+    usePdfParams,
+    useAdjustParams,
+    useFilterParams,
+    useGifParams,
+    useWatermarkParams,
+} from './hooks/useFeatureParams';
+import {
+    defaultOutputSettings,
+    loadFeaturePresetStore,
+    saveFeaturePresetStore,
+    type DroppedFile,
+    type ExpandDroppedPathsResult,
+    type FeaturePreset,
+    type FeaturePresetStore,
+    type OutputSettings,
+    getBatchChunkSize as sharedGetBatchChunkSize,
+    normalizePath as sharedNormalizePath,
+    dirname as sharedDirname,
+    joinPath as sharedJoinPath,
+    basename as sharedBasename,
+    stripExtension as sharedStripExtension,
+    extname as sharedExtname,
+    clampNumber as sharedClampNumber,
+} from './detail/detailTypes';
+import {
+    isCancellationError,
+    normalizeBatchResults,
+    summarizeBatchProgress,
+} from './batchHelpers';
 import {
     DEFAULT_APP_SETTINGS,
     getAppBindings,
@@ -24,6 +57,14 @@ import {
     updateRecentPaths,
 } from '../types/wails-api';
 import type { models } from '../types/backend-models';
+import { ConverterSettings } from './detail/ConverterSettingsPanel';
+import { CompressorSettings } from './detail/CompressorSettingsPanel';
+import { WatermarkSettings } from './detail/WatermarkSettingsPanel';
+import { AdjustCropControls, AdjustSettings } from './detail/AdjustSettingsPanel';
+import { FILTER_LABELS, FILTER_PRESETS, FilterControls, FilterSettings } from './detail/FilterSettingsPanel';
+import { PdfSettings } from './detail/PdfSettingsPanel';
+import { InfoSettings } from './detail/InfoSettingsPanel';
+import { runGenericBatch, runConvertBatch, runCompressBatch } from './detail/batchRunners';
 
 const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
     '.jpg',
@@ -83,1472 +124,7 @@ interface DetailViewProps {
     onTaskFailure?: (payload: { taskName: string; imageName: string; reason: string }) => void;
 }
 
-type DroppedFile = {
-    input_path: string;
-    source_root: string;
-    relative_path: string;
-    is_from_dir_drop: boolean;
-};
 
-type ExpandDroppedPathsResult = {
-    files: DroppedFile[];
-    has_directory: boolean;
-};
-
-type OutputSettings = {
-    output_prefix: string;
-    output_template: string;
-    preserve_folder_structure: boolean;
-    conflict_strategy: string;
-};
-
-type FeaturePreset = {
-    id: string;
-    name: string;
-    feature_id: string;
-    created_at: number;
-    updated_at: number;
-    payload: Record<string, any>;
-};
-
-type FeaturePresetStore = Record<string, FeaturePreset[]>;
-
-const defaultOutputSettings: OutputSettings = {
-    output_prefix: 'IF',
-    output_template: '{prefix}{basename}',
-    preserve_folder_structure: true,
-    conflict_strategy: 'rename',
-};
-
-const FEATURE_PRESETS_STORAGE_KEY = 'imageflow:feature-presets:v1';
-
-function loadFeaturePresetStore(): FeaturePresetStore {
-    try {
-        const raw = window.localStorage?.getItem(FEATURE_PRESETS_STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return {};
-        const store: FeaturePresetStore = {};
-        Object.keys(parsed).forEach((featureId) => {
-            const items = Array.isArray((parsed as any)[featureId]) ? (parsed as any)[featureId] : [];
-            store[featureId] = items
-                .map((item: any) => ({
-                    id: typeof item?.id === 'string' ? item.id : `${featureId}-${Date.now()}`,
-                    name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : '未命名预设',
-                    feature_id: featureId,
-                    created_at: Number(item?.created_at) || Date.now(),
-                    updated_at: Number(item?.updated_at) || Date.now(),
-                    payload: item?.payload && typeof item.payload === 'object' ? item.payload : {},
-                }))
-                .sort((a, b) => b.updated_at - a.updated_at);
-        });
-        return store;
-    } catch {
-        return {};
-    }
-}
-
-function saveFeaturePresetStore(store: FeaturePresetStore) {
-    try {
-        window.localStorage?.setItem(FEATURE_PRESETS_STORAGE_KEY, JSON.stringify(store));
-    } catch {
-        // ignore storage failures
-    }
-}
-
-// --- Feature Settings Panels (Memoized) ---
-
-type ConverterSettingsProps = {
-    format: string;
-    setFormat: (v: string) => void;
-    quality: number;
-    setQuality: (v: number) => void;
-    compressLevel: number;
-    setCompressLevel: (v: number) => void;
-    icoSizes: number[];
-    setIcoSizes: (v: number[]) => void;
-    resizeMode: string;
-    setResizeMode: (v: string) => void;
-    scalePercent: number;
-    setScalePercent: (v: number) => void;
-    fixedWidth: number;
-    setFixedWidth: (v: number) => void;
-    fixedHeight: number;
-    setFixedHeight: (v: number) => void;
-    longEdge: number;
-    setLongEdge: (v: number) => void;
-    keepMetadata: boolean;
-    setKeepMetadata: (v: boolean) => void;
-    maintainAR: boolean;
-    setMaintainAR: (v: boolean) => void;
-    overwriteSource: boolean;
-    setOverwriteSource: (v: boolean) => void;
-};
-
-const ConverterSettings = memo(({
-    format,
-    setFormat,
-    quality,
-    setQuality,
-    compressLevel,
-    setCompressLevel,
-    icoSizes,
-    setIcoSizes,
-    resizeMode,
-    setResizeMode,
-    scalePercent,
-    setScalePercent,
-    fixedWidth,
-    setFixedWidth,
-    fixedHeight,
-    setFixedHeight,
-    longEdge,
-    setLongEdge,
-    keepMetadata,
-    setKeepMetadata,
-    maintainAR,
-    setMaintainAR,
-    overwriteSource,
-    setOverwriteSource,
-}: ConverterSettingsProps) => {
-
-    const toggleIcoSize = (size: number) => {
-        if (icoSizes.includes(size)) {
-            setIcoSizes(icoSizes.filter(s => s !== size));
-        } else {
-            setIcoSizes([...icoSizes, size].sort((a, b) => a - b));
-        }
-    };
-
-    return (
-        <div className="space-y-4">
-            {/* Top Row: Format & Quality/Compression */}
-            <div className="grid grid-cols-[1fr_2fr] gap-4">
-                <CustomSelect 
-                    label="目标格式" 
-                    options={['JPG', 'PNG', 'WEBP', 'AVIF', 'TIFF', 'ICO', 'BMP']} 
-                    value={format}
-                    onChange={setFormat}
-                />
-                
-                {['JPG', 'WEBP', 'AVIF'].includes(format) && (
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出质量</label>
-                        <div className="h-10 flex items-center">
-                            <StyledSlider value={quality} onChange={setQuality} unit="%" className="w-full" />
-                        </div>
-                    </div>
-                )}
-
-                {format === 'PNG' && (
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">压缩级别 (0-9)</label>
-                        <div className="h-10 flex items-center">
-                            <StyledSlider value={compressLevel} min={0} max={9} onChange={setCompressLevel} className="w-full" />
-                        </div>
-                    </div>
-                )}
-                
-                {format === 'ICO' && (
-                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">包含尺寸</label>
-                        <div className="flex flex-wrap gap-2 pt-1">
-                            {[16, 32, 48, 64, 128, 256].map(s => (
-                                <button 
-                                    key={s}
-                                    onClick={() => toggleIcoSize(s)}
-                                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
-                                        icoSizes.includes(s) 
-                                        ? 'bg-[#007AFF] border-[#007AFF] text-white' 
-                                        : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:border-[#007AFF]/50'
-                                    }`}
-                                >
-                                    {s}px
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {!['JPG', 'WEBP', 'AVIF', 'PNG', 'ICO'].includes(format) && (
-                    <div className="flex items-center justify-center h-full pt-6">
-                        <span className="text-xs text-gray-400">无额外设置</span>
-                    </div>
-                )}
-            </div>
-
-            {/* Middle Row: Resize Mode Buttons */}
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">尺寸调整</label>
-                <SegmentedControl 
-                    options={['原图', '比例', '固定', '长边']}
-                    value={resizeMode === '原图尺寸' ? '原图' : resizeMode === '按比例' ? '比例' : resizeMode === '固定宽高' ? '固定' : '长边'}
-                    onChange={(v) => setResizeMode(v === '原图' ? '原图尺寸' : v === '比例' ? '按比例' : v === '固定' ? '固定宽高' : '最长边')}
-                />
-            </div>
-
-            {resizeMode === '按比例' && (
-                 <StyledSlider label="缩放比例" value={scalePercent} min={1} max={200} unit="%" onChange={setScalePercent} />
-            )}
-
-            {resizeMode === '固定宽高' && (
-                <div className="flex flex-col gap-3 animate-enter">
-                    <div className="flex gap-3">
-                        <div className="flex-1 space-y-1">
-                            <label className="text-xs text-gray-500">宽度 (px)</label>
-                            <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
-                        </div>
-                        <div className="flex-1 space-y-1">
-                            <label className="text-xs text-gray-500">高度 (px)</label>
-                            <input type="number" value={fixedHeight || ''} onChange={e => setFixedHeight(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
-                        </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                             保持纵横比
-                             <span className="block text-xs font-normal text-gray-500 mt-0.5">
-                                 若关闭则强制拉伸至指定宽高
-                             </span>
-                         </label>
-                         <Switch checked={maintainAR} onChange={setMaintainAR} />
-                    </div>
-                </div>
-            )}
-
-            {resizeMode === '最长边' && (
-                <div className="flex gap-3 animate-enter">
-                    <div className="flex-1 space-y-1">
-                        <label className="text-xs text-gray-500">最长边 (px)</label>
-                        <input type="number" value={longEdge || ''} onChange={e => setLongEdge(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="2048" />
-                    </div>
-                    <div className="flex-1" />
-                </div>
-            )}
-
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <Switch label="保留元数据 (EXIF)" checked={keepMetadata} onChange={setKeepMetadata} />
-            </div>
-
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
-            </div>
-        </div>
-    );
-});
-
-type CompressorSettingsProps = {
-    mode: string;
-    setMode: (v: string) => void;
-    targetSize: boolean;
-    setTargetSize: (v: boolean) => void;
-    targetSizeKB: number;
-    setTargetSizeKB: (v: number) => void;
-    engine: string;
-    setEngine: (v: string) => void;
-    overwriteSource: boolean;
-    setOverwriteSource: (v: boolean) => void;
-};
-
-const CompressorSettings = memo(({
-    mode,
-    setMode,
-    targetSize,
-    setTargetSize,
-    targetSizeKB,
-    setTargetSizeKB,
-    engine,
-    setEngine,
-    overwriteSource,
-    setOverwriteSource,
-}: CompressorSettingsProps) => {
-    
-    return (
-        <div className="space-y-6">
-            <div className="space-y-4">
-                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">压缩策略</label>
-                 <SegmentedControl 
-                    options={['无损', '轻度', '标准', '强力', '极限']}
-                    value={mode}
-                    onChange={setMode}
-                 />
-            </div>
-
-            <CustomSelect label="压缩引擎" options={['自动 (推荐)', 'MozJPEG (JPEG)', 'PNGQuant (PNG)', 'OxiPNG (PNG 无损)', 'Pillow (兼容)']} value={engine} onChange={setEngine} />
-
-            <div className="space-y-4 pt-2">
-                <Switch label="指定目标大小限制 (KB)" checked={targetSize} onChange={setTargetSize} />
-                {targetSize && (
-                     <div className="animate-enter">
-                        <input type="number" value={targetSizeKB} onChange={e => setTargetSizeKB(Number(e.target.value))} placeholder="例如: 500" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                     </div>
-                )}
-            </div>
-
-            <div className="pt-2 border-t border-gray-100 dark:border-white/5 space-y-3">
-                <Switch label="直接覆盖源文件" checked={overwriteSource} onChange={setOverwriteSource} />
-            </div>
-        </div>
-    );
-});
-
-type WatermarkSettingsProps = {
-    type: string;
-    setType: (v: string) => void;
-    text: string;
-    setText: (v: string) => void;
-    imagePath: string;
-    setImagePath: (v: string) => void;
-    position: string;
-    setPosition: (v: string) => void;
-    opacity: number;
-    setOpacity: (v: number) => void;
-    rotate: number;
-    setRotate: (v: number) => void;
-    size: number;
-    setSize: (v: number) => void;
-    tiled: boolean;
-    setTiled: (v: boolean) => void;
-    blendMode: string;
-    setBlendMode: (v: string) => void;
-    shadow: boolean;
-    setShadow: (v: boolean) => void;
-    margin: { x: number; y: number };
-    setMargin: (v: { x: number; y: number }) => void;
-    font: string;
-    setFont: (v: string) => void;
-    color: string;
-    setColor: (v: string) => void;
-    useSystemFonts: boolean;
-    setUseSystemFonts: (v: boolean) => void;
-    isSystemFontsLoading: boolean;
-    fontOptions: Array<string | { label: string; value: string }>;
-    systemFontsCount: number;
-};
-
-const WatermarkSettings = memo(({
-    type,
-    setType,
-    text,
-    setText,
-    imagePath,
-    setImagePath,
-    position,
-    setPosition,
-    opacity,
-    setOpacity,
-    rotate,
-    setRotate,
-    size,
-    setSize,
-    tiled,
-    setTiled,
-    blendMode,
-    setBlendMode,
-    shadow,
-    setShadow,
-    margin,
-    setMargin,
-    font,
-    setFont,
-    color,
-    setColor,
-    useSystemFonts,
-    setUseSystemFonts,
-    isSystemFontsLoading,
-    fontOptions,
-    systemFontsCount,
-}: WatermarkSettingsProps) => {
-    const [colorInput, setColorInput] = useState(color.toUpperCase());
-    const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-    const [colorPickerStyle, setColorPickerStyle] = useState<{ top: number; left: number } | null>(null);
-    const colorPickerRef = useRef<HTMLDivElement>(null);
-    const colorButtonRef = useRef<HTMLButtonElement>(null);
-    const colorPopoverRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        setColorInput(color.toUpperCase());
-    }, [color]);
-
-    useEffect(() => {
-        if (!isColorPickerOpen) return;
-        const handleClickOutside = (event: MouseEvent) => {
-            if (!(event.target instanceof Node)) return;
-            if (colorPickerRef.current?.contains(event.target)) return;
-            if (colorPopoverRef.current?.contains(event.target)) return;
-            setIsColorPickerOpen(false);
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isColorPickerOpen]);
-
-    useEffect(() => {
-        if (!isColorPickerOpen || !colorButtonRef.current) return;
-        const rect = colorButtonRef.current.getBoundingClientRect();
-        const popoverWidth = 192;
-        const left = Math.min(Math.max(8, rect.left), window.innerWidth - popoverWidth - 8);
-        const top = rect.bottom + 8;
-        setColorPickerStyle({ top, left });
-    }, [isColorPickerOpen]);
-
-    const presetColors = ['#FFFFFF', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#5AC8FA', '#5856D6', '#AF52DE', '#FF2D55', '#8E8E93'];
-    const normalizeHex = (value: string) => {
-        const trimmed = value.trim();
-        if (!trimmed) return '';
-        return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-    };
-    const isValidHex = (value: string) => /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(value);
-    const applyHex = (value: string) => {
-        const normalized = normalizeHex(value).toUpperCase();
-        if (isValidHex(normalized)) {
-            setColor(normalized);
-            return normalized;
-        }
-        return '';
-    };
-
-    const handleSelectImage = async () => {
-        try {
-            if (window.runtime?.OpenFileDialog) {
-                const res = await window.runtime.OpenFileDialog({
-                    title: '选择水印图片',
-                    canChooseFiles: true,
-                    canChooseDirectories: false,
-                    allowsMultipleSelection: false,
-                    filters: [{
-                        DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif"
-                    }]
-                } as any);
-                const picked = Array.isArray(res) ? res[0] : res;
-                if (typeof picked === 'string' && picked) {
-                    setImagePath(picked);
-                }
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    };
-    const imageLabel = imagePath ? imagePath.replace(/\\/g, '/').split('/').pop() || imagePath : '点击上传水印图';
-    const tileGapValue = Math.max(0, Math.round((margin.x + margin.y) / 2));
-
-    return (
-        <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="space-y-5">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
-                        <SegmentedControl options={['文字', '图片']} value={type} onChange={setType} />
-                    </div>
-
-                    {type === '文字' ? (
-                        <div className="space-y-3 animate-enter">
-                            <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                            <div className="flex gap-2 items-center">
-                                 <div ref={colorPickerRef} className="relative">
-                                     <button
-                                         ref={colorButtonRef}
-                                         type="button"
-                                         onClick={() => setIsColorPickerOpen(prev => !prev)}
-                                         className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
-                                         style={{ backgroundColor: color }}
-                                         aria-label="文字颜色"
-                                         title="文字颜色"
-                                     />
-                                     {isColorPickerOpen && colorPickerStyle && createPortal(
-                                         <div
-                                             ref={colorPopoverRef}
-                                             className="fixed z-[9999] w-48 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] shadow-xl p-3 animate-enter"
-                                             style={colorPickerStyle}
-                                         >
-                                             <div className="grid grid-cols-6 gap-1.5">
-                                                 {presetColors.map((hex) => (
-                                                     <button
-                                                         key={hex}
-                                                         type="button"
-                                                         onClick={() => {
-                                                             setColor(hex);
-                                                             setColorInput(hex);
-                                                             setIsColorPickerOpen(false);
-                                                         }}
-                                                         className={`w-6 h-6 rounded-full border transition-all ${color.toUpperCase() === hex ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : 'border-gray-200 dark:border-white/10 hover:scale-105'}`}
-                                                         style={{ backgroundColor: hex }}
-                                                         aria-label={`选择颜色 ${hex}`}
-                                                     />
-                                                 ))}
-                                             </div>
-                                             <div className="mt-3 flex items-center gap-2">
-                                                 <div
-                                                     className="w-7 h-7 rounded-md border border-gray-200 dark:border-white/10"
-                                                     style={{ backgroundColor: color }}
-                                                 />
-                                                 <input
-                                                     type="text"
-                                                     value={colorInput}
-                                                     onChange={(e) => {
-                                                         const next = e.target.value;
-                                                         setColorInput(next);
-                                                         applyHex(next);
-                                                     }}
-                                                     onBlur={() => {
-                                                         const applied = applyHex(colorInput);
-                                                         if (!applied) setColorInput(color);
-                                                     }}
-                                                     placeholder="#FFFFFF"
-                                                    className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
-                                                 />
-                                             </div>
-                                         </div>,
-                                         document.body
-                                     )}
-                                  </div>
-                                  <div className="flex-1">
-                                      <CustomSelect 
-                                         label="字体"
-                                         options={fontOptions} 
-                                         value={font} 
-                                         onChange={setFont} 
-                                      />
-                                  </div>
-                             </div>
-                             <div className="space-y-1.5">
-                                 <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
-                                 {useSystemFonts && (
-                                     <div className="text-xs text-gray-500">
-                                         {isSystemFontsLoading
-                                             ? '正在读取系统字体...'
-                                             : systemFontsCount > 0
-                                                 ? `已读取 ${systemFontsCount} 个字体文件`
-                                                 : '未检测到系统字体或读取失败'}
-                                     </div>
-                                 )}
-                             </div>
-                         </div>
-                     ) : (
-                         <button
-                             type="button"
-                             onClick={handleSelectImage}
-                             className="w-full h-28 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter"
-                         >
-                             <Icon name="Upload" size={20} className="mb-2 opacity-50" />
-                             <span className="text-xs text-gray-500">{imageLabel}</span>
-                        </button>
-                    )}
-                </div>
-                <div className="space-y-[18px]">
-                    <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
-                    <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
-                    <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
-                </div>
-                <div className="flex flex-col gap-4 min-w-0">
-                    <div className="space-y-2 w-full">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                        <div className="flex justify-center">
-                            <PositionGrid value={position} onChange={setPosition} />
-                        </div>
-                    </div>
-                    <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
-                </div>
-                <div className="flex flex-col gap-4 min-w-0">
-                    <div className="space-y-2 w-full">
-                        {tiled ? (
-                            <>
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
-                                <StyledSlider
-                                    value={tileGapValue}
-                                    min={0}
-                                    max={240}
-                                    unit="px"
-                                    onChange={(val) => setMargin({ x: val, y: val })}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
-                                <div className="grid grid-cols-1 gap-2 justify-items-center">
-                                    <div className="relative w-24">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
-                                        <input 
-                                            type="number" 
-                                            value={margin.x} 
-                                            onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                            className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                        />
-                                    </div>
-                                    <div className="relative w-24">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
-                                        <input 
-                                            type="number" 
-                                            value={margin.y} 
-                                            onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                            className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                        />
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
-                    <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
-                </div>
-            </div>
-        </div>
-    );
-});
-
-type AdjustSettingsProps = {
-    exposure: number;
-    setExposure: (v: number) => void;
-    contrast: number;
-    setContrast: (v: number) => void;
-    saturation: number;
-    setSaturation: (v: number) => void;
-    sharpness: number;
-    setSharpness: (v: number) => void;
-    vibrance: number;
-    setVibrance: (v: number) => void;
-    hue: number;
-    setHue: (v: number) => void;
-    showCrop?: boolean;
-    cropRatio?: string;
-    setCropRatio?: (v: string) => void;
-    rotate?: number;
-    setRotate?: (v: number) => void;
-    flipH?: boolean;
-    setFlipH?: (v: boolean) => void;
-    flipV?: boolean;
-    setFlipV?: (v: boolean) => void;
-};
-
-type AdjustCropControlsProps = {
-    cropRatio: string;
-    setCropRatio: (v: string) => void;
-    rotate: number;
-    setRotate: (v: number) => void;
-    flipH: boolean;
-    setFlipH: (v: boolean) => void;
-    flipV: boolean;
-    setFlipV: (v: boolean) => void;
-};
-
-const AdjustCropControls = memo(({
-    cropRatio,
-    setCropRatio,
-    rotate,
-    setRotate,
-    flipH,
-    setFlipH,
-    flipV,
-    setFlipV,
-}: AdjustCropControlsProps) => (
-    <div className="space-y-2">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">裁剪与旋转</label>
-        <div className="flex flex-wrap gap-2">
-            {['自由', '1:1', '4:3', '16:9', '9:16', '3:2'].map(r => {
-                const active = cropRatio === r;
-                return (
-                    <button
-                        key={r}
-                        onClick={() => setCropRatio(r)}
-                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium whitespace-nowrap transition-colors ${
-                            active
-                                ? 'border-[#007AFF] text-[#007AFF] bg-[#007AFF]/10'
-                                : 'border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 bg-white dark:bg-white/5 hover:border-[#007AFF] hover:text-[#007AFF]'
-                        }`}
-                    >
-                        {r}
-                    </button>
-                );
-            })}
-        </div>
-        <div className="grid grid-cols-2 gap-2 mt-2">
-            <button
-                onClick={() => setRotate((rotate + 90) % 360)}
-                className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
-            >
-                <Icon name="RotateCw" size={16} /> 向右旋转 90°
-            </button>
-            <button
-                onClick={() => setFlipH(!flipH)}
-                className={`flex items-center justify-center gap-2 py-2 rounded-xl border transition-all text-sm font-medium ${
-                    flipH
-                        ? 'border-[#007AFF]/60 text-[#007AFF] bg-[#007AFF]/10'
-                        : 'border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E] hover:bg-gray-50 dark:hover:bg-white/5'
-                }`}
-            >
-                <span className="scale-x-[-1] inline-block"><Icon name="RotateCw" size={16} /></span> 水平翻转
-            </button>
-            <button
-                onClick={() => setFlipV(!flipV)}
-                className={`flex items-center justify-center gap-2 py-2 rounded-xl border transition-all text-sm font-medium ${
-                    flipV
-                        ? 'border-[#007AFF]/60 text-[#007AFF] bg-[#007AFF]/10'
-                        : 'border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E] hover:bg-gray-50 dark:hover:bg-white/5'
-                }`}
-            >
-                <span className="rotate-90 inline-block"><Icon name="RotateCw" size={16} /></span> 垂直翻转
-            </button>
-        </div>
-    </div>
-));
-
-const AdjustSettings = memo(({
-    exposure,
-    setExposure,
-    contrast,
-    setContrast,
-    saturation,
-    setSaturation,
-    sharpness,
-    setSharpness,
-    vibrance,
-    setVibrance,
-    hue,
-    setHue,
-    showCrop = true,
-    cropRatio,
-    setCropRatio,
-    rotate,
-    setRotate,
-    flipH,
-    setFlipH,
-    flipV,
-    setFlipV,
-}: AdjustSettingsProps) => {
-    const canShowCrop = showCrop
-        && typeof cropRatio === 'string'
-        && typeof setCropRatio === 'function'
-        && typeof rotate === 'number'
-        && typeof setRotate === 'function'
-        && typeof flipH === 'boolean'
-        && typeof setFlipH === 'function'
-        && typeof flipV === 'boolean'
-        && typeof setFlipV === 'function';
-
-    return (
-        <div className="space-y-4">
-            {canShowCrop && (
-                <AdjustCropControls
-                    cropRatio={cropRatio}
-                    setCropRatio={setCropRatio}
-                    rotate={rotate}
-                    setRotate={setRotate}
-                    flipH={flipH}
-                    setFlipH={setFlipH}
-                    flipV={flipV}
-                    setFlipV={setFlipV}
-                />
-            )}
-
-            <div className="pt-3 border-t border-gray-100 dark:border-white/5">
-                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4 flex items-center gap-2">
-                    <Icon name="Palette" size={16} className="text-[#007AFF]" />
-                    专业调色
-                 </label>
-                 <div className="w-full">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <StyledSlider label="曝光度" value={exposure} min={-100} max={100} onChange={setExposure} className="space-y-2" />
-                    <StyledSlider label="对比度" value={contrast} min={-100} max={100} onChange={setContrast} className="space-y-2" />
-                    <StyledSlider label="自然饱和度" value={vibrance} min={-100} max={100} onChange={setVibrance} className="space-y-2" />
-                    <StyledSlider label="饱和度" value={saturation} min={-100} max={100} onChange={setSaturation} className="space-y-2" />
-                    <StyledSlider label="色相偏移" value={hue} min={-180} max={180} onChange={setHue} unit="°" className="space-y-2" />
-                    <StyledSlider label="锐化/模糊" value={sharpness} min={-100} max={100} onChange={setSharpness} className="space-y-2" />
-                    </div>
-                 </div>
-            </div>
-        </div>
-    );
-});
-
-const FILTER_LABELS = [
-    '原图', '鲜艳', '黑白', '复古', '冷调', '暖阳', '胶片', '赛博',
-    '清新', '日系', 'Lomo', 'HDR', '褪色', '磨砂', '电影', '拍立得',
-    '夕阳', '海蓝', '森系', '紫雾', '琥珀', '北欧', '旧照片', '黑金',
-    '高调', '低调', '雾霭', '霓虹', '哑光', '冰感', '咖啡', '焦糖',
-    '青橙', '银盐', '清锐', '低对比'
-];
-const FILTER_PRESETS = [
-    'none', 'vivid', 'bw', 'retro', 'cool', 'warm', 'film', 'cyber',
-    'fresh', 'japan', 'lomo', 'hdr', 'fade', 'frosted', 'cinema', 'polaroid',
-    'sunset', 'ocean', 'forest', 'purple', 'amber', 'nordic', 'oldphoto', 'noir',
-    'highkey', 'lowkey', 'haze', 'neon', 'matte', 'ice', 'coffee', 'caramel',
-    'teal_orange', 'silver', 'crisp', 'low_contrast'
-];
-
-type FilterSettingsProps = {
-    setIntensity: (v: number) => void;
-    setGrain: (v: number) => void;
-    setVignette: (v: number) => void;
-    selected: number;
-    setSelected: (v: number) => void;
-    previewSrc: string;
-    getPreviewFilter: (index: number) => string;
-};
-
-type FilterControlsProps = {
-    intensity: number;
-    setIntensity: (v: number) => void;
-    grain: number;
-    setGrain: (v: number) => void;
-    vignette: number;
-    setVignette: (v: number) => void;
-    footer?: React.ReactNode;
-};
-
-const FilterControls = memo(({
-    intensity,
-    setIntensity,
-    grain,
-    setGrain,
-    vignette,
-    setVignette,
-    footer,
-}: FilterControlsProps) => (
-    <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4">
-        <div className="grid grid-cols-1 gap-4">
-            <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" className="space-y-2" />
-            <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} className="space-y-2" />
-            <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} className="space-y-2" />
-        </div>
-        {footer && (
-            <div className="pt-3 border-t border-gray-100 dark:border-white/5">
-                {footer}
-            </div>
-        )}
-    </div>
-));
-
-const FilterSettings = memo(({
-    setIntensity,
-    setGrain,
-    setVignette,
-    selected,
-    setSelected,
-    previewSrc,
-    getPreviewFilter,
-}: FilterSettingsProps) => {
-    const hasPreview = Boolean(previewSrc);
-
-    return (
-        <div className="flex flex-col h-full min-h-0">
-            <div className="flex-1 space-y-3 min-h-0 flex flex-col">
-                <div className="flex items-center justify-between shrink-0">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">滤镜库 (LUTs)</label>
-                    <button
-                        onClick={() => {
-                            setSelected(0);
-                            setIntensity(80);
-                            setGrain(0);
-                            setVignette(0);
-                        }}
-                        className="text-xs text-[#007AFF] hover:underline font-medium"
-                    >
-                        重置效果
-                    </button>
-                </div>
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pr-1 pb-3">
-                    <div
-                        className="grid gap-1.5 content-start w-full"
-                        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}
-                    >
-                        {FILTER_LABELS.map((f, i) => (
-                            <button 
-                                key={i} 
-                                onClick={() => setSelected(i)}
-                                className={`
-                                group relative flex flex-col items-center gap-1 p-1 rounded-md border transition-all duration-200 active:scale-95
-                                ${selected === i 
-                                    ? 'bg-[#007AFF]/5 border-[#007AFF] ring-1 ring-[#007AFF]/20 shadow-sm' 
-                                    : 'bg-gray-50 dark:bg-white/5 border-transparent hover:border-gray-200 dark:hover:border-white/10 hover:shadow-sm'}
-                            `}>
-                                <div className={`w-full aspect-square rounded-md ${i===0 ? 'bg-gray-200 dark:bg-white/10' : 'bg-gradient-to-br from-gray-200 to-gray-300 dark:from-white/5 dark:to-white/10'} overflow-hidden relative shadow-inner`}>
-                                    {hasPreview ? (
-                                        <img
-                                            src={previewSrc}
-                                            alt={f}
-                                            className="w-full h-full object-cover"
-                                            style={{ filter: getPreviewFilter(i) || 'none' }}
-                                            loading="lazy"
-                                        />
-                                    ) : (
-                                        <div className={`absolute inset-0 opacity-20 ${i===1 ? 'bg-blue-500 mix-blend-overlay' : ''} ${i%2===0 && i!==0 ? 'bg-yellow-600 mix-blend-multiply' : ''} ${i%3===0 && i!==0 ? 'bg-purple-600 mix-blend-screen' : ''}`}></div>
-                                    )}
-                                </div>
-                                <span className={`text-[12px] font-medium w-full text-center leading-tight break-words min-h-[2.2em] ${selected === i ? 'text-[#007AFF]' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200'}`}>
-                                    {f}
-                                </span>
-                                {selected === i && <div className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-[#007AFF] rounded-full shadow-sm animate-enter"></div>}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-});
-
-type PdfSettingsProps = {
-    fileName: string;
-    setFileName: (v: string) => void;
-    size: string;
-    setSize: (v: string) => void;
-    layout: string;
-    setLayout: (v: string) => void;
-    fit: string;
-    setFit: (v: string) => void;
-    marginMm: number;
-    setMarginMm: (v: number) => void;
-    compression: string;
-    setCompression: (v: string) => void;
-    title: string;
-    setTitle: (v: string) => void;
-    author: string;
-    setAuthor: (v: string) => void;
-};
-
-const PdfSettings = memo(({
-    fileName,
-    setFileName,
-    size,
-    setSize,
-    layout,
-    setLayout,
-    fit,
-    setFit,
-    marginMm,
-    setMarginMm,
-    compression,
-    setCompression,
-    title,
-    setTitle,
-    author,
-    setAuthor,
-}: PdfSettingsProps) => {
-
-    return (
-         <div className="space-y-6">
-            <CustomSelect 
-                label="纸张尺寸" 
-                options={[
-                    'A0 (841 x 1189 mm)',
-                    'A1 (594 x 841 mm)',
-                    'A2 (420 x 594 mm)',
-                    'A3 (297 x 420 mm)',
-                    'A4 (210 x 297 mm)',
-                    'A5 (148 x 210 mm)',
-                    'A6 (105 x 148 mm)',
-                    'B4 (250 x 353 mm)',
-                    'B5 (176 x 250 mm)',
-                    'B6 (125 x 176 mm)',
-                    'Letter (8.5 x 11 in)',
-                    'Legal (8.5 x 14 in)',
-                    'Tabloid (11 x 17 in)',
-                    'Ledger (17 x 11 in)',
-                ]} 
-                value={size}
-                onChange={setSize}
-            />
-            
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">页面方向</label>
-                <SegmentedControl options={['纵向', '横向']} value={layout} onChange={setLayout} />
-            </div>
-
-            <CustomSelect 
-                label="图片填充方式" 
-                options={['适应页面 (保持比例)', '充满页面 (可能裁剪)', '原始大小 (居中)']} 
-                value={fit}
-                onChange={setFit}
-            />
-
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">页面边距 (mm)</label>
-                <input
-                    type="number"
-                    min={0}
-                    max={50}
-                    step={1}
-                    value={marginMm}
-                    onChange={(e) => setMarginMm(Number(e.target.value || 0))}
-                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
-                />
-            </div>
-
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">输出文件名</label>
-                <div className="flex items-center gap-2">
-                    <input
-                        type="text"
-                        value={fileName}
-                        onChange={(e) => setFileName(e.target.value)}
-                        placeholder="自动生成"
-                        className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white"
-                    />
-                    <span className="text-xs text-gray-400 shrink-0">.pdf</span>
-                </div>
-            </div>
-
-            <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
-                 <div className="space-y-3">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">元数据</label>
-                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="文档标题" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                    <input type="text" value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="作者" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white" />
-                 </div>
-                <div className="h-px bg-gray-100 dark:bg-white/5" />
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">PDF 压缩</label>
-                    <SegmentedControl options={['不压缩', '轻度', '标准', '强力']} value={compression} onChange={setCompression} />
-                </div>
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">文档加密 (可选)</label>
-                    <input type="password" placeholder="留空则不加密" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                </div>
-            </div>
-        </div>
-    );
-});
-
-type InfoSettingsProps = {
-    filePath: string;
-    info: any | null;
-    onExportJSON: () => void;
-    onClearPrivacy: () => void;
-    onEditMetadata: (key: string, value: any) => Promise<void>;
-};
-
-const META_GROUP_LABELS: Record<string, string> = {
-    Basic: '基础信息',
-    Image: '图像',
-    EXIF: 'EXIF',
-    Exif: 'EXIF',
-    GPS: 'GPS',
-    Interop: '互操作',
-    IFD0: '主图像',
-    IFD1: '缩略图',
-    '0th': '主图像',
-    '1st': '缩略图',
-    Thumbnail: '缩略图',
-    PNG: 'PNG',
-    JPEG: 'JPEG',
-    TIFF: 'TIFF',
-    XMP: 'XMP',
-    IPTC: 'IPTC',
-    MakerNote: '厂商注释',
-    exifread: 'EXIF',
-    piexif: 'EXIF',
-    extra: '扩展信息',
-};
-
-const META_TAG_LABELS: Record<string, string> = {
-    Path: '路径',
-    Size: '大小',
-    Width: '宽度',
-    Height: '高度',
-    Dimensions: '尺寸',
-    DPI: 'DPI',
-    Make: '相机厂商',
-    Model: '相机型号',
-    Software: '软件',
-    Artist: '作者',
-    Copyright: '版权',
-    ImageDescription: '图像描述',
-    Orientation: '方向',
-    XResolution: '水平分辨率',
-    YResolution: '垂直分辨率',
-    ResolutionUnit: '分辨率单位',
-    DateTime: '修改时间',
-    DateTimeOriginal: '拍摄时间',
-    DateTimeDigitized: '数字化时间',
-    SubSecTime: '亚秒时间',
-    SubSecTimeOriginal: '亚秒拍摄时间',
-    SubSecTimeDigitized: '亚秒数字化时间',
-    ExifVersion: 'EXIF 版本',
-    FlashpixVersion: 'Flashpix 版本',
-    ColorSpace: '色彩空间',
-    ComponentsConfiguration: '分量配置',
-    CompressedBitsPerPixel: '压缩位深',
-    ExposureTime: '快门速度',
-    FNumber: '光圈',
-    ExposureProgram: '曝光程序',
-    ExposureBiasValue: '曝光补偿',
-    ExposureMode: '曝光模式',
-    ShutterSpeedValue: '快门速度值',
-    ApertureValue: '光圈值',
-    MaxApertureValue: '最大光圈值',
-    BrightnessValue: '亮度值',
-    ISOSpeedRatings: 'ISO',
-    PhotographicSensitivity: 'ISO',
-    SensitivityType: '感光度类型',
-    FocalLength: '焦距',
-    FocalLengthIn35mmFilm: '35mm 等效焦距',
-    LensMake: '镜头厂商',
-    LensModel: '镜头型号',
-    LensSpecification: '镜头规格',
-    WhiteBalance: '白平衡',
-    MeteringMode: '测光模式',
-    LightSource: '光源',
-    Flash: '闪光灯',
-    SceneType: '场景类型',
-    SceneCaptureType: '场景捕捉类型',
-    SensingMethod: '感光方式',
-    FileSource: '文件来源',
-    CustomRendered: '渲染设置',
-    DigitalZoomRatio: '数字变焦',
-    GainControl: '增益控制',
-    Contrast: '对比度',
-    Saturation: '饱和度',
-    Sharpness: '锐度',
-    SubjectDistance: '主体距离',
-    SubjectDistanceRange: '主体距离范围',
-    SubjectArea: '主体区域',
-    ImageWidth: '图像宽度',
-    ImageLength: '图像高度',
-    ExifImageWidth: '图像宽度',
-    ExifImageLength: '图像高度',
-    PixelXDimension: '像素宽度',
-    PixelYDimension: '像素高度',
-    BitsPerSample: '每样本位数',
-    SamplesPerPixel: '每像素采样数',
-    Compression: '压缩方式',
-    PlanarConfiguration: '平面配置',
-    YCbCrSubSampling: '色度采样',
-    YCbCrPositioning: '色度位置',
-    GPSLatitude: '纬度',
-    GPSLatitudeRef: '纬度参考',
-    GPSLongitude: '经度',
-    GPSLongitudeRef: '经度参考',
-    GPSAltitude: '海拔',
-    GPSAltitudeRef: '海拔参考',
-    GPSTimeStamp: 'GPS 时间',
-    GPSDateStamp: 'GPS 日期',
-    GPSMapDatum: '地理基准',
-    GPSDOP: 'GPS 精度',
-    GPSSpeed: '速度',
-    GPSSpeedRef: '速度单位',
-    GPSTrack: '航向',
-    GPSTrackRef: '航向参考',
-    GPSImgDirection: '拍摄方向',
-    GPSImgDirectionRef: '方向参考',
-    GPSProcessingMethod: '定位方式',
-    GPSAreaInformation: '区域信息',
-    GPSDestLatitude: '目标纬度',
-    GPSDestLatitudeRef: '目标纬度参考',
-    GPSDestLongitude: '目标经度',
-    GPSDestLongitudeRef: '目标经度参考',
-    GPSDestBearing: '目标方位',
-    GPSDestBearingRef: '目标方位参考',
-    GPSDestDistance: '目标距离',
-    GPSDestDistanceRef: '目标距离单位',
-    GPSDifferential: '差分校正',
-    GPSHPositioningError: '水平定位误差',
-    UserComment: '用户注释',
-    XPTitle: '标题',
-    XPSubject: '主题',
-    XPComment: '备注',
-    XPKeywords: '关键词',
-    XPAuthor: '作者',
-    ThumbnailOffset: '缩略图偏移',
-    ThumbnailLength: '缩略图长度',
-    ThumbnailImageWidth: '缩略图宽度',
-    ThumbnailImageLength: '缩略图高度',
-    thumbnail_bytes: '缩略图数据',
-};
-
-const META_SOURCE_GROUPS = new Set(['exifread', 'piexif']);
-
-const splitMetaKey = (key: string) => {
-    const colonIndex = key.indexOf(':');
-    if (colonIndex > 0) {
-        return { group: key.slice(0, colonIndex), tag: key.slice(colonIndex + 1) };
-    }
-    const spaceIndex = key.indexOf(' ');
-    if (spaceIndex > 0) {
-        const maybeGroup = key.slice(0, spaceIndex);
-        if (META_GROUP_LABELS[maybeGroup]) {
-            return { group: maybeGroup, tag: key.slice(spaceIndex + 1) };
-        }
-    }
-    return { group: '', tag: key };
-};
-
-const translateMetaTag = (tag: string) => {
-    const trimmed = tag.trim();
-    if (!trimmed) return '';
-    if (META_TAG_LABELS[trimmed]) return META_TAG_LABELS[trimmed];
-    const { group, tag: inner } = splitMetaKey(trimmed);
-    if (group) {
-        const groupLabel = META_GROUP_LABELS[group] || group;
-        const innerLabel = META_TAG_LABELS[inner] || inner;
-        return `${groupLabel}：${innerLabel}`;
-    }
-    return trimmed;
-};
-
-const translateMetaLabel = (rawKey: string) => {
-    const trimmed = rawKey.trim();
-    if (!trimmed) return rawKey;
-    const { group, tag } = splitMetaKey(trimmed);
-    const translatedTag = translateMetaTag(tag);
-    if (group && META_SOURCE_GROUPS.has(group)) {
-        return translatedTag || trimmed;
-    }
-    const groupLabel = META_GROUP_LABELS[group];
-    if (!groupLabel) return translatedTag || trimmed;
-    return `${groupLabel}：${translatedTag || tag}`;
-};
-
-const InfoSettings = memo(({
-    filePath,
-    info,
-    onExportJSON,
-    onClearPrivacy,
-    onEditMetadata,
-}: InfoSettingsProps) => {
-    const [editingKey, setEditingKey] = useState<string | null>(null);
-    const [editingValue, setEditingValue] = useState('');
-
-    const buildRowsFromFields = (fields?: any[]) => {
-        if (!Array.isArray(fields)) return [];
-        return fields
-            .map((field) => {
-                const source = typeof field?.source === 'string' ? field.source : '';
-                const rawLabel = typeof field?.label === 'string' ? field.label : '';
-                const displayLabel = source === 'container' ? rawLabel : translateMetaLabel(rawLabel);
-                return {
-                    rawKey: typeof field?.key === 'string' ? field.key : rawLabel,
-                    label: displayLabel || rawLabel || String(field?.key || ''),
-                    value: String(field?.value ?? ''),
-                    editKey: source === 'piexif' ? rawLabel : '',
-                    editable: Boolean(field?.editable) && source === 'piexif' && !rawLabel.toLowerCase().includes('thumbnail'),
-                };
-            })
-            .filter((row) => row.value !== '' && row.value !== 'undefined' && row.value !== 'null');
-    };
-
-    const buildRowsFromMap = (data?: Record<string, any>, editableKeys?: Set<string>) => {
-        if (!data) return [];
-        return Object.keys(data)
-            .sort((a, b) => a.localeCompare(b))
-            .map((key) => ({
-                rawKey: key,
-                label: translateMetaLabel(key),
-                value: String(data[key]),
-                editKey: key.startsWith('piexif:') ? key.slice('piexif:'.length) : key,
-                editable: Boolean(editableKeys?.has(key.startsWith('piexif:') ? key.slice('piexif:'.length) : key))
-                    && !(key.startsWith('piexif:') ? key.slice('piexif:'.length) : key).toLowerCase().includes('thumbnail'),
-            }))
-            .filter((row) => row.value !== '' && row.value !== 'undefined' && row.value !== 'null');
-    };
-
-    const meta = info?.metadata || {};
-    const editableKeys = new Set(Object.keys(meta.piexif || {}));
-    const parseResolution = (value: any) => {
-        if (value === null || value === undefined) return null;
-        const text = String(value).trim();
-        if (!text) return null;
-        const fractionMatch = text.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
-        if (fractionMatch) {
-            const num = Number(fractionMatch[1]);
-            const den = Number(fractionMatch[2]);
-            if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
-                return num / den;
-            }
-        }
-        const nums = text.match(/-?\d+(?:\.\d+)?/g);
-        if (!nums || nums.length === 0) return null;
-        if (nums.length >= 2 && text.includes(',')) {
-            const num = Number(nums[0]);
-            const den = Number(nums[1]);
-            if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
-                return num / den;
-            }
-        }
-        const num = Number(nums[0]);
-        return Number.isFinite(num) ? num : null;
-    };
-    const formatDpi = (value: number) => {
-        if (!Number.isFinite(value)) return '';
-        return Number.isInteger(value) ? `${value}` : `${value.toFixed(2)}`;
-    };
-    const formatBytes = (value: number) => {
-        if (!Number.isFinite(value) || value < 0) return '';
-        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        let size = value;
-        let unitIndex = 0;
-        while (size >= 1024 && unitIndex < units.length - 1) {
-            size /= 1024;
-            unitIndex += 1;
-        }
-        if (unitIndex === 0) {
-            return `${value} B`;
-        }
-        const decimals = size >= 10 ? 1 : 2;
-        return `${value} B (${size.toFixed(decimals)} ${units[unitIndex]})`;
-    };
-    const buildFlatMetadata = () => {
-        let merged: Record<string, any> = {};
-        if (info?.exif && Object.keys(info.exif).length > 0) {
-            merged = { ...(info.exif as Record<string, any>) };
-        } else {
-            const groups = ['exifread', 'piexif', 'extra'];
-            for (const group of groups) {
-                const items = meta[group] || {};
-                for (const [key, value] of Object.entries(items)) {
-                    if (Object.prototype.hasOwnProperty.call(merged, key)) {
-                        merged[`${group}:${key}`] = value;
-                    } else {
-                        merged[key] = value;
-                    }
-                }
-            }
-        }
-
-        const basic: Record<string, any> = {};
-        if (filePath) {
-            basic['Basic:Path'] = filePath;
-        }
-        if (typeof info?.file_size === 'number') {
-            basic['Basic:Size'] = formatBytes(info.file_size);
-        }
-        if (typeof info?.width === 'number') {
-            basic['Basic:Width'] = info.width;
-        }
-        if (typeof info?.height === 'number') {
-            basic['Basic:Height'] = info.height;
-        }
-        if (typeof info?.width === 'number' && typeof info?.height === 'number' && info.width && info.height) {
-            basic['Basic:Dimensions'] = `${info.width}x${info.height}`;
-        }
-
-        const dpiFromPng = merged['PNG:DPI'];
-        const xRes = merged['Image XResolution'] ?? merged['0th:XResolution'];
-        const yRes = merged['Image YResolution'] ?? merged['0th:YResolution'];
-        let dpiX = null;
-        let dpiY = null;
-        if (dpiFromPng) {
-            const dpiText = String(dpiFromPng);
-            const match = dpiText.match(/(-?\d+(?:\.\d+)?)\s*x\s*(-?\d+(?:\.\d+)?)/i);
-            if (match) {
-                dpiX = Number(match[1]);
-                dpiY = Number(match[2]);
-            } else {
-                dpiX = parseResolution(dpiFromPng);
-                dpiY = parseResolution(dpiFromPng);
-            }
-        } else {
-            dpiX = parseResolution(xRes);
-            dpiY = parseResolution(yRes);
-        }
-        if (dpiX || dpiY) {
-            const left = dpiX ? formatDpi(dpiX) : '';
-            const right = dpiY ? formatDpi(dpiY) : '';
-            basic['Basic:DPI'] = right ? `${left}x${right}` : left;
-        }
-
-        return { ...basic, ...merged };
-    };
-    const structuredRows = buildRowsFromFields(info?.fields);
-    const flatMeta = structuredRows.length === 0 ? buildFlatMetadata() : null;
-    let rows = structuredRows.length > 0 ? structuredRows : buildRowsFromMap(flatMeta || {}, editableKeys);
-    if (!info?.success && info?.error) {
-        rows = [{ rawKey: '错误', label: '错误', value: String(info.error), editKey: '', editable: false }];
-    }
-    const warnings = Array.isArray(info?.warnings)
-        ? info.warnings.filter((item) => item && (item.message || item.code))
-        : [];
-
-    const name = filePath ? filePath.replace(/\\/g, '/').split('/').pop() || filePath : '';
-    const isEmpty = rows.length === 0;
-
-    const startEdit = (key: string, value: string) => {
-        setEditingKey(key);
-        setEditingValue(value);
-    };
-
-    const commitEdit = async (key: string, value: string) => {
-        if (!key) {
-            setEditingKey(null);
-            return;
-        }
-        const trimmed = value.trim();
-        const payload = trimmed.toLowerCase() == 'null' ? null : trimmed;
-        await onEditMetadata(key, payload);
-        setEditingKey(null);
-    };
-
-    return (
-        <div className="h-full flex flex-col">
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4 flex items-center justify-between">
-                <span>全部元数据</span>
-                <span className="text-xs text-gray-400 font-normal">{name || '-'}</span>
-            </div>
-            {warnings.length > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-                    {warnings.map((item: any, index: number) => {
-                        const code = typeof item?.code === 'string' ? item.code.trim() : '';
-                        const message = typeof item?.message === 'string' ? item.message.trim() : '';
-                        const text = [code, message].filter(Boolean).join('：');
-                        return (
-                            <div key={`${code || 'warning'}-${index}`} className={index > 0 ? 'mt-1' : ''}>
-                                {text || '读取过程中出现告警'}
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-            <div className="bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-200 dark:border-white/10 overflow-hidden text-sm flex-1 overflow-y-auto no-scrollbar">
-                {isEmpty ? (
-                    <div className="p-4 text-xs text-gray-500 dark:text-gray-400">
-                        暂无可显示的元数据
-                    </div>
-                ) : (
-                    <table className="w-full">
-                        <tbody>
-                            {rows.map((item, i) => {
-                                const isEditing = editingKey === item.rawKey;
-                                const isEditable = Boolean(item.editable) && !(item.value || '').startsWith('hex:');
-                                return (
-                                    <tr key={`${item.rawKey}-${i}`} className="border-b border-gray-100 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                        <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400 w-1/3">{item.label}</td>
-                                        <td className="py-2.5 px-4 text-gray-900 dark:text-white font-mono text-xs break-all">
-                                            {isEditing ? (
-                                                <input
-                                                    autoFocus
-                                                    value={editingValue}
-                                                    onChange={(e) => setEditingValue(e.target.value)}
-                                                    onBlur={() => commitEdit(item.editKey, editingValue)}
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') {
-                                                            commitEdit(item.editKey, editingValue);
-                                                        } else if (e.key === 'Escape') {
-                                                            setEditingKey(null);
-                                                        }
-                                                    }}
-                                                    className="w-full px-2 py-1 rounded bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 text-xs font-mono outline-none"
-                                                />
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => isEditable && startEdit(item.rawKey, item.value)}
-                                                    className={`text-left w-full ${isEditable ? 'cursor-text hover:text-[#007AFF]' : 'cursor-default'}`}
-                                                >
-                                                    {item.value}
-                                                </button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                )}
-            </div>
-            <div className="mt-4 flex gap-3 shrink-0">
-                 <button onClick={onExportJSON} disabled={!info?.success} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">导出 JSON</button>
-                 <button onClick={onClearPrivacy} disabled={!filePath} className="flex-1 py-2.5 rounded-xl border border-gray-200 dark:border-white/10 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">清除隐私信息</button>
-            </div>
-        </div>
-    );
-});
 
 const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFailure }) => {
     const feature = FEATURES.find(f => f.id === id);
@@ -1565,7 +141,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const cancelRequestedRef = useRef(false);
     const infoRequestIdRef = useRef(0);
     const infoRequestTimerRef = useRef<number | null>(null);
-    const [progress, setProgress] = useState(0);
+    const {
+        progress,
+        setProgress,
+        setProgressThrottled,
+        flushProgress,
+        resetProgress,
+    } = useThrottledProgress(0);
+
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
     const [featurePresets, setFeaturePresets] = useState<FeaturePresetStore>(() => loadFeaturePresetStore());
@@ -1576,57 +159,72 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const [retryFailedOnly, setRetryFailedOnly] = useState(false);
     const currentRunFailedPathsRef = useRef<Set<string> | null>(null);
 
-    const [convFormat, setConvFormat] = useState('JPG');
-    const [convQuality, setConvQuality] = useState(80);
-    const [convCompressLevel, setConvCompressLevel] = useState(6); // 0-9 for PNG
-    const [convIcoSizes, setConvIcoSizes] = useState<number[]>([16, 32, 48, 64, 128, 256]);
-    const [convResizeMode, setConvResizeMode] = useState('原图尺寸');
-    const [convScalePercent, setConvScalePercent] = useState(100);
-    const [convFixedWidth, setConvFixedWidth] = useState(0);
-    const [convFixedHeight, setConvFixedHeight] = useState(0);
-    const [convLongEdge, setConvLongEdge] = useState(1920);
-    const [convKeepMetadata, setConvKeepMetadata] = useState(false);
-    const [convMaintainAR, setConvMaintainAR] = useState(true);
-    const [convOverwriteSource, setConvOverwriteSource] = useState(false);
+    const {
+        format: convFormat, setFormat: setConvFormat,
+        quality: convQuality, setQuality: setConvQuality,
+        compressLevel: convCompressLevel, setCompressLevel: setConvCompressLevel,
+        icoSizes: convIcoSizes, setIcoSizes: setConvIcoSizes,
+        resizeMode: convResizeMode, setResizeMode: setConvResizeMode,
+        scalePercent: convScalePercent, setScalePercent: setConvScalePercent,
+        fixedWidth: convFixedWidth, setFixedWidth: setConvFixedWidth,
+        fixedHeight: convFixedHeight, setFixedHeight: setConvFixedHeight,
+        longEdge: convLongEdge, setLongEdge: setConvLongEdge,
+        keepMetadata: convKeepMetadata, setKeepMetadata: setConvKeepMetadata,
+        maintainAR: convMaintainAR, setMaintainAR: setConvMaintainAR,
+        overwriteSource: convOverwriteSource, setOverwriteSource: setConvOverwriteSource,
+    } = useConverterParams();
 
-    const [compMode, setCompMode] = useState('标准');
-    const [compTargetSize, setCompTargetSize] = useState(false);
-    const [compTargetSizeKB, setCompTargetSizeKB] = useState(500);
-    const [compEngine, setCompEngine] = useState('自动 (推荐)');
-    const [compOverwriteSource, setCompOverwriteSource] = useState(false);
-    const [pdfSize, setPdfSize] = useState('A4 (210 x 297 mm)');
-    const [pdfLayout, setPdfLayout] = useState('纵向');
-    const [pdfFit, setPdfFit] = useState('适应页面 (保持比例)');
-    const [pdfMarginMm, setPdfMarginMm] = useState(25.4);
-    const [pdfCompression, setPdfCompression] = useState('不压缩');
-    const [pdfFileName, setPdfFileName] = useState('');
-    const [pdfTitle, setPdfTitle] = useState('');
-    const [pdfAuthor, setPdfAuthor] = useState('');
-    const [adjustExposure, setAdjustExposure] = useState(0);
-    const [adjustContrast, setAdjustContrast] = useState(0);
-    const [adjustSaturation, setAdjustSaturation] = useState(0);
-    const [adjustSharpness, setAdjustSharpness] = useState(0);
-    const [adjustVibrance, setAdjustVibrance] = useState(0);
-    const [adjustHue, setAdjustHue] = useState(0);
-    const [adjustRotate, setAdjustRotate] = useState(0);
-    const [adjustFlipH, setAdjustFlipH] = useState(false);
-    const [adjustFlipV, setAdjustFlipV] = useState(false);
-    const [adjustCropRatio, setAdjustCropRatio] = useState('自由');
-    const [filterIntensity, setFilterIntensity] = useState(80);
-    const [filterGrain, setFilterGrain] = useState(0);
-    const [filterVignette, setFilterVignette] = useState(0);
-    const [filterSelected, setFilterSelected] = useState(0);
-    const [gifMode, setGifMode] = useState('导出');
-    const [gifExportFormat, setGifExportFormat] = useState('PNG');
-    const [gifConvertFormat, setGifConvertFormat] = useState('WEBP');
-    const [gifSpeedPercent, setGifSpeedPercent] = useState(100);
-    const [gifCompressQuality, setGifCompressQuality] = useState(90);
-    const [gifBuildFps, setGifBuildFps] = useState(10);
+    const {
+        mode: compMode, setMode: setCompMode,
+        targetSize: compTargetSize, setTargetSize: setCompTargetSize,
+        targetSizeKB: compTargetSizeKB, setTargetSizeKB: setCompTargetSizeKB,
+        engine: compEngine, setEngine: setCompEngine,
+        overwriteSource: compOverwriteSource, setOverwriteSource: setCompOverwriteSource,
+    } = useCompressorParams();
+    const {
+        size: pdfSize, setSize: setPdfSize,
+        layout: pdfLayout, setLayout: setPdfLayout,
+        fit: pdfFit, setFit: setPdfFit,
+        marginMm: pdfMarginMm, setMarginMm: setPdfMarginMm,
+        compression: pdfCompression, setCompression: setPdfCompression,
+        fileName: pdfFileName, setFileName: setPdfFileName,
+        title: pdfTitle, setTitle: setPdfTitle,
+        author: pdfAuthor, setAuthor: setPdfAuthor,
+    } = usePdfParams();
+    const {
+        exposure: adjustExposure, setExposure: setAdjustExposure,
+        contrast: adjustContrast, setContrast: setAdjustContrast,
+        saturation: adjustSaturation, setSaturation: setAdjustSaturation,
+        sharpness: adjustSharpness, setSharpness: setAdjustSharpness,
+        vibrance: adjustVibrance, setVibrance: setAdjustVibrance,
+        hue: adjustHue, setHue: setAdjustHue,
+        rotate: adjustRotate, setRotate: setAdjustRotate,
+        flipH: adjustFlipH, setFlipH: setAdjustFlipH,
+        flipV: adjustFlipV, setFlipV: setAdjustFlipV,
+        cropRatio: adjustCropRatio, setCropRatio: setAdjustCropRatio,
+    } = useAdjustParams();
+    const {
+        intensity: filterIntensity, setIntensity: setFilterIntensity,
+        grain: filterGrain, setGrain: setFilterGrain,
+        vignette: filterVignette, setVignette: setFilterVignette,
+        selected: filterSelected, setSelected: setFilterSelected,
+    } = useFilterParams();
+    const {
+        mode: gifMode, setMode: setGifMode,
+        exportFormat: gifExportFormat, setExportFormat: setGifExportFormat,
+        convertFormat: gifConvertFormat, setConvertFormat: setGifConvertFormat,
+        speedPercent: gifSpeedPercent, setSpeedPercent: setGifSpeedPercent,
+        compressQuality: gifCompressQuality, setCompressQuality: setGifCompressQuality,
+        buildFps: gifBuildFps, setBuildFps: setGifBuildFps,
+    } = useGifParams();
     const [infoFilePath, setInfoFilePath] = useState('');
     const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
-    const [previewDataUrl, setPreviewDataUrl] = useState('');
-    const [previewLoadError, setPreviewLoadError] = useState('');
+    const { previewDataUrl, previewLoadError, setPreviewDataUrl, setPreviewLoadError } = useImagePreview({
+        enabled: isPreviewFeature,
+        path: previewPath,
+        debounceMs: 120,
+    });
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
     const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
@@ -1634,23 +232,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const [isCropDragging, setIsCropDragging] = useState(false);
     const cropDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
     const [isComparing, setIsComparing] = useState(false);
-    const [watermarkType, setWatermarkType] = useState('文字');
-    const [watermarkText, setWatermarkText] = useState('© ImageFlow');
-    const [watermarkImagePath, setWatermarkImagePath] = useState('');
-    const [watermarkPosition, setWatermarkPosition] = useState('br');
-    const [watermarkOpacity, setWatermarkOpacity] = useState(85);
-    const [watermarkRotate, setWatermarkRotate] = useState(0);
-    const [watermarkSize, setWatermarkSize] = useState(40);
-    const [watermarkTiled, setWatermarkTiled] = useState(false);
-    const [watermarkBlendMode, setWatermarkBlendMode] = useState('正常');
-    const [watermarkShadow, setWatermarkShadow] = useState(false);
-    const [watermarkMargin, setWatermarkMargin] = useState({ x: 20, y: 20 });
-    const [watermarkFont, setWatermarkFont] = useState('Sans Serif');
-    const [watermarkColor, setWatermarkColor] = useState('#FFFFFF');
-    const [useSystemFonts, setUseSystemFonts] = useState(false);
-    const [systemFonts, setSystemFonts] = useState<string[]>([]);
-    const [isSystemFontsLoading, setIsSystemFontsLoading] = useState(false);
-    const [watermarkImageSize, setWatermarkImageSize] = useState({ width: 0, height: 0 });
+    const {
+        type: watermarkType, setType: setWatermarkType,
+        text: watermarkText, setText: setWatermarkText,
+        imagePath: watermarkImagePath, setImagePath: setWatermarkImagePath,
+        position: watermarkPosition, setPosition: setWatermarkPosition,
+        opacity: watermarkOpacity, setOpacity: setWatermarkOpacity,
+        rotate: watermarkRotate, setRotate: setWatermarkRotate,
+        size: watermarkSize, setSize: setWatermarkSize,
+        tiled: watermarkTiled, setTiled: setWatermarkTiled,
+        blendMode: watermarkBlendMode, setBlendMode: setWatermarkBlendMode,
+        shadow: watermarkShadow, setShadow: setWatermarkShadow,
+        margin: watermarkMargin, setMargin: setWatermarkMargin,
+        font: watermarkFont, setFont: setWatermarkFont,
+        color: watermarkColor, setColor: setWatermarkColor,
+        useSystemFonts, setUseSystemFonts,
+        systemFonts, setSystemFonts,
+        isSystemFontsLoading, setIsSystemFontsLoading,
+        imageSize: watermarkImageSize, setImageSize: setWatermarkImageSize,
+    } = useWatermarkParams();
 
     const normalizeOutputSettings = (raw?: Partial<OutputSettings> | null): OutputSettings => {
         if (!raw) return defaultOutputSettings;
@@ -1691,13 +291,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         const ext = normalized.slice(idx + 1).toLowerCase();
         return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
-    const normalizePath = useCallback((p: string) => p.replace(/\\/g, '/').replace(/\/+$/, ''), []);
-    const dirname = useCallback((p: string) => {
-        const normalized = p.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('/');
-        if (idx <= 0) return '';
-        return normalized.slice(0, idx);
-    }, []);
+    const normalizePath = useCallback((p: string) => sharedNormalizePath(p), []);
+    const dirname = useCallback((p: string) => sharedDirname(p), []);
     const rememberRecentDirs = useCallback(async (payload: { inputDir?: string; outputDir?: string }) => {
         try {
             await updateRecentPaths(payload);
@@ -3039,20 +1634,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         if (!detail) return prefix;
         return `${prefix}：${detail}`;
     };
-    const isCancellationError = (error: unknown) => {
-        if (typeof error === 'string') {
-            const text = error.trim();
-            if (!text) return false;
-            return text.includes('[PY_CANCELLED]') || /operation cancel(?:led|ed)/i.test(text);
-        }
-        const message = (error as any)?.message;
-        if (typeof message === 'string') {
-            const text = message.trim();
-            if (!text) return false;
-            return text.includes('[PY_CANCELLED]') || /operation cancel(?:led|ed)/i.test(text);
-        }
-        return false;
-    };
     const getErrorMessage = (error: unknown, fallback: string) => {
         if (typeof error === 'string' && error.trim()) return normalizeBackendError(error);
         if (typeof (error as any)?.message === 'string' && (error as any).message.trim()) {
@@ -3246,61 +1827,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     }, [dropResult, isPreviewFeature]);
 
-    useEffect(() => {
-        if (!isPreviewFeature) {
-            setPreviewDataUrl('');
-            setPreviewLoadError('');
-            return;
-        }
-        if (!previewPath) {
-            setPreviewDataUrl('');
-            setPreviewLoadError('');
-            return;
-        }
-        let cancelled = false;
-        const appAny = getAppBindings();
-        if (!appAny?.GetImagePreview) {
-            setPreviewDataUrl('');
-            setPreviewLoadError('当前环境不支持预览生成');
-            return;
-        }
-        setPreviewDataUrl('');
-        setPreviewLoadError('');
-        (async () => {
-            try {
-                const res = await appAny.GetImagePreview({ input_path: previewPath });
-                if (cancelled) return;
-                if (res?.success && res.data_url) {
-                    setPreviewDataUrl(res.data_url);
-                    setPreviewLoadError('');
-                } else {
-                    setPreviewDataUrl('');
-                    const rawError = typeof res?.error === 'string' ? res.error.trim() : '';
-                    const msg = rawError === 'PREVIEW_SKIPPED'
-                        ? '当前文件暂不支持预览'
-                        : (rawError || '预览加载失败');
-                    setPreviewLoadError(msg);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    setPreviewDataUrl('');
-                    const msg = typeof (err as any)?.message === 'string' && (err as any).message.trim()
-                        ? (err as any).message.trim()
-                        : '预览加载失败';
-                    setPreviewLoadError(msg);
-                }
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [previewPath, isPreviewFeature]);
 
     const loadInfoForPath = useCallback(async (p: string) => {
         const normalized = normalizePath(p);
         const requestId = ++infoRequestIdRef.current;
         setIsProcessing(true);
-        setProgress(0);
+        resetProgress(0);
         setLastMessage('');
         setInfoFilePath(normalized);
         setInfoPreview(null);
@@ -3315,7 +1847,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const appAny = getAppBindings();
                 if (!appAny?.GetInfo) {
                     if (infoRequestIdRef.current === requestId) {
-                        setLastMessage('未检测到 Wails 运行环境');
+                        setLastMessage('未检测到桌面宿主运行环境');
                         setProgress(100);
                         setIsProcessing(false);
                     }
@@ -3369,7 +1901,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
         if (id !== 'info') {
             setLastMessage('');
-            setProgress(0);
+            resetProgress(0);
             return;
         }
         const selected = infoFilePath
@@ -3406,7 +1938,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         cancelRequestedRef.current = false;
         setCancelRequested(false);
         setLastMessage('');
-        setProgress(0);
+        resetProgress(0);
         const useOverrideFiles = Array.isArray(overrideFiles);
         const normalizedOverrideFiles = useOverrideFiles ? dedupeDroppedFiles(overrideFiles || []) : [];
         if (!useOverrideFiles && (!dropResult || dropResult.files.length === 0)) {
@@ -3419,7 +1951,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
         const appAny = getAppBindings();
         if (!appAny) {
-            setLastMessage('未检测到 Wails 运行环境');
+            setLastMessage('未检测到桌面宿主运行环境');
             return;
         }
         const manualRetryOnly = !useOverrideFiles && retryFailedOnly;
@@ -3472,6 +2004,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             }
         };
 
+        const resolveUniquePathsBatch = async (candidates: string[]) => {
+            const normalized = candidates.map((item) => normalizePath(item));
+            if (!normalized.length) return [] as string[];
+            if (conflictStrategy !== 'rename' || !appAny?.ResolveOutputPaths) {
+                const out: string[] = [];
+                for (const item of normalized) {
+                    out.push(await resolveUniquePath(item));
+                }
+                return out;
+            }
+            try {
+                const res = await appAny.ResolveOutputPaths({
+                    items: normalized,
+                    reserved: Array.from(reservedPaths),
+                });
+                if (res?.success && Array.isArray(res.paths) && res.paths.length === normalized.length) {
+                    const out = res.paths.map((item) => normalizePath(String(item || '')));
+                    out.forEach((item) => reservedPaths.add(item));
+                    return out;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            const fallback: string[] = [];
+            for (const item of normalized) {
+                fallback.push(await resolveUniquePath(item));
+            }
+            return fallback;
+        };
+
         currentRunFailedPathsRef.current = new Set<string>();
         setIsProcessing(true);
         try {
@@ -3486,10 +2048,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             void rememberRecentDirs({ inputDir: inputDirForHistory, outputDir: outDir });
             const total = files.length;
             let completed = 0;
-            const getBatchChunkSize = (itemCount: number, requestsPerItem = 1) => {
-                const safeRequestsPerItem = Math.max(1, Math.round(Number(requestsPerItem) || 1));
-                return Math.max(1, Math.min(itemCount, Math.max(1, Math.floor(20 / safeRequestsPerItem))));
-            };
+            const getBatchChunkSize = sharedGetBatchChunkSize;
 
             if (id === 'converter') {
                 if (!appAny.Convert || !appAny.ConvertBatch) {
@@ -3498,11 +2057,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 }
                 const format = convFormat.toLowerCase();
                 const isIcoFormat = format === 'ico';
-                const quality = convQuality;
-                const compress_level = convCompressLevel;
-                const ico_sizes = convIcoSizes;
-                const icoSizeGroups = isIcoFormat ? planIcoConversionSizes(ico_sizes || [], convOverwriteSource) : [[]];
-                const totalTasks = isIcoFormat ? files.length * icoSizeGroups.length : total;
+                const icoSizeGroups = isIcoFormat ? planIcoConversionSizes(convIcoSizes || [], convOverwriteSource) : [[]];
                 const resizeModeMap: Record<string, string> = {
                     '原图尺寸': 'original',
                     '按比例': 'percent',
@@ -3510,140 +2065,45 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     '最长边': 'long_edge',
                 };
                 const resize_mode = resizeModeMap[convResizeMode] ?? 'original';
-                const chunkSize = getBatchChunkSize(files.length, icoSizeGroups.length);
-                let seq = 1;
-                let failed = 0;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    if (cancelRequestedRef.current) break;
-                    const group = files.slice(i, i + chunkSize);
-                    const chunk: models.ConvertRequest[] = [];
-                    for (const f of group) {
-                        if (cancelRequestedRef.current) break;
-                        const input_path = normalizePath(f.input_path);
-                        for (const icoSizeGroup of icoSizeGroups) {
-                            if (cancelRequestedRef.current) break;
-                            const canOverwrite = convOverwriteSource && !isIcoFormat;
-                            let output_path = input_path;
-
-                            if (isIcoFormat) {
-                                const suffix = icoSizeGroup.length === 1
-                                    ? `_ico${icoSizeGroup[0]}`
-                                    : '';
-                                if (convOverwriteSource) {
-                                    const sourceFile = basename(input_path);
-                                    const sourceBase = stripExtension(sourceFile).replace(/_ico\d+(?:-\d+)*$/i, '');
-                                    const sourceDirPath = input_path.replace(/\\/g, '/');
-                                    const idx = sourceDirPath.lastIndexOf('/');
-                                    const sourceDir = idx === -1 ? '' : sourceDirPath.slice(0, idx);
-                                    const outName = sanitizeOutputName(`${sourceBase}${suffix}`) || `${sourceBase}${suffix}`;
-                                    const candidate = sourceDir ? `${sourceDir}/${outName}.${format}` : `${outName}.${format}`;
-                                    output_path = await resolveUniquePath(candidate);
-                                } else {
-                                    const rel = buildOutputRelPath(f, {
-                                        ext: format,
-                                        suffix,
-                                        seq,
-                                        op: 'converter',
-                                        template: outputTemplate,
-                                        prefix: outputPrefix,
-                                        preserveStructure,
-                                        date: batchTime,
-                                    });
-                                    output_path = await resolveUniquePath(joinPath(outDir, rel));
-                                }
-                            } else if (!canOverwrite) {
-                                const rel = buildOutputRelPath(f, {
-                                    ext: format,
-                                    seq,
-                                    op: 'converter',
-                                    template: outputTemplate,
-                                    prefix: outputPrefix,
-                                    preserveStructure,
-                                    date: batchTime,
-                                });
-                                output_path = await resolveUniquePath(joinPath(outDir, rel));
-                            } else {
-                                const overwritePath = resolveConverterOverwritePath(input_path, format);
-                                if (normalizePath(overwritePath) !== input_path) {
-                                    output_path = await resolveUniquePath(overwritePath);
-                                }
-                            }
-
-                            chunk.push({
-                                input_path,
-                                output_path,
-                                format,
-                                quality,
-                                compress_level,
-                                ico_sizes: isIcoFormat ? icoSizeGroup : [],
-                                icoSizes: isIcoFormat ? icoSizeGroup : [],
-                                width: resize_mode === 'fixed' ? convFixedWidth : 0,
-                                height: resize_mode === 'fixed' ? convFixedHeight : 0,
-                                maintain_ar: convMaintainAR,
-                                resize_mode,
-                                scale_percent: resize_mode === 'percent' ? convScalePercent : 0,
-                                long_edge: resize_mode === 'long_edge' ? convLongEdge : 0,
-                                keep_metadata: convKeepMetadata,
-                            });
-                            seq += 1;
-                        }
-                    }
-                    if (cancelRequestedRef.current || chunk.length === 0) {
-                        break;
-                    }
-                    try {
-                        if (chunk.length === 1) {
-                            const res = await appAny.Convert(chunk[0]);
-                            if (!res?.success) {
-                                if (isCancellationError(res?.error)) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                                failed += 1;
-                                reportTaskFailure('格式转换', chunk[0].input_path, res?.error, '转换失败');
-                            }
-                        } else {
-                            const res = await appAny.ConvertBatch(chunk);
-                            if (Array.isArray(res)) {
-                                let cancelledInBatch = false;
-                                res.forEach((item, idx: number) => {
-                                    if (!item?.success) {
-                                        if (isCancellationError(item?.error)) {
-                                            cancelledInBatch = true;
-                                            return;
-                                        }
-                                        failed += 1;
-                                        reportTaskFailure('格式转换', chunk[idx]?.input_path || item?.input_path || '', item?.error, '转换失败');
-                                    }
-                                });
-                                if (cancelledInBatch) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                            }
-                        }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(err);
-                        failed += chunk.length;
-                        reportBatchTaskFailure('格式转换', group, err, '转换失败');
-                    }
-
-                    completed += chunk.length;
-                    setProgress((completed / totalTasks) * 100);
-                }
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(cancelled
-                    ? `转换已停止：成功 ${success}/${totalTasks} 项${extra}`
-                    : `转换完成：成功 ${success}/${totalTasks} 项${extra}`);
+                await runConvertBatch({
+                    ctx: {
+                        app: appAny,
+                        files,
+                        total,
+                        cancelRequestedRef,
+                        setCancelRequested,
+                        setProgressThrottled,
+                        flushProgress,
+                        setLastMessage,
+                        reportTaskFailure,
+                        reportBatchTaskFailure,
+                        getBatchChunkSize,
+                        normalizePath,
+                    },
+                    format,
+                    quality: convQuality,
+                    compressLevel: convCompressLevel,
+                    icoSizeGroups,
+                    overwriteSource: convOverwriteSource,
+                    resizeMode: resize_mode,
+                    scalePercent: convScalePercent,
+                    fixedWidth: convFixedWidth,
+                    fixedHeight: convFixedHeight,
+                    longEdge: convLongEdge,
+                    maintainAR: convMaintainAR,
+                    keepMetadata: convKeepMetadata,
+                    outputDir: outDir,
+                    outputTemplate,
+                    outputPrefix,
+                    preserveStructure,
+                    batchTime,
+                    buildOutputRelPath,
+                    resolveUniquePath,
+                    resolveConverterOverwritePath,
+                    joinPath,
+                    basename,
+                    stripExtension,
+                });
                 return;
             }
 
@@ -3669,101 +2129,34 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const level = levelMap[compMode] ?? 3;
                 const engine = engineMap[compEngine] ?? 'auto';
                 const targetSizeKB = compTargetSize ? Math.max(0, Number(compTargetSizeKB) || 0) : 0;
-
-                let failed = 0;
-                let warnings = 0;
-
-                const chunkSize = getBatchChunkSize(files.length);
-                let seq = 1;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    if (cancelRequestedRef.current) break;
-                    const group = files.slice(i, i + chunkSize);
-                    const chunk: models.CompressRequest[] = [];
-                    for (const f of group) {
-                        if (cancelRequestedRef.current) break;
-                        const input_path = normalizePath(f.input_path);
-                        let output_path = input_path;
-                        if (!compOverwriteSource) {
-                            const rel = buildOutputRelPath(f, {
-                                seq,
-                                op: 'compressor',
-                                template: outputTemplate,
-                                prefix: outputPrefix,
-                                preserveStructure,
-                                date: batchTime,
-                            });
-                            output_path = await resolveUniquePath(joinPath(outDir, rel));
-                        }
-                        chunk.push({
-                            input_path,
-                            output_path,
-                            level,
-                            engine,
-                            target_size_kb: targetSizeKB,
-                            strip_metadata: true,
-                        });
-                        seq += 1;
-                    }
-                    if (cancelRequestedRef.current || chunk.length === 0) {
-                        break;
-                    }
-                    try {
-                        if (chunk.length === 1) {
-                            const res = await appAny.Compress(chunk[0]);
-                            if (res?.warning) warnings++;
-                            if (!res?.success) {
-                                if (isCancellationError(res?.error)) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                                failed += 1;
-                                reportTaskFailure('图片压缩', chunk[0].input_path, res?.error, '压缩失败');
-                            }
-                        } else {
-                            const res = await appAny.CompressBatch(chunk);
-                            warnings += (res || []).filter(r => r?.warning).length;
-                            let cancelledInBatch = false;
-                            (res || []).forEach((item, idx: number) => {
-                                if (!item?.success) {
-                                    if (isCancellationError(item?.error)) {
-                                        cancelledInBatch = true;
-                                        return;
-                                    }
-                                    failed += 1;
-                                    reportTaskFailure('图片压缩', chunk[idx]?.input_path || item?.input_path || '', item?.error, '压缩失败');
-                                }
-                            });
-                            if (cancelledInBatch) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                        }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(err);
-                        failed += chunk.length;
-                        reportBatchTaskFailure('图片压缩', group, err, '压缩失败');
-                    }
-
-                    completed += chunk.length;
-                    setProgress((completed / total) * 100);
-                }
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extraParts = [
-                    failed > 0 ? `失败 ${failed}` : '',
-                    warnings > 0 ? `提示 ${warnings}` : '',
-                ].filter(Boolean);
-                const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
-                setLastMessage(cancelled
-                    ? `压缩已停止：成功 ${success}/${total} 项${extra}`
-                    : `压缩完成：成功 ${success}/${total} 项${extra}`);
+                await runCompressBatch({
+                    ctx: {
+                        app: appAny,
+                        files,
+                        total,
+                        cancelRequestedRef,
+                        setCancelRequested,
+                        setProgressThrottled,
+                        flushProgress,
+                        setLastMessage,
+                        reportTaskFailure,
+                        reportBatchTaskFailure,
+                        getBatchChunkSize,
+                        normalizePath,
+                    },
+                    level,
+                    engine,
+                    targetSizeKB,
+                    overwriteSource: compOverwriteSource,
+                    outputDir: outDir,
+                    outputTemplate,
+                    outputPrefix,
+                    preserveStructure,
+                    batchTime,
+                    buildOutputRelPath,
+                    resolveUniquePath,
+                    joinPath,
+                });
                 return;
             }
 
@@ -3798,98 +2191,65 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const blendMode = blendMap[watermarkBlendMode] || 'normal';
                 const resolvedPosition = resolveWatermarkBackendPosition(watermarkPosition);
 
-                let seq = 1;
-                let failed = 0;
-                const chunkSize = appAny.AddWatermarkBatch ? getBatchChunkSize(files.length) : 1;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    if (cancelRequestedRef.current) break;
-                    const group = files.slice(i, i + chunkSize);
-                    const chunk: models.WatermarkRequest[] = [];
-                    for (const f of group) {
-                        if (cancelRequestedRef.current) break;
-                        const outRel = buildOutputRelPath(f, {
-                            suffix: '_watermark',
-                            seq,
-                            op: 'watermark',
-                            template: outputTemplate,
-                            prefix: outputPrefix,
-                            preserveStructure,
-                            date: batchTime,
-                        });
-                        chunk.push({
-                            input_path: normalizePath(f.input_path),
-                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                            watermark_type: isText ? 'text' : 'image',
-                            text: textValue,
-                            image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
-                            position: resolvedPosition,
-                            opacity,
-                            scale,
-                            font_size: fontSize,
-                            font_color: watermarkColor,
-                            rotation: watermarkRotate,
-                            font_name: fontName,
-                            blend_mode: blendMode,
-                            tiled: watermarkTiled,
-                            shadow: watermarkShadow,
-                            offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
-                            offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
-                        });
-                        seq += 1;
-                    }
-                    if (cancelRequestedRef.current || chunk.length === 0) {
-                        break;
-                    }
-                    try {
-                        if (chunk.length > 1 && appAny.AddWatermarkBatch) {
-                            const res = await appAny.AddWatermarkBatch(chunk);
-                            let cancelledInBatch = false;
-                            (res || []).forEach((item, idx: number) => {
-                                if (!item?.success) {
-                                    if (isCancellationError(item?.error)) {
-                                        cancelledInBatch = true;
-                                        return;
-                                    }
-                                    failed += 1;
-                                    reportTaskFailure('图片水印', chunk[idx]?.input_path || item?.input_path || '', item?.error, '水印失败');
-                                }
+                await runGenericBatch({
+                    ctx: {
+                        app: appAny,
+                        files,
+                        total,
+                        cancelRequestedRef,
+                        setCancelRequested,
+                        setProgressThrottled,
+                        flushProgress,
+                        setLastMessage,
+                        reportTaskFailure,
+                        reportBatchTaskFailure,
+                        getBatchChunkSize,
+                        normalizePath,
+                    },
+                    taskName: '图片水印',
+                    label: '水印',
+                    fallbackError: '水印失败',
+                    canBatch: Boolean(appAny.AddWatermarkBatch),
+                    runSingle: (item) => appAny.AddWatermark!(item),
+                    runBatch: appAny.AddWatermarkBatch ? (items) => appAny.AddWatermarkBatch!(items) : undefined,
+                    buildChunk: async (group, seqStart) => {
+                        let seq = seqStart;
+                        const chunk: models.WatermarkRequest[] = [];
+                        for (const f of group) {
+                            if (cancelRequestedRef.current) break;
+                            const outRel = buildOutputRelPath(f, {
+                                suffix: '_watermark',
+                                seq,
+                                op: 'watermark',
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                preserveStructure,
+                                date: batchTime,
                             });
-                            if (cancelledInBatch) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                        } else {
-                            const res = await appAny.AddWatermark(chunk[0]);
-                            if (!res?.success) {
-                                if (isCancellationError(res?.error)) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                                failed += 1;
-                                reportTaskFailure('图片水印', chunk[0].input_path, res?.error, '水印失败');
-                            }
+                            chunk.push({
+                                input_path: normalizePath(f.input_path),
+                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                                watermark_type: isText ? 'text' : 'image',
+                                text: textValue,
+                                image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
+                                position: resolvedPosition,
+                                opacity,
+                                scale,
+                                font_size: fontSize,
+                                font_color: watermarkColor,
+                                rotation: watermarkRotate,
+                                font_name: fontName,
+                                blend_mode: blendMode,
+                                tiled: watermarkTiled,
+                                shadow: watermarkShadow,
+                                offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
+                                offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
+                            });
+                            seq += 1;
                         }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error('Failed to watermark batch:', err);
-                        failed += chunk.length;
-                        reportBatchTaskFailure('图片水印', group, err, '水印失败');
-                    }
-                    completed += chunk.length;
-                    setProgress((completed / total) * 100);
-                }
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(cancelled
-                    ? `水印已停止：成功 ${success}/${total} 项${extra}`
-                    : `水印完成：成功 ${success}/${total} 项${extra}`);
+                        return { chunk, nextSeq: seq };
+                    },
+                });
                 return;
             }
 
@@ -3898,97 +2258,64 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     setLastMessage('后端未接入调整接口');
                     return;
                 }
-                let seq = 1;
-                let failed = 0;
-                const chunkSize = appAny.AdjustBatch ? getBatchChunkSize(files.length) : 1;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    if (cancelRequestedRef.current) break;
-                    const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
-                    const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
-                    const group = files.slice(i, i + chunkSize);
-                    const chunk: models.AdjustRequest[] = [];
-                    for (const f of group) {
-                        if (cancelRequestedRef.current) break;
-                        const outRel = buildOutputRelPath(f, {
-                            suffix: '_adjusted',
-                            seq,
-                            op: 'adjust',
-                            template: outputTemplate,
-                            prefix: outputPrefix,
-                            preserveStructure,
-                            date: batchTime,
-                        });
-                        chunk.push({
-                            input_path: normalizePath(f.input_path),
-                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                            rotate: adjustRotate,
-                            flip_h: adjustFlipH,
-                            flip_v: adjustFlipV,
-                            brightness: 0,
-                            exposure: adjustExposure,
-                            contrast: adjustContrast,
-                            saturation: adjustSaturation,
-                            vibrance: adjustVibrance,
-                            hue: adjustHue,
-                            sharpness: adjustSharpness,
-                            crop_ratio: cropRatio,
-                            crop_mode: cropMode,
-                        });
-                        seq += 1;
-                    }
-                    if (cancelRequestedRef.current || chunk.length === 0) {
-                        break;
-                    }
-                    try {
-                        if (chunk.length > 1 && appAny.AdjustBatch) {
-                            const res = await appAny.AdjustBatch(chunk);
-                            let cancelledInBatch = false;
-                            (res || []).forEach((item, idx: number) => {
-                                if (!item?.success) {
-                                    if (isCancellationError(item?.error)) {
-                                        cancelledInBatch = true;
-                                        return;
-                                    }
-                                    failed += 1;
-                                    reportTaskFailure('图片调整', chunk[idx]?.input_path || item?.input_path || '', item?.error, '调整失败');
-                                }
+                await runGenericBatch({
+                    ctx: {
+                        app: appAny,
+                        files,
+                        total,
+                        cancelRequestedRef,
+                        setCancelRequested,
+                        setProgressThrottled,
+                        flushProgress,
+                        setLastMessage,
+                        reportTaskFailure,
+                        reportBatchTaskFailure,
+                        getBatchChunkSize,
+                        normalizePath,
+                    },
+                    taskName: '图片调整',
+                    label: '调整',
+                    fallbackError: '调整失败',
+                    canBatch: Boolean(appAny.AdjustBatch),
+                    runSingle: (item) => appAny.Adjust!(item),
+                    runBatch: appAny.AdjustBatch ? (items) => appAny.AdjustBatch!(items) : undefined,
+                    buildChunk: async (group, seqStart) => {
+                        let seq = seqStart;
+                        const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
+                        const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
+                        const chunk: models.AdjustRequest[] = [];
+                        for (const f of group) {
+                            if (cancelRequestedRef.current) break;
+                            const outRel = buildOutputRelPath(f, {
+                                suffix: '_adjusted',
+                                seq,
+                                op: 'adjust',
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                preserveStructure,
+                                date: batchTime,
                             });
-                            if (cancelledInBatch) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                        } else {
-                            const res = await appAny.Adjust(chunk[0]);
-                            if (!res?.success) {
-                                if (isCancellationError(res?.error)) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                                failed += 1;
-                                reportTaskFailure('图片调整', chunk[0].input_path, res?.error, '调整失败');
-                            }
+                            chunk.push({
+                                input_path: normalizePath(f.input_path),
+                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                                rotate: adjustRotate,
+                                flip_h: adjustFlipH,
+                                flip_v: adjustFlipV,
+                                brightness: 0,
+                                exposure: adjustExposure,
+                                contrast: adjustContrast,
+                                saturation: adjustSaturation,
+                                vibrance: adjustVibrance,
+                                hue: adjustHue,
+                                sharpness: adjustSharpness,
+                                crop_ratio: cropRatio,
+                                crop_mode: cropMode,
+                            });
+                            seq += 1;
                         }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error('Failed to adjust batch:', err);
-                        failed += chunk.length;
-                        reportBatchTaskFailure('图片调整', group, err, '调整失败');
-                    }
-                    completed += chunk.length;
-                    setProgress((completed / total) * 100);
-                }
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(cancelled
-                    ? `调整已停止：成功 ${success}/${total} 项${extra}`
-                    : `调整完成：成功 ${success}/${total} 项${extra}`);
+                        return { chunk, nextSeq: seq };
+                    },
+                });
                 return;
             }
 
@@ -4001,87 +2328,54 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const intensity = clampNumber(filterIntensity / 100, 0, 1);
                 const grain = clampNumber(filterGrain / 100, 0, 1);
                 const vignette = clampNumber(filterVignette / 100, 0, 1);
-                let seq = 1;
-                let failed = 0;
-                const chunkSize = appAny.ApplyFilterBatch ? getBatchChunkSize(files.length) : 1;
-                for (let i = 0; i < files.length; i += chunkSize) {
-                    if (cancelRequestedRef.current) break;
-                    const group = files.slice(i, i + chunkSize);
-                    const chunk: models.FilterRequest[] = [];
-                    for (const f of group) {
-                        if (cancelRequestedRef.current) break;
-                        const outRel = buildOutputRelPath(f, {
-                            suffix: '_filtered',
-                            seq,
-                            op: 'filter',
-                            template: outputTemplate,
-                            prefix: outputPrefix,
-                            preserveStructure,
-                            date: batchTime,
-                        });
-                        chunk.push({
-                            input_path: normalizePath(f.input_path),
-                            output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                            filter_type: filterPreset,
-                            intensity,
-                            grain,
-                            vignette,
-                        });
-                        seq += 1;
-                    }
-                    if (cancelRequestedRef.current || chunk.length === 0) {
-                        break;
-                    }
-                    try {
-                        if (chunk.length > 1 && appAny.ApplyFilterBatch) {
-                            const res = await appAny.ApplyFilterBatch(chunk);
-                            let cancelledInBatch = false;
-                            (res || []).forEach((item, idx: number) => {
-                                if (!item?.success) {
-                                    if (isCancellationError(item?.error)) {
-                                        cancelledInBatch = true;
-                                        return;
-                                    }
-                                    failed += 1;
-                                    reportTaskFailure('图片滤镜', chunk[idx]?.input_path || item?.input_path || '', item?.error, '滤镜失败');
-                                }
+                await runGenericBatch({
+                    ctx: {
+                        app: appAny,
+                        files,
+                        total,
+                        cancelRequestedRef,
+                        setCancelRequested,
+                        setProgressThrottled,
+                        flushProgress,
+                        setLastMessage,
+                        reportTaskFailure,
+                        reportBatchTaskFailure,
+                        getBatchChunkSize,
+                        normalizePath,
+                    },
+                    taskName: '图片滤镜',
+                    label: '滤镜',
+                    fallbackError: '滤镜失败',
+                    canBatch: Boolean(appAny.ApplyFilterBatch),
+                    runSingle: (item) => appAny.ApplyFilter!(item),
+                    runBatch: appAny.ApplyFilterBatch ? (items) => appAny.ApplyFilterBatch!(items) : undefined,
+                    buildChunk: async (group, seqStart) => {
+                        let seq = seqStart;
+                        const chunk: models.FilterRequest[] = [];
+                        for (const f of group) {
+                            if (cancelRequestedRef.current) break;
+                            const outRel = buildOutputRelPath(f, {
+                                suffix: '_filtered',
+                                seq,
+                                op: 'filter',
+                                template: outputTemplate,
+                                prefix: outputPrefix,
+                                preserveStructure,
+                                date: batchTime,
                             });
-                            if (cancelledInBatch) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                        } else {
-                            const res = await appAny.ApplyFilter(chunk[0]);
-                            if (!res?.success) {
-                                if (isCancellationError(res?.error)) {
-                                    cancelRequestedRef.current = true;
-                                    setCancelRequested(true);
-                                    break;
-                                }
-                                failed += 1;
-                                reportTaskFailure('图片滤镜', chunk[0].input_path, res?.error, '滤镜失败');
-                            }
+                            chunk.push({
+                                input_path: normalizePath(f.input_path),
+                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
+                                filter_type: filterPreset,
+                                intensity,
+                                grain,
+                                vignette,
+                            });
+                            seq += 1;
                         }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error('Failed to filter batch:', err);
-                        failed += chunk.length;
-                        reportBatchTaskFailure('图片滤镜', group, err, '滤镜失败');
-                    }
-                    completed += chunk.length;
-                    setProgress((completed / total) * 100);
-                }
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(cancelled
-                    ? `滤镜已停止：成功 ${success}/${total} 项${extra}`
-                    : `滤镜完成：成功 ${success}/${total} 项${extra}`);
+                        return { chunk, nextSeq: seq };
+                    },
+                });
                 return;
             }
 

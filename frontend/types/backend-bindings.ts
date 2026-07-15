@@ -29,6 +29,11 @@ export type AppBindings = {
     ListSystemFonts: () => Promise<Array<string>>;
     Ping: () => Promise<string> | string;
     ResolveOutputPath: (arg1: models.ResolveOutputPathRequest) => Promise<models.ResolveOutputPathResult>;
+    ResolveOutputPaths?: (arg1: { items: Array<string>; reserved?: Array<string> }) => Promise<{
+        success: boolean;
+        paths?: Array<string>;
+        error?: string;
+    }>;
     SaveSettings: (arg1: models.AppSettings) => Promise<models.AppSettings>;
     SelectInputDirectory: () => Promise<string>;
     SelectInputFiles: (options?: unknown) => Promise<Array<string>>;

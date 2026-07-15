@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { installDesktopRuntime } from './runtime/desktopRuntime';
+import ErrorBoundary from './components/ErrorBoundary';
 
 installDesktopRuntime();
 
@@ -14,6 +15,8 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary title="应用渲染出错">
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );

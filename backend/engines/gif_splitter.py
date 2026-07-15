@@ -59,29 +59,30 @@ class GIFTool:
             output_format = (output_format or "png").lower()
             if output_format not in FRAME_OUTPUT_FORMATS:
                 return _error_response("GIF_EXPORT_UNSUPPORTED_FORMAT", f"Unsupported output format: {output_format}")
-            with Image.open(input_path) as animated:
-                frames, _, _, _, _ = self._extract_animation_frames(
-                    animated,
-                    require_animated=True,
-                    source_path=input_path,
-                )
-            frame_count = len(frames)
-            frame_indices = self._parse_frame_range(frame_range, frame_count)
-            frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
-            if not frame_indices:
-                return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
-
             os.makedirs(output_dir, exist_ok=True)
             base_name = Path(input_path).stem
             frame_files = []
             save_format = output_format.upper()
 
-            for frame_idx in frame_indices:
-                frame = frames[frame_idx]
-                output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
-                output_path = os.path.join(output_dir, output_filename)
-                frame.save(output_path, format=save_format)
-                frame_files.append(output_path)
+            with Image.open(input_path) as animated:
+                frame_count = int(getattr(animated, "n_frames", 1) or 1)
+                if frame_count <= 1:
+                    return _error_response("GIF_EXPORT_FAILED", "Input image is not an animated image")
+                self._assert_frame_pixel_budget(animated.size, 1)
+                frame_indices = self._parse_frame_range(frame_range, frame_count)
+                frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
+                if not frame_indices:
+                    return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
+
+                # Stream only selected frames instead of materializing the full animation.
+                for frame_idx in frame_indices:
+                    animated.seek(frame_idx)
+                    with animated.convert("RGBA") as frame:
+                        output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
+                        output_path = os.path.join(output_dir, output_filename)
+                        frame.save(output_path, format=save_format)
+                        frame_files.append(output_path)
+
             return {
                 "success": True,
                 "input_path": input_path,
@@ -98,12 +99,6 @@ class GIFTool:
         except Exception as exc:
             logger.error("GIF export failed: %s", exc, exc_info=True)
             return _error_response("GIF_EXPORT_FAILED", str(exc))
-        finally:
-            for frame in locals().get("frames", []):
-                try:
-                    frame.close()
-                except Exception:
-                    pass
 
     def reverse_gif(self, input_path, output_path, loop=None):
         try:
@@ -395,6 +390,8 @@ class GIFTool:
             return _error_response("GIF_RESIZE_FAILED", str(exc))
 
     def convert_animation(self, input_path, output_path, output_format, quality=90, loop=None):
+        frames = []
+        quantized = []
         try:
             target = self._sanitize_animation_output_format(output_format)
             with Image.open(input_path) as animated:
@@ -406,6 +403,7 @@ class GIFTool:
 
             loop_value = animated_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
+            frame_count = len(frames)
 
             if target == "gif":
                 quantized = [self._quantize_rgba_frame(frame, 255) for frame in frames]
@@ -429,7 +427,7 @@ class GIFTool:
                 "success": True,
                 "input_path": input_path,
                 "output_path": output_path,
-                "frame_count": len(frames),
+                "frame_count": frame_count,
                 "output_format": target,
                 "source_format": source_format,
             }
@@ -442,10 +440,23 @@ class GIFTool:
         except Exception as exc:
             logger.error("Animated convert failed: %s", exc, exc_info=True)
             return _error_response("ANIMATED_CONVERT_FAILED", str(exc))
+        finally:
+            for frame in frames:
+                try:
+                    frame.close()
+                except Exception:
+                    pass
+            for frame in quantized:
+                try:
+                    frame.close()
+                except Exception:
+                    pass
 
     def _extract_gif_frames(self, gif):
         if gif.format != "GIF":
             raise ValueError("Input file is not a GIF")
+        frame_count = int(getattr(gif, "n_frames", 1) or 1)
+        self._assert_frame_pixel_budget(gif.size, frame_count)
         frames = []
         durations = []
         default_duration = gif.info.get("duration", 100)
@@ -461,6 +472,8 @@ class GIFTool:
     def _extract_gif_frames_with_disposal(self, gif):
         if gif.format != "GIF":
             raise ValueError("Input file is not a GIF")
+        frame_count = int(getattr(gif, "n_frames", 1) or 1)
+        self._assert_frame_pixel_budget(gif.size, frame_count)
         frames = []
         durations = []
         disposals = []
@@ -486,6 +499,7 @@ class GIFTool:
         frame_count = int(getattr(animated, "n_frames", 1) or 1)
         if require_animated and frame_count <= 1:
             raise ValueError("Input image is not an animated image")
+        self._assert_frame_pixel_budget(animated.size, frame_count)
 
         frames = []
         durations = []

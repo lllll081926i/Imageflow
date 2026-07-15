@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue, useId, memo } from 'react';
+import VirtualList from './VirtualList';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
@@ -512,8 +513,8 @@ const buildFileTree = (files: DroppedFile[]) => {
     return root;
 };
 
-const ROOT_AUTO_EXPAND_LIMIT = 120;
-const CHILD_AUTO_EXPAND_LIMIT = 48;
+const ROOT_AUTO_EXPAND_LIMIT = 40;
+const CHILD_AUTO_EXPAND_LIMIT = 24;
 
 const sortTreeNode = (node: FileTreeNode, sortKey: SortKey, sortOrder: SortOrder, depth = 0) => {
     const sortedChildren = Object.values(node.children || {});
@@ -647,42 +648,47 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                                 />
                             ))}
 
-                            {sortedFiles.map((f) => {
-                                const name = getRelativeName(f);
-                                const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
-                                return (
-                                    <div
-                                        key={f.input_path}
-                                        onClick={() => onItemSelect?.(f)}
-                                        onKeyDown={(e) => {
-                                            if (!onItemSelect) return;
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault();
-                                                onItemSelect(f);
-                                            }
-                                        }}
-                                        role={onItemSelect ? 'button' : undefined}
-                                        tabIndex={onItemSelect ? 0 : -1}
-                                        aria-selected={Boolean(isSelected)}
-                                        className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
-                                            isSelected
-                                                ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
-                                                : 'hover:bg-black/5 dark:hover:bg-white/5'
-                                        } ${onItemSelect ? 'cursor-pointer' : ''}`}
-                                        style={{ paddingLeft: paddingLeft + 24 }}
-                                    >
-                                        <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
-                                        <div className="flex-1 min-w-0 truncate">{name}</div>
-                                        <button
-                                            onClick={(e) => onRemoveFile(f.input_path, e)}
-                                            className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
-                                            title="移除文件"
+                            <VirtualList
+                                items={sortedFiles}
+                                itemHeight={40}
+                                height={Math.min(360, Math.max(160, sortedFiles.length * 40))}
+                                getKey={(f) => f.input_path}
+                                renderItem={(f) => {
+                                    const name = getRelativeName(f);
+                                    const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
+                                    return (
+                                        <div
+                                            onClick={() => onItemSelect?.(f)}
+                                            onKeyDown={(e) => {
+                                                if (!onItemSelect) return;
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    onItemSelect(f);
+                                                }
+                                            }}
+                                            role={onItemSelect ? 'button' : undefined}
+                                            tabIndex={onItemSelect ? 0 : -1}
+                                            aria-selected={Boolean(isSelected)}
+                                            className={`py-2 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file pr-9 ${
+                                                isSelected
+                                                    ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
+                                                    : 'hover:bg-black/5 dark:hover:bg-white/5'
+                                            } ${onItemSelect ? 'cursor-pointer' : ''}`}
+                                            style={{ paddingLeft: paddingLeft + 24 }}
                                         >
-                                            <Icon name="X" size={14} />
-                                        </button>
-                                    </div>
-                                );
-                            })}
+                                            <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
+                                            <div className="flex-1 min-w-0 truncate">{name}</div>
+                                            <button
+                                                onClick={(e) => onRemoveFile(f.input_path, e)}
+                                                className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
+                                                title="移除文件"
+                                            >
+                                                <Icon name="X" size={14} />
+                                            </button>
+                                        </div>
+                                    );
+                                }}
+                            />
                         </div>
                     )}
                 </div>
@@ -895,12 +901,12 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
-        setIsDragOver(true);
+        setIsDragOver((prev) => (prev ? prev : true));
     };
 
     const handleDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
-        setIsDragOver(false);
+        setIsDragOver((prev) => (prev ? false : prev));
     };
 
     const handleDrop = (e: React.DragEvent) => {
@@ -1199,44 +1205,46 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                     />
                                 ))}
 
-                                {looseFiles.map((f) => {
-                                    const name = basename(f.input_path);
-                                    const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
-                                    return (
-                                        <div
-                                            key={f.input_path}
-                                            onClick={() => onItemSelect?.(f)}
-                                            onKeyDown={(e) => {
-                                                if (!onItemSelect) return;
-                                                if (e.key === 'Enter' || e.key === ' ') {
-                                                    e.preventDefault();
-                                                    onItemSelect(f);
-                                                }
-                                            }}
-                                            role={onItemSelect ? 'button' : undefined}
-                                            tabIndex={onItemSelect ? 0 : -1}
-                                            aria-selected={Boolean(isSelected)}
-                                            className={`px-4 py-3 flex items-center gap-3 border-b border-gray-200/60 dark:border-white/10 last:border-0 transition-colors group/file ${
-                                                isSelected
-                                                    ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
-                                                    : 'hover:bg-black/5 dark:hover:bg-white/5'
-                                            } ${onItemSelect ? 'cursor-pointer' : ''}`}
-                                        >
-                                            <div className="w-2 h-2 rounded-full bg-[#5856D6]/60 shrink-0" />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{name}</div>
-                                                <div className="text-[11px] text-gray-500 dark:text-gray-400">文件</div>
-                                            </div>
-                                            <button 
-                                                onClick={(e) => handleRemoveFile(f.input_path, e)}
-                                                className="opacity-0 group-hover/file:opacity-100 p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all"
-                                                title="移除文件"
+                                <VirtualList
+                                    items={looseFiles}
+                                    itemHeight={40}
+                                    height={Math.min(420, Math.max(180, looseFiles.length * 40))}
+                                    getKey={(f) => f.input_path}
+                                    renderItem={(f) => {
+                                        const name = getRelativeName(f);
+                                        const isSelected = selectedKey && normalizePath(f.input_path) === selectedKey;
+                                        return (
+                                            <div
+                                                onClick={() => onItemSelect?.(f)}
+                                                onKeyDown={(e) => {
+                                                    if (!onItemSelect) return;
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        onItemSelect(f);
+                                                    }
+                                                }}
+                                                role={onItemSelect ? 'button' : undefined}
+                                                tabIndex={onItemSelect ? 0 : -1}
+                                                aria-selected={Boolean(isSelected)}
+                                                className={`py-2 px-3 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 group/file ${
+                                                    isSelected
+                                                        ? 'bg-[#007AFF]/10 dark:bg-[#0A84FF]/15'
+                                                        : 'hover:bg-black/5 dark:hover:bg-white/5'
+                                                } ${onItemSelect ? 'cursor-pointer' : ''}`}
                                             >
-                                                <Icon name="Trash2" size={14} />
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                                <div className="w-2 h-2 rounded-full bg-[#007AFF]/60 shrink-0" />
+                                                <div className="flex-1 min-w-0 truncate">{name}</div>
+                                                <button
+                                                    onClick={(e) => handleRemoveFile(f.input_path, e)}
+                                                    className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
+                                                    title="移除文件"
+                                                >
+                                                    <Icon name="X" size={14} />
+                                                </button>
+                                            </div>
+                                        );
+                                    }}
+                                />
                             </div>
                         </div>
                     </div>

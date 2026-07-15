@@ -73,6 +73,28 @@ class SubtitleStitcherTests(unittest.TestCase):
             self.assertEqual(out.getpixel((10, 105)), (250, 230, 80, 255))
             self.assertEqual(out.getpixel((10, 130)), (80, 230, 250, 255))
 
+    def test_canvas_pixel_budget_is_enforced(self):
+        original = subtitle_stitcher.MAX_CANVAS_PIXELS
+        try:
+            subtitle_stitcher.MAX_CANVAS_PIXELS = 1000
+            frame1 = self._make_frame("big1.png", (10, 10, 10), (255, 255, 255), size=(100, 100), subtitle_height=20)
+            frame2 = self._make_frame("big2.png", (20, 20, 20), (200, 200, 200), size=(100, 100), subtitle_height=20)
+            result = subtitle_stitcher.process(
+                {
+                    "action": "subtitle_stitch",
+                    "input_paths": [frame1, frame2],
+                    "output_path": self._path("too-big.png"),
+                    "subtitle_crop_ratio": 0.20,
+                    "header_keep_full": True,
+                    "dedup_enabled": False,
+                    "minimum_strip_height": 10,
+                }
+            )
+            self.assertFalse(result.get("success"))
+            self.assertEqual(result.get("error_code"), "SUBTITLE_CANVAS_TOO_LARGE")
+        finally:
+            subtitle_stitcher.MAX_CANVAS_PIXELS = original
+
     def test_dedup_skips_neighbor_duplicate_subtitle_strip(self):
         frame1 = self._make_pattern_frame(
             "a.png",

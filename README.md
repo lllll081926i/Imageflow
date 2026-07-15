@@ -83,6 +83,7 @@ sequenceDiagram
 | 图片水印 | 文字/图片水印、九宫格定位、平铺、混合模式、阴影 | `backend/engines/watermark.py` |
 | 图片调整 | 旋转、翻转、亮度/对比度/饱和度/色相/锐度、裁剪比例 | `backend/engines/adjuster.py` |
 | 图片滤镜 | 基础滤镜 + 高级滤镜 + 30+ 预设滤镜 | `backend/engines/filter.py` |
+| 字幕长图 | 连续截图拼接长图，可选去重 | `backend/engines/subtitle_stitcher.py` |
 
 ---
 
@@ -280,18 +281,23 @@ Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/set
 ## 测试与质量检查
 
 ```bash
-# Python 单元测试
+# Python 单元测试（含 application + engines，因 engines 已是包）
 uv run python -m unittest discover -s backend/tests -v
+# 等价：
+npm run test:backend
 
-# Python 引擎回归测试
+# 仅引擎回归
 uv run python -m unittest discover -s backend/tests/engines -v
+# 等价：
+npm run test:backend:engines
 
 # 发布配置回归测试
 uv run python -m unittest backend.tests.test_release_builder -v
 
-# 前端构建检查
-cd frontend
-npm run build
+# 前端测试 / 类型检查 / 构建
+npm run test:frontend
+npm run typecheck:frontend
+npm run build:frontend
 ```
 
 ---

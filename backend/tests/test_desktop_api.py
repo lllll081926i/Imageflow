@@ -29,7 +29,7 @@ class DesktopAPITests(unittest.TestCase):
         self.assertEqual(app.ping(), "pong")
 
         settings = app.get_settings()
-        self.assertEqual(settings["max_concurrency"], 8)
+        self.assertEqual(settings["max_concurrency"], 4)
         self.assertEqual(settings["output_prefix"], "IF")
 
         saved = app.save_settings(
@@ -489,6 +489,35 @@ class DesktopAPITests(unittest.TestCase):
             desktop_api.execute_engine = original_execute_engine
             if worker.is_alive():
                 worker.join(timeout=0.5)
+
+    def test_convert_batch_always_returns_list_on_engine_failure(self):
+        app = create_app()
+        original = desktop_api.execute_engine_batch
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("worker exploded")
+
+        try:
+            desktop_api.execute_engine_batch = boom
+            results = app.convert_batch(
+                [
+                    {"input_path": "a.png", "output_path": "a-out.png", "format": "png"},
+                    {"input_path": "b.png", "output_path": "b-out.png", "format": "png"},
+                ]
+            )
+        finally:
+            desktop_api.execute_engine_batch = original
+
+        self.assertIsInstance(results, list)
+        self.assertEqual(len(results), 2)
+        self.assertFalse(results[0].get("success"))
+        self.assertIn("worker exploded", str(results[0].get("error") or ""))
+        self.assertTrue(str(results[0].get("input_path") or "").endswith("a.png"))
+        self.assertTrue(str(results[1].get("input_path") or "").endswith("b.png"))
+
+    def test_compress_batch_empty_payload_returns_empty_list(self):
+        app = create_app()
+        self.assertEqual(app.compress_batch([]), [])
 
 
 class DialogInfrastructureTests(unittest.TestCase):

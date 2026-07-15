@@ -31,7 +31,7 @@ class SettingsStoreTests(unittest.TestCase):
 
             loaded = load_settings()
 
-            self.assertEqual(loaded.max_concurrency, 8)
+            self.assertEqual(loaded.max_concurrency, 4)
             self.assertEqual(loaded.output_prefix, "IF")
 
     def test_load_settings_preserves_known_values_when_file_has_unknown_or_string_fields(self):
@@ -99,7 +99,7 @@ class SettingsStoreTests(unittest.TestCase):
 
             loaded = load_settings()
 
-            self.assertEqual(loaded.max_concurrency, 8)
+            self.assertEqual(loaded.max_concurrency, 4)
             self.assertEqual(loaded.output_prefix, "IF")
 
     def test_load_settings_falls_back_to_defaults_when_override_parent_directory_is_missing(self):
@@ -110,7 +110,7 @@ class SettingsStoreTests(unittest.TestCase):
 
             loaded = load_settings()
 
-            self.assertEqual(loaded.max_concurrency, 8)
+            self.assertEqual(loaded.max_concurrency, 4)
             self.assertEqual(loaded.output_prefix, "IF")
 
     def test_save_settings_rejects_override_path_with_non_json_suffix(self):

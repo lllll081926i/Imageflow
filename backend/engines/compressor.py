@@ -459,6 +459,19 @@ class ImageCompressor:
             else:
                 work = img
             if level == CompressionLevel.LOSSLESS and use_mozjpeg and not force_pillow and input_path.lower().endswith((".jpg", ".jpeg")):
+                # MozJPEG optimize API requires full bytes. Cap size to avoid multi-hundred-MB spikes.
+                max_mozjpeg_bytes = int(os.getenv("IMAGEFLOW_MOZJPEG_MAX_BYTES", str(48 * 1024 * 1024)))
+                try:
+                    input_size = os.path.getsize(input_path)
+                except OSError:
+                    input_size = 0
+                if max_mozjpeg_bytes > 0 and input_size > max_mozjpeg_bytes:
+                    if strip_metadata:
+                        with open(input_path, "rb") as src, open(output_path, "wb") as dst:
+                            _copy_jpeg_without_metadata(src, dst)
+                    else:
+                        _copy_file_streaming(input_path, output_path)
+                    return
                 with open(input_path, "rb") as f:
                     jpeg_bytes = f.read()
                 optimized_bytes = mozjpeg_lossless_optimization.optimize(jpeg_bytes)
@@ -486,6 +499,10 @@ class ImageCompressor:
             work.save(output_path, **save_kwargs)
             if use_mozjpeg and not force_pillow and self.mozjpeg_available:
                 try:
+                    max_mozjpeg_bytes = int(os.getenv("IMAGEFLOW_MOZJPEG_MAX_BYTES", str(48 * 1024 * 1024)))
+                    output_size = os.path.getsize(output_path)
+                    if max_mozjpeg_bytes > 0 and output_size > max_mozjpeg_bytes:
+                        raise RuntimeError("mozjpeg skipped for large output")
                     with open(output_path, "rb") as f:
                         jpeg_bytes = f.read()
                     optimized_bytes = mozjpeg_lossless_optimization.optimize(jpeg_bytes)
