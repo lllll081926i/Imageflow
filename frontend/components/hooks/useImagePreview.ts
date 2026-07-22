@@ -35,7 +35,7 @@ export function useImagePreview({ enabled, path, debounceMs = 120 }: UseImagePre
         const timer = window.setTimeout(() => {
             void (async () => {
                 try {
-                    const res = await appAny.GetImagePreview({ input_path: path });
+                    const res = await appAny.GetImagePreview?.({ input_path: path });
                     if (cancelled) return;
                     if (res?.success && res.data_url) {
                         setPreviewDataUrl(res.data_url);

@@ -1062,59 +1062,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
         setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     };
 
-    const SortMenu = () => {
-        if (!isSortMenuOpen || !sortButtonRef.current) return null;
-
-        const options: { label: string; key: SortKey }[] = [
-            { label: '名称', key: 'name' },
-            { label: '时间', key: 'time' },
-            { label: '大小', key: 'size' },
-        ];
-
-        return createPortal(
-            <>
-                <div className="fixed inset-0 z-40" onClick={() => setIsSortMenuOpen(false)} />
-                <div 
-                    className="fixed z-50 bg-white dark:bg-[#1C1C1E] rounded-xl shadow-xl border border-gray-200 dark:border-white/10 p-1 min-w-[120px] animate-enter"
-                    style={{
-                        top: sortButtonRef.current.getBoundingClientRect().bottom + 4,
-                        left: sortButtonRef.current.getBoundingClientRect().right - 120, // Align right
-                    }}
-                >
-                    {options.map(opt => (
-                        <button
-                            key={opt.key}
-                            onClick={() => {
-                                setSortKey(opt.key);
-                                setIsSortMenuOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
-                                sortKey === opt.key 
-                                    ? 'bg-[#007AFF] text-white' 
-                                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
-                            }`}
-                        >
-                            <span>{opt.label}</span>
-                            {sortKey === opt.key && <Icon name="Check" size={14} />}
-                        </button>
-                    ))}
-                    <div className="h-px bg-gray-200 dark:bg-white/10 my-1 mx-1" />
-                    <button
-                        onClick={() => {
-                            toggleSortOrder();
-                            setIsSortMenuOpen(false);
-                        }}
-                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
-                    >
-                        <span>{sortOrder === 'asc' ? '升序' : '降序'}</span>
-                        <Icon name={sortOrder === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} />
-                    </button>
-                </div>
-            </>,
-            document.body
-        );
-    };
-
     return (
         <div 
             className={`
@@ -1182,7 +1129,52 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                 <Icon name="ListFilter" size={14} />
                                 <span>排序</span>
                             </button>
-                            <SortMenu />
+                            {isSortMenuOpen && sortButtonRef.current && createPortal(
+                                <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setIsSortMenuOpen(false)} />
+                                    <div 
+                                        className="fixed z-50 bg-white dark:bg-[#1C1C1E] rounded-xl shadow-xl border border-gray-200 dark:border-white/10 p-1 min-w-[120px] animate-enter"
+                                        style={{
+                                            top: sortButtonRef.current.getBoundingClientRect().bottom + 4,
+                                            left: sortButtonRef.current.getBoundingClientRect().right - 120, // Align right
+                                        }}
+                                    >
+                                        {[
+                                            { label: '名称', key: 'name' as SortKey },
+                                            { label: '时间', key: 'time' as SortKey },
+                                            { label: '大小', key: 'size' as SortKey },
+                                        ].map(opt => (
+                                            <button
+                                                key={opt.key}
+                                                onClick={() => {
+                                                    setSortKey(opt.key);
+                                                    setIsSortMenuOpen(false);
+                                                }}
+                                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
+                                                    sortKey === opt.key 
+                                                        ? 'bg-[#007AFF] text-white' 
+                                                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
+                                                }`}
+                                            >
+                                                <span>{opt.label}</span>
+                                                {sortKey === opt.key && <Icon name="Check" size={14} />}
+                                            </button>
+                                        ))}
+                                        <div className="h-px bg-gray-200 dark:bg-white/10 my-1 mx-1" />
+                                        <button
+                                            onClick={() => {
+                                                toggleSortOrder();
+                                                setIsSortMenuOpen(false);
+                                            }}
+                                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+                                        >
+                                            <span>{sortOrder === 'asc' ? '升序' : '降序'}</span>
+                                            <Icon name={sortOrder === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} />
+                                        </button>
+                                    </div>
+                                </>,
+                                document.body
+                            )}
                         </div>
 
                         <div className="flex-1 overflow-y-auto overflow-x-hidden relative scrollbar-dark">

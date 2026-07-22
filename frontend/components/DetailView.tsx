@@ -387,7 +387,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         setIsSystemFontsLoading(true);
         (async () => {
             try {
-                const res = await appAny.ListSystemFonts();
+                const res = await appAny.ListSystemFonts?.();
                 if (!active) return;
                 if (Array.isArray(res)) {
                     setSystemFonts(res);
@@ -1016,7 +1016,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         a.href = url;
                         a.download = `${name}.json`;
                         a.click();
-                        URL.revokeObjectURL(url);
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
                     } catch (e) {
                         console.error(e);
                     }
@@ -2482,7 +2482,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         return frameCountByPath.get(key) ?? null;
                     }
                     try {
-                        const res = await appAny.SplitGIF({
+                        const res = await appAny.SplitGIF?.({
                             action: 'get_frame_count',
                             input_path: normalizedInputPath,
                             maintain_aspect: true,

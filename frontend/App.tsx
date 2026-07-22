@@ -31,7 +31,15 @@ export function shouldPreventWindowDragEvent(dataTransfer: Pick<DataTransfer, 't
 }
 
 const App: React.FC = () => {
-    const [theme, setTheme] = useState<Theme>('light');
+    const [theme, setTheme] = useState<Theme>(() => {
+        try {
+            const saved = localStorage.getItem('imageflow_theme');
+            if (saved === 'dark' || saved === 'light') return saved;
+        } catch {
+            // Ignore storage errors
+        }
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    });
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
     const [failureNotifications, setFailureNotifications] = useState<TaskFailureNotification[]>([]);
@@ -56,10 +64,19 @@ const App: React.FC = () => {
         window.addEventListener('dragover', preventDefault);
         window.addEventListener('drop', preventDefault);
 
-        // Check system preference on load
-        if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            setTheme('dark');
-            document.documentElement.classList.add('dark');
+        // Initialize theme class on element
+        try {
+            const saved = localStorage.getItem('imageflow_theme');
+            const initialDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (initialDark) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        } catch {
+            if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.documentElement.classList.add('dark');
+            }
         }
 
         return () => {
@@ -82,12 +99,17 @@ const App: React.FC = () => {
     }, [activeView, direction]);
 
     const toggleTheme = () => {
-        if (theme === 'light') {
-            setTheme('dark');
+        const nextTheme = theme === 'light' ? 'dark' : 'light';
+        setTheme(nextTheme);
+        if (nextTheme === 'dark') {
             document.documentElement.classList.add('dark');
         } else {
-            setTheme('light');
             document.documentElement.classList.remove('dark');
+        }
+        try {
+            localStorage.setItem('imageflow_theme', nextTheme);
+        } catch {
+            // Ignore storage errors
         }
     };
 

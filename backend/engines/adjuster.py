@@ -308,10 +308,13 @@ class ImageAdjuster:
             lut = [min(255, int(x + (255 - x) * factor)) for x in range(256)]
         else:
             lut = [max(0, int(x * (1 + factor))) for x in range(256)]
-        s = s.point(lut)
-        out = Image.merge("HSV", (h, s, v)).convert("RGB")
+        s_mod = s.point(lut)
+        out = Image.merge("HSV", (h, s_mod, v)).convert("RGB")
 
         # Close intermediates
+        s_mod.close()
+        for ch in (h, s, v):
+            ch.close()
         hsv.close()
         if rgb is not img:
             rgb.close()
@@ -456,10 +459,13 @@ class ImageAdjuster:
         h, s, v = hsv.split()
         shift = int(round((shift_degrees % 360) * 255 / 360))
         lut = [(i + shift) % 256 for i in range(256)]
-        h = h.point(lut)
-        out = Image.merge('HSV', (h, s, v)).convert('RGB')
+        h_mod = h.point(lut)
+        out = Image.merge('HSV', (h_mod, s, v)).convert('RGB')
 
         # Close intermediates
+        h_mod.close()
+        for ch in (h, s, v):
+            ch.close()
         hsv.close()
         if rgb is not img:
             rgb.close()

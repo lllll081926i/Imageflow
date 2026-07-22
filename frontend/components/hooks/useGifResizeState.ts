@@ -70,7 +70,7 @@ export function useGifResizeState({
         let active = true;
         (async () => {
             try {
-                const info = await app.GetInfo({ input_path: gifReferencePath });
+                const info = await app?.GetInfo?.({ input_path: gifReferencePath });
                 if (!active) return;
                 if (info?.success && Number(info.width) > 0 && Number(info.height) > 0) {
                     const width = Math.round(Number(info.width));

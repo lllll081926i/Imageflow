@@ -337,6 +337,29 @@ class ICOConversionTests(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_out))
         self.assertFalse(os.path.exists(requested_out))
 
+    def test_svg_to_ico_conversion_success(self):
+        svg_path = self._path("simple.svg")
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">'
+                '<circle cx="64" cy="64" r="50" fill="#007AFF"/></svg>'
+            )
+        out_ico = self._path("output.ico")
+
+        result = convert_process(
+            {
+                "input_path": svg_path,
+                "output_path": out_ico,
+                "format": "ico",
+                "ico_sizes": [16, 32, 64],
+            }
+        )
+
+        self.assertTrue(result.get("success"))
+        self.assertTrue(os.path.exists(out_ico))
+        with Image.open(out_ico) as img:
+            self.assertEqual(sorted(img.info.get("sizes", [])), [(16, 16), (32, 32), (64, 64)])
+
 
 class ConversionResourceTests(unittest.TestCase):
     def setUp(self):

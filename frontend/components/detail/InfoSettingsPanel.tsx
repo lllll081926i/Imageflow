@@ -347,7 +347,7 @@ export const InfoSettings = memo(({
         rows = [{ rawKey: '错误', label: '错误', value: String(info.error), editKey: '', editable: false }];
     }
     const warnings = Array.isArray(info?.warnings)
-        ? info.warnings.filter((item) => item && (item.message || item.code))
+        ? info.warnings.filter((item: { message?: string; code?: string } | null | undefined) => item && (item.message || item.code))
         : [];
 
     const name = filePath ? filePath.replace(/\\/g, '/').split('/').pop() || filePath : '';
