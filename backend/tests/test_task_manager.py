@@ -44,7 +44,7 @@ class TaskManagerTests(unittest.TestCase):
     def test_finishing_older_task_keeps_newer_task_current(self):
         manager = TaskManager()
 
-        first = manager.begin_task("info")
+        first = manager.begin_task("beauty")
         second = manager.begin_task("convert")
         manager.finish_task(first)
 
@@ -87,9 +87,9 @@ class TaskManagerTests(unittest.TestCase):
         try:
             image_ops._invoke_engine_job = boom
             manager = TaskManager()
-            task_id = manager.begin_task("info", set_current=False)
+            task_id = manager.begin_task("beauty", set_current=False)
             manager.cancel_task(task_id)
-            result = image_ops.execute_engine("info_viewer", {"input_path": "D:/dummy.png"}, manager, task_id=task_id)
+            result = image_ops.execute_engine("image_processor", {"input_path": "D:/dummy.png"}, manager, task_id=task_id)
             self.assertEqual(result, {"success": False, "error": "[PY_CANCELLED] operation cancelled"})
             self.assertFalse(called["value"])
         finally:

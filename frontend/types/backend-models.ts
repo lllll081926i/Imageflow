@@ -65,6 +65,9 @@ export namespace models {
 	    default_output_dir: string;
 	    recent_input_dirs: string[];
 	    recent_output_dirs: string[];
+	    auto_check_updates?: boolean;
+	    open_output_folder_on_complete?: boolean;
+	    remember_window_state?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -80,6 +83,9 @@ export namespace models {
 	        this.default_output_dir = source["default_output_dir"];
 	        this.recent_input_dirs = source["recent_input_dirs"];
 	        this.recent_output_dirs = source["recent_output_dirs"];
+	        this.auto_check_updates = source["auto_check_updates"];
+	        this.open_output_folder_on_complete = source["open_output_folder_on_complete"];
+	        this.remember_window_state = source["remember_window_state"];
 	    }
 	}
 	export class CompressRequest {
@@ -839,8 +845,85 @@ export namespace models {
 	        this.input_path = source["input_path"];
 	        this.output_path = source["output_path"];
 	        this.error = source["error"];
-	    }
-	}
+        }
+    }
 
+    export class ProcessImageRequest {
+        input_path: string;
+        output_path: string;
+        rotate: number;
+        flip_h: boolean;
+        flip_v: boolean;
+        brightness: number;
+        contrast: number;
+        saturation: number;
+        hue: number;
+        exposure: number;
+        vibrance: number;
+        sharpness: number;
+        crop_ratio: string;
+        crop_mode: string;
+        filter: string;
+        intensity: number;
+        grain: number;
+        vignette: number;
+        blur_radius: number;
+        sharpen_factor: number;
+        noise_level: number;
+        vignette_strength: number;
+        color_offset_x: number;
+        color_offset_y: number;
+
+        static createFrom(source: any = {}) {
+            return new ProcessImageRequest(source);
+        }
+
+        constructor(source: any = {}) {
+            if ('string' === typeof source) source = JSON.parse(source);
+            this.input_path = source["input_path"];
+            this.output_path = source["output_path"];
+            this.rotate = source["rotate"];
+            this.flip_h = source["flip_h"];
+            this.flip_v = source["flip_v"];
+            this.brightness = source["brightness"];
+            this.contrast = source["contrast"];
+            this.saturation = source["saturation"];
+            this.hue = source["hue"];
+            this.exposure = source["exposure"];
+            this.vibrance = source["vibrance"];
+            this.sharpness = source["sharpness"];
+            this.crop_ratio = source["crop_ratio"];
+            this.crop_mode = source["crop_mode"];
+            this.filter = source["filter"];
+            this.intensity = source["intensity"];
+            this.grain = source["grain"];
+            this.vignette = source["vignette"];
+            this.blur_radius = source["blur_radius"];
+            this.sharpen_factor = source["sharpen_factor"];
+            this.noise_level = source["noise_level"];
+            this.vignette_strength = source["vignette_strength"];
+            this.color_offset_x = source["color_offset_x"];
+            this.color_offset_y = source["color_offset_y"];
+        }
+    }
+    export class ProcessImageResult {
+        success: boolean;
+        input_path: string;
+        output_path: string;
+        file_size?: number;
+        error?: string;
+
+        static createFrom(source: any = {}) {
+            return new ProcessImageResult(source);
+        }
+
+        constructor(source: any = {}) {
+            if ('string' === typeof source) source = JSON.parse(source);
+            this.success = source["success"];
+            this.input_path = source["input_path"];
+            this.output_path = source["output_path"];
+            this.file_size = source["file_size"];
+            this.error = source["error"];
+        }
+    }
 }
-

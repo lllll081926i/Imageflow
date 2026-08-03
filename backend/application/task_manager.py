@@ -1,8 +1,14 @@
-from multiprocessing.process import BaseProcess
 from threading import RLock
 
 
 class TaskManager:
+    """Tracks logical task lifecycles and cooperative cancellation flags.
+
+    Cancellation is cooperative: workers must poll ``is_cancelled()``.
+    Jobs already running in the process pool are not terminated; cancelling
+    a task only prevents unstarted work from running.
+    """
+
     def __init__(self):
         self._lock = RLock()
         self._tasks: dict[int, dict[str, object]] = {}
@@ -16,7 +22,6 @@ class TaskManager:
             self._tasks[self._next_task_id] = {
                 "kind": kind,
                 "cancelled": False,
-                "processes": [],
             }
             if set_current:
                 self._active_task_ids.append(self._next_task_id)
@@ -29,18 +34,7 @@ class TaskManager:
             if task is None:
                 return False
             task["cancelled"] = True
-            processes = list(task.get("processes", []))
-        for process in processes:
-            try:
-                if process.is_alive():
-                    process.terminate()
-                    process.join(timeout=5)
-                    if process.is_alive():
-                        process.kill()
-                        process.join(timeout=2)
-            except Exception:
-                continue
-        return True
+            return True
 
     def is_cancelled(self, task_id: int) -> bool:
         with self._lock:
@@ -63,27 +57,6 @@ class TaskManager:
             if task_id in self._active_task_ids:
                 self._active_task_ids.remove(task_id)
             self._refresh_current_task_id()
-
-    def attach_process(self, task_id: int, process: BaseProcess) -> None:
-        with self._lock:
-            task = self._tasks.get(task_id)
-            if task is None:
-                return
-            processes = task.setdefault("processes", [])
-            if isinstance(processes, list):
-                processes.append(process)
-
-    def detach_process(self, task_id: int, process: BaseProcess) -> None:
-        with self._lock:
-            task = self._tasks.get(task_id)
-            if task is None:
-                return
-            processes = task.get("processes", [])
-            if isinstance(processes, list):
-                try:
-                    processes.remove(process)
-                except ValueError:
-                    pass
 
     def _refresh_current_task_id(self) -> None:
         while self._active_task_ids and self._active_task_ids[-1] not in self._tasks:

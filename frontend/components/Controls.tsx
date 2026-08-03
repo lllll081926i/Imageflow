@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredVa
 import VirtualList from './VirtualList';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
-import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
+import { getAppBindings, resolveSelectedFilePaths } from '../types/app-api';
 
 // --- Reusable UI Components ---
 
@@ -822,14 +822,63 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             return null;
         }
     };
+    const buildLocalExpandResult = (files: File[], paths: string[]): ExpandDroppedPathsResult => ({
+        has_directory: files.some((f) => Boolean(f.webkitRelativePath)),
+        files: files.map((f: File, index: number) => {
+            const anyFile = f as any;
+            const inputPath = (paths[index] || (typeof anyFile.path === 'string' ? anyFile.path : '') || '').trim();
+            const relative = f.webkitRelativePath || f.name;
+            const sourceRoot = f.webkitRelativePath ? f.webkitRelativePath.split('/')[0] : '';
+            return {
+                input_path: inputPath,
+                source_root: sourceRoot,
+                relative_path: relative,
+                is_from_dir_drop: Boolean(f.webkitRelativePath),
+                size: f.size || 0,
+                mod_time: Math.floor((f.lastModified || Date.now()) / 1000),
+            };
+        }).filter((item) => item.input_path),
+    });
+
     const applyFileSelection = async (files: File[], resolvedPaths?: string[]) => {
         onFilesSelected(files);
-        beginSelectionStatus(resolvedPaths && resolvedPaths.length > 0 ? '正在扫描文件...' : '正在解析文件路径...');
+        const hasResolved = Boolean(resolvedPaths && resolvedPaths.length > 0);
+        beginSelectionStatus(hasResolved ? '正在加载...' : '正在解析文件路径...');
         try {
+            // Fast path: known absolute paths — paint list immediately, refine in background.
+            if (hasResolved && resolvedPaths) {
+                const quick = buildLocalExpandResult(files, resolvedPaths);
+                if (quick.files.length > 0) {
+                    mergeAndPublishResult(quick);
+                    setSelectionStatus('');
+                }
+                // Background enrich via host (size/mod_time accuracy for dirs); ignore failures.
+                void (async () => {
+                    try {
+                        const expanded = await expandPathsFromFiles(files, resolvedPaths);
+                        if (expanded && expanded.files?.length) {
+                            // Replace with host result for accuracy
+                            const filtered = filterExpandedResultByExtensions(expanded, acceptedExtensionSet);
+                            previewResultRef.current = filtered;
+                            setPreviewResult(filtered);
+                            onPathsExpanded?.(filtered);
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    }
+                })();
+                return;
+            }
+
             const normalizedPaths = resolvedPaths && resolvedPaths.length > 0
                 ? resolvedPaths
                 : await resolveSelectedFilePaths(files);
             if (normalizedPaths.length > 0) {
+                // Optimistic list before host expand
+                const quick = buildLocalExpandResult(files, normalizedPaths);
+                if (quick.files.length > 0) {
+                    mergeAndPublishResult(quick);
+                }
                 setSelectionStatus('正在扫描文件...');
             }
             const expanded = await expandPathsFromFiles(files, normalizedPaths);
@@ -878,8 +927,23 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             const app = getAppBindings();
             if (!app?.ExpandDroppedPaths) return;
 
-            beginSelectionStatus('正在扫描文件...');
+            beginSelectionStatus('正在加载...');
             try {
+                // Optimistic entries so UI reacts immediately on drop
+                if (paths.length <= 64) {
+                    const quick: ExpandDroppedPathsResult = {
+                        has_directory: false,
+                        files: paths.map((input_path) => ({
+                            input_path,
+                            source_root: '',
+                            relative_path: basename(input_path),
+                            is_from_dir_drop: false,
+                            size: 0,
+                            mod_time: Math.floor(Date.now() / 1000),
+                        })),
+                    };
+                    mergeAndPublishResult(quick);
+                }
                 const result = await app.ExpandDroppedPaths(paths);
                 mergeAndPublishResult(result as ExpandDroppedPathsResult);
             } catch (e) {
@@ -1076,7 +1140,7 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={hasPreview ? undefined : handleClick}
-            style={{ ['--wails-drop-target' as any]: 'drop' }}
+            style={{ ['--if-drop-target' as any]: 'drop' }}
         >
             <input 
                 ref={inputRef}

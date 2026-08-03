@@ -9,14 +9,6 @@ from backend.app import create_app
 
 
 class EngineBridgeTests(unittest.TestCase):
-    def test_get_info_uses_python_engine_module(self):
-        app = create_app()
-        source = Path("backend/testdata/simple.svg").resolve()
-
-        result = app.GetInfo({"input_path": str(source)})
-
-        self.assertTrue(result["success"])
-        self.assertEqual(result["input_path"].lower().replace("\\", "/"), str(source).lower().replace("\\", "/"))
 
     def test_convert_uses_python_engine_module(self):
         app = create_app()

@@ -6,8 +6,6 @@ export const FEATURES: Feature[] = [
     { id: 'pdf', title: '转 PDF', desc: '批量合并，自由排版', iconName: 'FileJson', color: 'text-orange-500', bg: 'bg-orange-50', darkBg: 'dark:bg-orange-500/10' },
     { id: 'gif', title: 'GIF 工具', desc: '导出、倒放、调帧率', iconName: 'Scissors', color: 'text-red-500', bg: 'bg-red-50', darkBg: 'dark:bg-red-500/10' },
     { id: 'subtitle_stitch', title: '字幕拼接', desc: '首帧保留，字幕长图拼接', iconName: 'Type', color: 'text-indigo-500', bg: 'bg-indigo-50', darkBg: 'dark:bg-indigo-500/10' },
-    { id: 'info', title: '信息查看', desc: 'EXIF 元数据深度解析', iconName: 'Info', color: 'text-gray-600 dark:text-gray-400', bg: 'bg-gray-50', darkBg: 'dark:bg-gray-500/10' },
     { id: 'watermark', title: '图片水印', desc: '文字/图片，批量添加', iconName: 'Stamp', color: 'text-purple-500', bg: 'bg-purple-50', darkBg: 'dark:bg-purple-500/10' },
-    { id: 'adjust', title: '图片调整', desc: '旋转、翻转、色彩', iconName: 'SlidersHorizontal', color: 'text-cyan-500', bg: 'bg-cyan-50', darkBg: 'dark:bg-cyan-500/10' },
-    { id: 'filter', title: '图片滤镜', desc: '专业级滤镜效果', iconName: 'Wand2', color: 'text-pink-500', bg: 'bg-pink-50', darkBg: 'dark:bg-pink-500/10' },
+    { id: 'image_processor', title: '图片美化', desc: '调色、裁剪、滤镜，一站式美化', iconName: 'Palette', color: 'text-cyan-500', bg: 'bg-cyan-50', darkBg: 'dark:bg-cyan-500/10' },
 ];

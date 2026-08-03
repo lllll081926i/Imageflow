@@ -85,6 +85,15 @@ def normalize_settings(settings: AppSettings) -> AppSettings:
         default_output_dir=_normalize_saved_path(settings.default_output_dir),
         recent_input_dirs=_normalize_recent_paths(settings.recent_input_dirs),
         recent_output_dirs=_normalize_recent_paths(settings.recent_output_dirs),
+        auto_check_updates=_coerce_bool(getattr(settings, "auto_check_updates", defaults.auto_check_updates), defaults.auto_check_updates),
+        open_output_folder_on_complete=_coerce_bool(
+            getattr(settings, "open_output_folder_on_complete", defaults.open_output_folder_on_complete),
+            defaults.open_output_folder_on_complete,
+        ),
+        remember_window_state=_coerce_bool(
+            getattr(settings, "remember_window_state", defaults.remember_window_state),
+            defaults.remember_window_state,
+        ),
     )
 
 

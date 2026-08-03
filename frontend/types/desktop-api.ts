@@ -13,10 +13,5 @@ export function getDesktopBindings(): DesktopBindings | null {
         return pywebviewApi;
     }
 
-    const goApi = window.go?.main?.App;
-    if (goApi) {
-        return goApi as DesktopBindings;
-    }
-
     return null;
 }

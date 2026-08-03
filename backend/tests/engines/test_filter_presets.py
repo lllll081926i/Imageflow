@@ -10,9 +10,8 @@ ENGINE_DIR = Path(__file__).resolve().parents[2] / "engines"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
-from adjuster import ImageAdjuster
-import filter as filter_engine
-from filter import ImageFilterApplier
+from image_processor import ImageProcessor
+import image_processor as filter_engine
 
 
 class FilterPresetTests(unittest.TestCase):
@@ -49,8 +48,8 @@ class FilterPresetTests(unittest.TestCase):
     def test_film_intensity_zero_no_change(self):
         src = self._make_base("film_base.png")
         out = self._path("film_out.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=src,
             output_path=out,
             filter_name="film",
@@ -62,8 +61,8 @@ class FilterPresetTests(unittest.TestCase):
     def test_polaroid_intensity_zero_no_change(self):
         src = self._make_base("polaroid_base.png")
         out = self._path("polaroid_out.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=src,
             output_path=out,
             filter_name="polaroid",
@@ -75,8 +74,8 @@ class FilterPresetTests(unittest.TestCase):
     def test_grain_changes_image(self):
         src = self._make_base("grain_base.png")
         out = self._path("grain_out.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=src,
             output_path=out,
             filter_name="none",
@@ -89,8 +88,8 @@ class FilterPresetTests(unittest.TestCase):
     def test_vignette_changes_image(self):
         src = self._make_base("vignette_base.png")
         out = self._path("vignette_out.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=src,
             output_path=out,
             filter_name="none",
@@ -105,8 +104,8 @@ class FilterPresetTests(unittest.TestCase):
         Image.new("RGB", (32, 24), (180, 120, 60)).save(src, format="JPEG")
 
         out = self._path("filter_out.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=src,
             output_path=out,
             filter_name="warm",
@@ -122,8 +121,8 @@ class FilterPresetTests(unittest.TestCase):
         Image.new("RGB", (24, 32), (50, 100, 150)).save(src, format="JPEG")
 
         out = self._path("adjust_out.png")
-        adjuster = ImageAdjuster()
-        result = adjuster.adjust(
+        adjuster = ImageProcessor()
+        result = adjuster.process(
             input_path=src,
             output_path=out,
             rotate=90,
@@ -135,8 +134,8 @@ class FilterPresetTests(unittest.TestCase):
 
     def test_adjuster_accepts_svg_input(self):
         out = self._path("adjust_svg.png")
-        adjuster = ImageAdjuster()
-        result = adjuster.adjust(
+        adjuster = ImageProcessor()
+        result = adjuster.process(
             input_path=self._svg_path(),
             output_path=out,
             rotate=90,
@@ -150,8 +149,8 @@ class FilterPresetTests(unittest.TestCase):
 
     def test_filter_accepts_svg_input(self):
         out = self._path("filter_svg.png")
-        applier = ImageFilterApplier()
-        result = applier.apply(
+        applier = ImageProcessor()
+        result = applier.process(
             input_path=self._svg_path(),
             output_path=out,
             filter_name="bw",
@@ -183,7 +182,7 @@ class FilterPresetTests(unittest.TestCase):
         source = FakeImage()
         filtered = FakeImage()
         original_open = filter_engine.open_image_with_svg_support
-        original_apply_basic = ImageFilterApplier._apply_basic_filter
+        original_apply_basic = ImageProcessor._apply_basic_filter
 
         def fake_open(*_args, **_kwargs):
             return source
@@ -195,10 +194,10 @@ class FilterPresetTests(unittest.TestCase):
 
         try:
             filter_engine.open_image_with_svg_support = fake_open
-            ImageFilterApplier._apply_basic_filter = fake_basic
+            ImageProcessor._apply_basic_filter = fake_basic
 
             out = self._path("fake_filter.png")
-            result = ImageFilterApplier().apply(
+            result = ImageProcessor().process(
                 input_path="virtual-input.png",
                 output_path=out,
                 filter_name="grayscale",
@@ -211,7 +210,7 @@ class FilterPresetTests(unittest.TestCase):
             self.assertTrue(filtered.closed)
         finally:
             filter_engine.open_image_with_svg_support = original_open
-            ImageFilterApplier._apply_basic_filter = original_apply_basic
+            ImageProcessor._apply_basic_filter = original_apply_basic
 
     def test_motion_blur_closes_intermediate_images(self):
         created_filters = []
@@ -231,15 +230,15 @@ class FilterPresetTests(unittest.TestCase):
 
         source = FakeImage("source")
         blended = FakeImage("blended")
-        original_blend = filter_engine.Image.blend
+        original_blend = Image.blend
 
         def fake_blend(_left, _right, _alpha):
             return blended
 
         try:
-            filter_engine.Image.blend = fake_blend
+            Image.blend = fake_blend
 
-            result = ImageFilterApplier()._apply_advanced_filter(
+            result = ImageProcessor()._apply_advanced_filter(
                 source,
                 "blur_motion",
                 intensity=1.0,
@@ -257,7 +256,7 @@ class FilterPresetTests(unittest.TestCase):
             self.assertTrue(all(image.closed for image in created_filters))
             self.assertFalse(blended.closed)
         finally:
-            filter_engine.Image.blend = original_blend
+            Image.blend = original_blend
 
     def test_color_offset_closes_split_channels(self):
         class FakeChannel:
@@ -276,8 +275,8 @@ class FilterPresetTests(unittest.TestCase):
         shifted_r = FakeChannel("shifted-r")
         shifted_b = FakeChannel("shifted-b")
         merged = FakeChannel("merged")
-        original_offset = filter_engine.ImageChops.offset
-        original_merge = filter_engine.Image.merge
+        original_offset = ImageChops.offset
+        original_merge = Image.merge
 
         def fake_offset(channel, x, y):
             if channel is source_channels[0]:
@@ -292,18 +291,18 @@ class FilterPresetTests(unittest.TestCase):
             return merged
 
         try:
-            filter_engine.ImageChops.offset = fake_offset
-            filter_engine.Image.merge = fake_merge
+            ImageChops.offset = fake_offset
+            Image.merge = fake_merge
 
-            result = ImageFilterApplier()._add_color_offset(FakeImage(), 3, 2)
+            result = ImageProcessor()._add_color_offset(FakeImage(), 3, 2)
 
             self.assertIs(result, merged)
             for channel in (*source_channels, shifted_r, shifted_b):
                 self.assertTrue(channel.closed)
             self.assertFalse(merged.closed)
         finally:
-            filter_engine.ImageChops.offset = original_offset
-            filter_engine.Image.merge = original_merge
+            ImageChops.offset = original_offset
+            Image.merge = original_merge
 
 
 if __name__ == "__main__":

@@ -82,10 +82,11 @@ class BatchContractTests(unittest.TestCase):
         self.assertTrue(all("格式异常" in str(item.get("error") or "") for item in result))
 
     def test_batch_methods_preserve_successful_list_order_and_payload(self):
-        def fake_batch(module_name, payloads, settings, task_manager):
+        def fake_batch(module_name, payloads, settings, task_manager, task_id=None):
             self.assertEqual(module_name, "converter")
             self.assertIsInstance(settings.max_concurrency, int)
             self.assertGreaterEqual(settings.max_concurrency, 1)
+            self.assertIsNotNone(task_id)
             return [
                 {"success": True, "input_path": item["input_path"], "index": index}
                 for index, item in enumerate(payloads)
@@ -172,7 +173,7 @@ class BatchContractTests(unittest.TestCase):
         try:
             result = api._run_batch_operation(
                 [{"input_path": "x.png"}],
-                lambda: (_ for _ in ()).throw(RuntimeError("tracked")),
+                lambda _task_id: (_ for _ in ()).throw(RuntimeError("tracked")),
             )
         finally:
             manager.begin_task = original_begin  # type: ignore[method-assign]

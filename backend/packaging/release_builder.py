@@ -112,6 +112,10 @@ def build_pyinstaller_command(paths: ReleasePaths, icon_path: Path | None) -> li
     logo_path = paths.project_root / "ico.png"
     if logo_path.exists():
         command.extend(["--add-data", _add_data_arg(logo_path, ".")])
+    version_file = paths.project_root / "VERSION"
+    if not version_file.exists():
+        version_file.write_text("2.1.1\n", encoding="utf-8")
+    command.extend(["--add-data", _add_data_arg(version_file, ".")])
     if icon_path is not None:
         command.extend(["--icon", str(icon_path)])
     command.append(entrypoint)

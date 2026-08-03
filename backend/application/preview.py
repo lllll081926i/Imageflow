@@ -10,9 +10,9 @@ from typing import Any
 
 from backend.infrastructure.engine_loader import load_engine_module
 
-DEFAULT_PREVIEW_MAX_BYTES = 4 * 1024 * 1024
-PREVIEW_MAX_EDGE = 1280
-PREVIEW_JPEG_QUALITY = 80
+DEFAULT_PREVIEW_MAX_BYTES = 8 * 1024 * 1024
+PREVIEW_MAX_EDGE = 720
+PREVIEW_JPEG_QUALITY = 72
 PREVIEW_PROCESS_TIMEOUT_SECONDS = 20.0
 PREVIEW_CACHE_MAX_ENTRIES = 64
 _ISOLATE_EXTENSIONS = {".svg"}
@@ -66,11 +66,22 @@ def _should_isolate(path: Path) -> bool:
     return path.suffix.lower() in _ISOLATE_EXTENSIONS
 
 
-def build_image_preview(input_path: str) -> dict[str, Any]:
+def _clamp_decompression_bomb_limit() -> None:
+    """Preview should never accept decompression bombs, even in isolated workers.
+
+    Applied once at import time (the isolated preview process imports this
+    module too), instead of mutating the global on every call.
+    """
     from PIL import Image
 
-    # Preview path should never accept decompression bombs even if caller raised the global limit.
     Image.MAX_IMAGE_PIXELS = min(int(getattr(Image, "MAX_IMAGE_PIXELS", 0) or 64_000_000), 32_000_000)
+
+
+_clamp_decompression_bomb_limit()
+
+
+def build_image_preview(input_path: str) -> dict[str, Any]:
+    from PIL import Image
 
     source = Path(input_path)
     if not source.exists():

@@ -15,7 +15,7 @@ export const WindowControls: React.FC = () => {
     };
 
     return (
-        <div className="flex items-center gap-1 h-full px-2" style={{ ['--wails-draggable' as any]: 'no-drag' }}>
+        <div className="flex items-center gap-1 h-full px-2">
             <button 
                 onClick={minimize}
                 className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"

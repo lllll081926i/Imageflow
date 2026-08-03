@@ -14,7 +14,7 @@ ENGINE_DIR = Path(__file__).resolve().parents[2] / "engines"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
-import filter as filter_engine  # noqa: E402
+from image_processor import ImageProcessor as filter_engine  # noqa: E402
 import gif_splitter  # noqa: E402
 import subtitle_stitcher  # noqa: E402
 
@@ -215,7 +215,7 @@ class SubtitleCanvasBudgetTests(unittest.TestCase):
 
 class FilterSafetyDetailedTests(unittest.TestCase):
     def setUp(self):
-        self.tool = filter_engine.ImageFilterApplier()
+        self.tool = filter_engine()
 
     def test_fast_noise_path_returns_image(self):
         with Image.new("RGB", (24, 24), (40, 40, 40)) as img:

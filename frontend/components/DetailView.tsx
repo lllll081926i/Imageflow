@@ -22,8 +22,7 @@ import {
     useConverterParams,
     useCompressorParams,
     usePdfParams,
-    useAdjustParams,
-    useFilterParams,
+    useImageProcessorParams,
     useGifParams,
     useWatermarkParams,
 } from './hooks/useFeatureParams';
@@ -55,15 +54,14 @@ import {
     getAppBindings,
     loadAppSettings,
     updateRecentPaths,
-} from '../types/wails-api';
+} from '../types/app-api';
 import type { models } from '../types/backend-models';
 import { ConverterSettings } from './detail/ConverterSettingsPanel';
 import { CompressorSettings } from './detail/CompressorSettingsPanel';
 import { WatermarkSettings } from './detail/WatermarkSettingsPanel';
-import { AdjustCropControls, AdjustSettings } from './detail/AdjustSettingsPanel';
-import { FILTER_LABELS, FILTER_PRESETS, FilterControls, FilterSettings } from './detail/FilterSettingsPanel';
+import { FILTER_PRESETS } from './detail/FilterSettingsPanel';
+import { ImageProcessorPanel } from './detail/ImageProcessorPanel';
 import { PdfSettings } from './detail/PdfSettingsPanel';
-import { InfoSettings } from './detail/InfoSettingsPanel';
 import { runGenericBatch, runConvertBatch, runCompressBatch } from './detail/batchRunners';
 
 const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
@@ -78,12 +76,6 @@ const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
     '.tiff',
     '.tif',
     '.svg',
-];
-
-const INFO_IMAGE_INPUT_EXTENSIONS = [
-    ...DEFAULT_IMAGE_INPUT_EXTENSIONS,
-    '.heic',
-    '.heif',
 ];
 
 const COMPRESSOR_INPUT_EXTENSIONS = [
@@ -102,15 +94,10 @@ const extensionsToAccept = (extensions: string[]) => extensions.join(',');
 const extensionsToDialogPattern = (extensions: string[]) => extensions.map((ext) => `*${ext}`).join(';');
 
 const DEFAULT_IMAGE_ACCEPTED_FORMATS = extensionsToAccept(DEFAULT_IMAGE_INPUT_EXTENSIONS);
-const INFO_IMAGE_ACCEPTED_FORMATS = extensionsToAccept(INFO_IMAGE_INPUT_EXTENSIONS);
 const COMPRESSOR_ACCEPTED_FORMATS = extensionsToAccept(COMPRESSOR_INPUT_EXTENSIONS);
 const DEFAULT_IMAGE_FILE_DIALOG_FILTERS = [{
     DisplayName: 'Images',
     Pattern: extensionsToDialogPattern(DEFAULT_IMAGE_INPUT_EXTENSIONS),
-}];
-const INFO_IMAGE_FILE_DIALOG_FILTERS = [{
-    DisplayName: 'Images',
-    Pattern: extensionsToDialogPattern(INFO_IMAGE_INPUT_EXTENSIONS),
 }];
 const COMPRESSOR_FILE_DIALOG_FILTERS = [{
     DisplayName: 'Compressible bitmaps',
@@ -130,17 +117,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const feature = FEATURES.find(f => f.id === id);
     if (!feature) return null;
 
-    const isInfo = id === 'info';
-    const isAdjustOrFilter = id === 'adjust' || id === 'filter';
+    const isImageProcessor = id === 'image_processor';
     const isWatermark = id === 'watermark';
-    const isPreviewFeature = isAdjustOrFilter || isWatermark;
+    const isPreviewFeature = isImageProcessor || isWatermark;
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [cancelRequested, setCancelRequested] = useState(false);
     const cancelRequestedRef = useRef(false);
-    const infoRequestIdRef = useRef(0);
-    const infoRequestTimerRef = useRef<number | null>(null);
     const {
         progress,
         setProgress,
@@ -158,6 +142,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const [failedRecords, setFailedRecords] = useState<DroppedFile[]>([]);
     const [retryFailedOnly, setRetryFailedOnly] = useState(false);
     const currentRunFailedPathsRef = useRef<Set<string> | null>(null);
+    const openOutputOnCompleteRef = useRef<{ enabled: boolean; dir: string }>({ enabled: false, dir: '' });
 
     const {
         format: convFormat, setFormat: setConvFormat,
@@ -202,13 +187,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         flipH: adjustFlipH, setFlipH: setAdjustFlipH,
         flipV: adjustFlipV, setFlipV: setAdjustFlipV,
         cropRatio: adjustCropRatio, setCropRatio: setAdjustCropRatio,
-    } = useAdjustParams();
-    const {
         intensity: filterIntensity, setIntensity: setFilterIntensity,
         grain: filterGrain, setGrain: setFilterGrain,
         vignette: filterVignette, setVignette: setFilterVignette,
-        selected: filterSelected, setSelected: setFilterSelected,
-    } = useFilterParams();
+        filterSelected, setFilterSelected,
+    } = useImageProcessorParams();
     const {
         mode: gifMode, setMode: setGifMode,
         exportFormat: gifExportFormat, setExportFormat: setGifExportFormat,
@@ -217,8 +200,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         compressQuality: gifCompressQuality, setCompressQuality: setGifCompressQuality,
         buildFps: gifBuildFps, setBuildFps: setGifBuildFps,
     } = useGifParams();
-    const [infoFilePath, setInfoFilePath] = useState('');
-    const [infoPreview, setInfoPreview] = useState<any | null>(null);
     const [previewPath, setPreviewPath] = useState('');
     const { previewDataUrl, previewLoadError, setPreviewDataUrl, setPreviewLoadError } = useImagePreview({
         enabled: isPreviewFeature,
@@ -435,18 +416,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         };
     }, [watermarkImageSrc]);
     const previewFilter = useMemo(() => {
-        if (!isAdjustOrFilter) return '';
-        if (id === 'adjust') {
-            return buildAdjustPreviewFilter(
-                adjustExposure,
-                adjustContrast,
-                adjustSaturation,
-                adjustVibrance,
-                adjustHue,
-                adjustSharpness,
-            );
-        }
-        return buildFilterPreviewFilter(filterSelected, filterIntensity);
+        if (!isImageProcessor) return '';
+        const adjustPart = buildAdjustPreviewFilter(
+            adjustExposure,
+            adjustContrast,
+            adjustSaturation,
+            adjustVibrance,
+            adjustHue,
+            adjustSharpness,
+        );
+        const filterPart = buildFilterPreviewFilter(filterSelected, filterIntensity);
+        return [adjustPart, filterPart].filter(Boolean).join(' ');
     }, [
         adjustExposure,
         adjustContrast,
@@ -456,20 +436,19 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         adjustSharpness,
         filterSelected,
         filterIntensity,
-        id,
-        isAdjustOrFilter,
+        isImageProcessor,
     ]);
     const previewTransform = useMemo(() => {
-        if (!isAdjustOrFilter || id !== 'adjust') return '';
+        if (!isImageProcessor) return '';
         const rotate = ((adjustRotate % 360) + 360) % 360;
         const scaleX = adjustFlipH ? -1 : 1;
         const scaleY = adjustFlipV ? -1 : 1;
         return `rotate(${rotate}deg) scale(${scaleX}, ${scaleY})`;
-    }, [adjustFlipH, adjustFlipV, adjustRotate, id, isAdjustOrFilter]);
+    }, [adjustFlipH, adjustFlipV, adjustRotate, isImageProcessor]);
     const previewCropRatio = useMemo(() => {
-        if (!isAdjustOrFilter || id !== 'adjust') return null;
+        if (!isImageProcessor) return null;
         return parseCropRatio(adjustCropRatio);
-    }, [adjustCropRatio, id, isAdjustOrFilter]);
+    }, [adjustCropRatio, isImageProcessor]);
     const previewFrame = useMemo(() => {
         const containerWidth = previewContainerSize.width;
         const containerHeight = previewContainerSize.height;
@@ -503,7 +482,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         };
     }, [previewContainerSize, previewCropRatio]);
     const showCropFrame = Boolean(previewCropRatio);
-    const isCropInteractive = showCropFrame && id === 'adjust' && Boolean(previewSrc);
+    const isCropInteractive = showCropFrame && isImageProcessor && Boolean(previewSrc);
     const cropImageMetrics = useMemo(() => {
         if (!showCropFrame) return null;
         if (!previewImageSize.width || !previewImageSize.height) return null;
@@ -740,10 +719,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
         return positions;
     }, [watermarkTileGrid, watermarkTileMetrics, watermarkPreviewConfig]);
-    const previewGrainOpacity = isAdjustOrFilter && id === 'filter'
+    const previewGrainOpacity = isImageProcessor
         ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
         : 0;
-    const previewVignetteOpacity = isAdjustOrFilter && id === 'filter'
+    const previewVignetteOpacity = isImageProcessor
         ? clampNumber(filterVignette / 100 * 0.6, 0, 0.6)
         : 0;
     const isCompareActive = isComparing && Boolean(previewSrc);
@@ -927,9 +906,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         systemFontsCount={systemFonts.length}
                     />
                 );
-            case 'adjust':
+            case 'image_processor':
                 return (
-                    <AdjustSettings
+                    <ImageProcessorPanel
                         exposure={adjustExposure}
                         setExposure={setAdjustExposure}
                         contrast={adjustContrast}
@@ -942,17 +921,22 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         setVibrance={setAdjustVibrance}
                         hue={adjustHue}
                         setHue={setAdjustHue}
-                        showCrop={false}
-                    />
-                );
-            case 'filter':
-                return (
-                    <FilterSettings
+                        rotate={adjustRotate}
+                        setRotate={setAdjustRotate}
+                        flipH={adjustFlipH}
+                        setFlipH={setAdjustFlipH}
+                        flipV={adjustFlipV}
+                        setFlipV={setAdjustFlipV}
+                        cropRatio={adjustCropRatio}
+                        setCropRatio={setAdjustCropRatio}
+                        intensity={filterIntensity}
                         setIntensity={setFilterIntensity}
+                        grain={filterGrain}
                         setGrain={setFilterGrain}
+                        vignette={filterVignette}
                         setVignette={setFilterVignette}
-                        selected={filterSelected}
-                        setSelected={setFilterSelected}
+                        filterSelected={filterSelected}
+                        setFilterSelected={setFilterSelected}
                         previewSrc={previewSrc}
                         getPreviewFilter={(index) => buildFilterPreviewFilter(index, filterIntensity)}
                     />
@@ -1004,116 +988,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         originalHeight={gifOriginalSize.height}
                     />
                 );
-            case 'info': {
-                const onExportJSON = () => {
-                    if (!infoPreview?.success) return;
-                    try {
-                        const content = JSON.stringify(infoPreview, null, 2);
-                        const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        const name = (infoFilePath || 'image').replace(/\\/g, '/').split('/').pop() || 'image';
-                        a.href = url;
-                        a.download = `${name}.json`;
-                        a.click();
-                        setTimeout(() => URL.revokeObjectURL(url), 1000);
-                    } catch (e) {
-                        console.error(e);
-                    }
-                };
-
-                const onClearPrivacy = async () => {
-                    if (!infoFilePath) return;
-                    try {
-                        const normalized = infoFilePath.replace(/\\/g, '/');
-                        const idx = normalized.lastIndexOf('/');
-                        const dir = idx >= 0 ? normalized.slice(0, idx) : '';
-                        const name = idx >= 0 ? normalized.slice(idx + 1) : normalized;
-                        const baseName = stripExtension(name);
-                        const ext = extname(name);
-                        const outputName = buildOutputName(`${baseName}_clean`, {
-                            template: outputSettings.output_template,
-                            prefix: outputSettings.output_prefix,
-                            seq: 1,
-                            op: 'privacy',
-                            date: new Date(),
-                        });
-                        const rawPath = (dir ? `${dir}/` : '') + (ext ? `${outputName}.${ext}` : outputName);
-                        const appAny = getAppBindings();
-
-                        if (!appAny?.StripMetadata) {
-                            setLastMessage('后端未接入隐私清理接口');
-                            return;
-                        }
-                        let resolvedPath = normalizePath(rawPath);
-                        if (appAny?.ResolveOutputPath && outputSettings.conflict_strategy === 'rename') {
-                            try {
-                                const res = await appAny.ResolveOutputPath({
-                                    base_path: normalizePath(rawPath),
-                                    strategy: 'rename',
-                                    reserved: [],
-                                });
-                                if (res?.success && res.output_path) {
-                                    resolvedPath = normalizePath(res.output_path);
-                                }
-                            } catch (err) {
-                                console.error(err);
-                            }
-                        }
-                        setLastMessage('');
-                        const res = await appAny.StripMetadata({ input_path: infoFilePath, output_path: resolvedPath, overwrite: false });
-                        if (res?.success) {
-                            setLastMessage(`隐私清理完成：${res.output_path || resolvedPath}`);
-                            const refreshed = await appAny.GetInfo?.({ input_path: res.output_path || resolvedPath });
-                            setInfoFilePath(res.output_path || resolvedPath);
-                            setInfoPreview(refreshed || null);
-                        } else {
-                            setLastMessage(res?.error || '隐私清理失败');
-                        }
-                    } catch (e: any) {
-                        console.error(e);
-                        setLastMessage(typeof e?.message === 'string' ? e.message : '隐私清理失败');
-                    }
-                };
-
-                const onEditMetadata = async (key: string, value: any) => {
-                    if (!infoFilePath) return;
-                    const appAny = getAppBindings();
-                    if (!appAny?.EditMetadata) {
-                        setLastMessage('后端未接入元数据编辑接口');
-                        return;
-                    }
-                    setLastMessage('');
-                    try {
-                        const res = await appAny.EditMetadata({
-                            input_path: infoFilePath,
-                            output_path: infoFilePath,
-                            exif_data: { [key]: value },
-                            overwrite: true,
-                        });
-                        if (res?.success) {
-                            setLastMessage('元数据已更新');
-                            const refreshed = await appAny.GetInfo?.({ input_path: infoFilePath });
-                            setInfoPreview(refreshed || null);
-                        } else {
-                            setLastMessage(res?.error || '元数据编辑失败');
-                        }
-                    } catch (e: any) {
-                        console.error(e);
-                        setLastMessage(typeof e?.message === 'string' ? e.message : '元数据编辑失败');
-                    }
-                };
-
-                return (
-                    <InfoSettings
-                        filePath={infoFilePath}
-                        info={infoPreview}
-                        onExportJSON={onExportJSON}
-                        onClearPrivacy={onClearPrivacy}
-                        onEditMetadata={onEditMetadata}
-                    />
-                );
-            }
             default: return <div className="text-gray-400 text-sm text-center py-10">暂无特殊设置</div>;
         }
     };
@@ -1441,7 +1315,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 watermarkColor,
             };
         }
-        if (id === 'adjust') {
+        if (id === 'image_processor') {
             return {
                 ...shared,
                 adjustExposure,
@@ -1454,11 +1328,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 adjustFlipH,
                 adjustFlipV,
                 adjustCropRatio,
-            };
-        }
-        if (id === 'filter') {
-            return {
-                ...shared,
                 filterIntensity,
                 filterGrain,
                 filterVignette,
@@ -1534,7 +1403,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             }
             if (typeof payload.watermarkFont === 'string') setWatermarkFont(payload.watermarkFont);
             if (typeof payload.watermarkColor === 'string') setWatermarkColor(payload.watermarkColor);
-        } else if (id === 'adjust') {
+        } else if (id === 'image_processor') {
             if (typeof payload.adjustExposure === 'number') setAdjustExposure(payload.adjustExposure);
             if (typeof payload.adjustContrast === 'number') setAdjustContrast(payload.adjustContrast);
             if (typeof payload.adjustSaturation === 'number') setAdjustSaturation(payload.adjustSaturation);
@@ -1545,7 +1414,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             if (typeof payload.adjustFlipH === 'boolean') setAdjustFlipH(payload.adjustFlipH);
             if (typeof payload.adjustFlipV === 'boolean') setAdjustFlipV(payload.adjustFlipV);
             if (typeof payload.adjustCropRatio === 'string') setAdjustCropRatio(payload.adjustCropRatio);
-        } else if (id === 'filter') {
             if (typeof payload.filterIntensity === 'number') setFilterIntensity(payload.filterIntensity);
             if (typeof payload.filterGrain === 'number') setFilterGrain(payload.filterGrain);
             if (typeof payload.filterVignette === 'number') setFilterVignette(payload.filterVignette);
@@ -1553,7 +1421,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     };
     const saveCurrentPreset = () => {
-        if (id === 'info') return;
         const name = presetNameDraft.trim() || `${feature.title}预设 ${new Date().toLocaleString()}`;
         const now = Date.now();
         const preset: FeaturePreset = {
@@ -1828,68 +1695,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     }, [dropResult, isPreviewFeature]);
 
 
-    const loadInfoForPath = useCallback(async (p: string) => {
-        const normalized = normalizePath(p);
-        const requestId = ++infoRequestIdRef.current;
-        setIsProcessing(true);
-        resetProgress(0);
-        setLastMessage('');
-        setInfoFilePath(normalized);
-        setInfoPreview(null);
-        if (infoRequestTimerRef.current) {
-            window.clearTimeout(infoRequestTimerRef.current);
-            infoRequestTimerRef.current = null;
-        }
-
-        infoRequestTimerRef.current = window.setTimeout(() => {
-            infoRequestTimerRef.current = null;
-            void (async () => {
-                const appAny = getAppBindings();
-                if (!appAny?.GetInfo) {
-                    if (infoRequestIdRef.current === requestId) {
-                        setLastMessage('未检测到桌面宿主运行环境');
-                        setProgress(100);
-                        setIsProcessing(false);
-                    }
-                    return;
-                }
-                try {
-                    const info = await appAny.GetInfo({ input_path: normalized });
-                    if (infoRequestIdRef.current !== requestId) {
-                        return;
-                    }
-                    setInfoPreview(info);
-                    if (info?.success) {
-                        const fileName = normalized.split('/').pop() || normalized;
-                        setLastMessage(`信息读取完成：${fileName}`);
-                    } else {
-                        setLastMessage(info?.error || '信息读取失败');
-                    }
-                } catch (err: any) {
-                    if (infoRequestIdRef.current !== requestId) {
-                        return;
-                    }
-                    console.error(`Failed to get info ${p}:`, err);
-                    const msg = typeof err?.message === 'string' ? err.message : '信息读取失败';
-                    setInfoPreview({ success: false, error: msg });
-                    setLastMessage(msg);
-                } finally {
-                    if (infoRequestIdRef.current === requestId) {
-                        setProgress(100);
-                        setIsProcessing(false);
-                    }
-                }
-            })();
-        }, 120);
-    }, [normalizePath]);
-
-    useEffect(() => () => {
-        if (infoRequestTimerRef.current) {
-            window.clearTimeout(infoRequestTimerRef.current);
-            infoRequestTimerRef.current = null;
-        }
-    }, []);
-
     const handlePathsExpanded = useCallback((result: ExpandDroppedPathsResult) => {
         setDropResult(result);
         const firstFile = result?.files?.[0];
@@ -1899,24 +1704,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         if (inputDirForHistory) {
             void rememberRecentDirs({ inputDir: inputDirForHistory });
         }
-        if (id !== 'info') {
-            setLastMessage('');
-            resetProgress(0);
-            return;
-        }
-        const selected = infoFilePath
-            ? result?.files?.some((f) => normalizePath(f.input_path) === normalizePath(infoFilePath))
-            : false;
-        if (selected) return;
-        const selectedFirst = result?.files?.[0];
-        if (selectedFirst?.input_path) {
-            void loadInfoForPath(selectedFirst.input_path);
-            return;
-        }
-        setInfoFilePath('');
-        setInfoPreview(null);
         setLastMessage('');
-    }, [dirname, id, infoFilePath, loadInfoForPath, normalizePath, rememberRecentDirs]);
+        resetProgress(0);
+    }, [dirname, normalizePath, rememberRecentDirs]);
 
     const requestCancelProcessing = useCallback(async () => {
         if (!isProcessing) return;
@@ -1962,7 +1752,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
         const outDir = effectiveOutputDir;
         const requiresOutputDir =
-            id !== 'info' &&
             !((id === 'converter' && convOverwriteSource) || (id === 'compressor' && compOverwriteSource));
         if (requiresOutputDir && !outDir) {
             setLastMessage('请选择输出目录');
@@ -1976,6 +1765,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         const conflictStrategy = appSettingsSnapshot.conflict_strategy || defaultOutputSettings.conflict_strategy;
         const reservedPaths = new Set<string>();
         const batchTime = new Date();
+        openOutputOnCompleteRef.current = {
+            enabled: Boolean(appSettingsSnapshot.open_output_folder_on_complete),
+            dir: outDir || '',
+        };
+
         let currentRunFiles: DroppedFile[] = [];
         const activeHasDirectory = useOverrideFiles ? true : Boolean(dropResult?.has_directory);
         const resolveUniquePath = async (candidate: string) => {
@@ -2253,75 +2047,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 return;
             }
 
-            if (id === 'adjust') {
-                if (!appAny.Adjust) {
-                    setLastMessage('后端未接入调整接口');
-                    return;
-                }
-                await runGenericBatch({
-                    ctx: {
-                        app: appAny,
-                        files,
-                        total,
-                        cancelRequestedRef,
-                        setCancelRequested,
-                        setProgressThrottled,
-                        flushProgress,
-                        setLastMessage,
-                        reportTaskFailure,
-                        reportBatchTaskFailure,
-                        getBatchChunkSize,
-                        normalizePath,
-                    },
-                    taskName: '图片调整',
-                    label: '调整',
-                    fallbackError: '调整失败',
-                    canBatch: Boolean(appAny.AdjustBatch),
-                    runSingle: (item) => appAny.Adjust!(item),
-                    runBatch: appAny.AdjustBatch ? (items) => appAny.AdjustBatch!(items) : undefined,
-                    buildChunk: async (group, seqStart) => {
-                        let seq = seqStart;
-                        const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
-                        const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
-                        const chunk: models.AdjustRequest[] = [];
-                        for (const f of group) {
-                            if (cancelRequestedRef.current) break;
-                            const outRel = buildOutputRelPath(f, {
-                                suffix: '_adjusted',
-                                seq,
-                                op: 'adjust',
-                                template: outputTemplate,
-                                prefix: outputPrefix,
-                                preserveStructure,
-                                date: batchTime,
-                            });
-                            chunk.push({
-                                input_path: normalizePath(f.input_path),
-                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                                rotate: adjustRotate,
-                                flip_h: adjustFlipH,
-                                flip_v: adjustFlipV,
-                                brightness: 0,
-                                exposure: adjustExposure,
-                                contrast: adjustContrast,
-                                saturation: adjustSaturation,
-                                vibrance: adjustVibrance,
-                                hue: adjustHue,
-                                sharpness: adjustSharpness,
-                                crop_ratio: cropRatio,
-                                crop_mode: cropMode,
-                            });
-                            seq += 1;
-                        }
-                        return { chunk, nextSeq: seq };
-                    },
-                });
-                return;
-            }
-
-            if (id === 'filter') {
-                if (!appAny.ApplyFilter) {
-                    setLastMessage('后端未接入滤镜接口');
+            if (id === 'image_processor') {
+                if (!appAny.ProcessImage && !appAny.Adjust) {
+                    setLastMessage('后端未接入图片美化接口');
                     return;
                 }
                 const filterPreset = FILTER_PRESETS[filterSelected] || 'none';
@@ -2343,21 +2071,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         getBatchChunkSize,
                         normalizePath,
                     },
-                    taskName: '图片滤镜',
-                    label: '滤镜',
-                    fallbackError: '滤镜失败',
-                    canBatch: Boolean(appAny.ApplyFilterBatch),
-                    runSingle: (item) => appAny.ApplyFilter!(item),
-                    runBatch: appAny.ApplyFilterBatch ? (items) => appAny.ApplyFilterBatch!(items) : undefined,
+                    taskName: '图片美化',
+                    label: '美化',
+                    fallbackError: '美化失败',
+                    canBatch: Boolean(appAny.ProcessImageBatch || appAny.AdjustBatch),
+                    runSingle: (item) => (appAny.ProcessImage ? appAny.ProcessImage(item as any) : appAny.Adjust!(item as any)),
+                    runBatch: appAny.ProcessImageBatch
+                        ? (items) => appAny.ProcessImageBatch!(items as any)
+                        : (appAny.AdjustBatch ? (items) => appAny.AdjustBatch!(items as any) : undefined),
                     buildChunk: async (group, seqStart) => {
                         let seq = seqStart;
-                        const chunk: models.FilterRequest[] = [];
+                        const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
+                        const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
+                        const chunk: models.ProcessImageRequest[] = [];
                         for (const f of group) {
                             if (cancelRequestedRef.current) break;
                             const outRel = buildOutputRelPath(f, {
-                                suffix: '_filtered',
+                                suffix: '_beauty',
                                 seq,
-                                op: 'filter',
+                                op: 'beauty',
                                 template: outputTemplate,
                                 prefix: outputPrefix,
                                 preserveStructure,
@@ -2366,11 +2098,29 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             chunk.push({
                                 input_path: normalizePath(f.input_path),
                                 output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                                filter_type: filterPreset,
+                                rotate: adjustRotate,
+                                flip_h: adjustFlipH,
+                                flip_v: adjustFlipV,
+                                brightness: 0,
+                                exposure: adjustExposure,
+                                contrast: adjustContrast,
+                                saturation: adjustSaturation,
+                                vibrance: adjustVibrance,
+                                hue: adjustHue,
+                                sharpness: adjustSharpness,
+                                crop_ratio: cropRatio,
+                                crop_mode: cropMode,
+                                filter: filterPreset,
                                 intensity,
                                 grain,
                                 vignette,
-                            });
+                                blur_radius: 2,
+                                sharpen_factor: 2,
+                                noise_level: 0.1,
+                                vignette_strength: 0.5,
+                                color_offset_x: 5,
+                                color_offset_y: 5,
+                            } as models.ProcessImageRequest);
                             seq += 1;
                         }
                         return { chunk, nextSeq: seq };
@@ -2790,12 +2540,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 return;
             }
 
-            if (id === 'info') {
-                const f = files[0];
-                await loadInfoForPath(f.input_path);
-                return;
-            }
-
             setLastMessage('该功能暂未接入');
         } catch (e: any) {
             console.error(e);
@@ -2814,6 +2558,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     setRetryFailedOnly(false);
                 }
             }
+            if (!cancelRequestedRef.current) {
+                const cfg = openOutputOnCompleteRef.current;
+                if (cfg.enabled && cfg.dir) {
+                    try {
+                        const openPath = (getAppBindings() as any)?.OpenPath;
+                        if (typeof openPath === 'function') {
+                            void openPath({ path: cfg.dir });
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    }
+                }
+            }
+            openOutputOnCompleteRef.current = { enabled: false, dir: '' };
             currentRunFailedPathsRef.current = null;
             cancelRequestedRef.current = false;
             setCancelRequested(false);
@@ -2821,17 +2579,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     };
 
-    const selectedDropPath = id === 'info' ? infoFilePath : isPreviewFeature ? previewPath : undefined;
+    const selectedDropPath = isPreviewFeature ? previewPath : undefined;
     const acceptedInputFormats = id === 'compressor'
         ? COMPRESSOR_ACCEPTED_FORMATS
-        : id === 'info'
-            ? INFO_IMAGE_ACCEPTED_FORMATS
-            : DEFAULT_IMAGE_ACCEPTED_FORMATS;
+        : DEFAULT_IMAGE_ACCEPTED_FORMATS;
     const inputFileDialogFilters = id === 'compressor'
         ? COMPRESSOR_FILE_DIALOG_FILTERS
-        : id === 'info'
-            ? INFO_IMAGE_FILE_DIALOG_FILTERS
-            : DEFAULT_IMAGE_FILE_DIALOG_FILTERS;
+        : DEFAULT_IMAGE_FILE_DIALOG_FILTERS;
     const dropZone = (
         <FileDropZone 
             isActive={isActive}
@@ -2839,10 +2593,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             onPathsExpanded={handlePathsExpanded}
             onItemSelect={(file) => {
                 if (!file?.input_path) return;
-                if (id === 'info') {
-                    void loadInfoForPath(file.input_path);
-                    return;
-                }
                 if (isPreviewFeature) {
                     setPreviewPath(normalizePath(file.input_path));
                 }
@@ -2856,8 +2606,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         />
     );
 
-    const showInputInSettings = !isInfo && id !== 'adjust';
-    const showActionInSettings = !isInfo && id !== 'adjust' && id !== 'filter';
+    const showInputInSettings = id !== 'image_processor';
+    const showActionInSettings = id !== 'image_processor';
 
     const renderInputSection = (compact = false) => (
         <div className={`${compact ? 'space-y-1 pb-2' : 'space-y-2 pb-3'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-2' : 'mb-3'}`}>
@@ -2881,7 +2631,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     {effectiveOutputDir}
                 </div>
             )}
-            {id !== 'info' && (
+            {(
                 <div className="space-y-2">
                     <button
                         type="button"
@@ -2967,7 +2717,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 disabled={isProcessing && cancelRequested}
                 className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
             >
-                <Icon name={isProcessing ? 'Close' : 'Wand2'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
+                <Icon name={isProcessing ? 'Close' : 'ArrowRight'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
             </button>
         </>
     );
@@ -3000,24 +2750,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         </div>
     );
 
-    const filterControlsPanel = (
-        <FilterControls
-            intensity={filterIntensity}
-            setIntensity={setFilterIntensity}
-            grain={filterGrain}
-            setGrain={setFilterGrain}
-            vignette={filterVignette}
-            setVignette={setFilterVignette}
-            footer={renderActionContent(true)}
-        />
-    );
-
     const settingsPanel = (
         <div
-            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0 ${isInfo ? 'lg:col-span-4' : ''}`}
+            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0`}
         >
             {showInputInSettings && renderInputSection()}
-            {isInfo && lastMessage && (
+            {lastMessage && showInputInSettings && (
                 <div
                     className="mb-4 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
                     style={clampTwoLinesStyle}
@@ -3305,10 +3043,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
     return (
         <div className="h-full flex flex-col p-1">
-            <div className={`flex-1 grid grid-cols-1 ${isInfo ? 'lg:grid-cols-6' : isAdjustOrFilter ? 'lg:grid-cols-[280px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
+            <div className={`flex-1 grid grid-cols-1 ${isImageProcessor ? 'lg:grid-cols-[300px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-2' : 'lg:col-span-2'}`}>
-                    {id === 'adjust' ? (
+                <div className={`h-full min-h-0 ${isImageProcessor ? '' : 'lg:col-span-2'}`}>
+                    {isImageProcessor ? (
                         <div className="h-full flex flex-col gap-4 min-h-0">
                             <div className="flex-1 min-h-0">
                                 {dropZone}
@@ -3316,27 +3054,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4 min-h-0 overflow-hidden">
                                 <div className="flex-1 overflow-y-auto no-scrollbar">
                                     {renderInputSection(true)}
-                                    <AdjustCropControls
-                                        cropRatio={adjustCropRatio}
-                                        setCropRatio={setAdjustCropRatio}
-                                        rotate={adjustRotate}
-                                        setRotate={setAdjustRotate}
-                                        flipH={adjustFlipH}
-                                        setFlipH={setAdjustFlipH}
-                                        flipV={adjustFlipV}
-                                        setFlipV={setAdjustFlipV}
-                                    />
                                 </div>
                                 {renderActionSection(true)}
-                            </div>
-                        </div>
-                    ) : id === 'filter' ? (
-                        <div className="h-full flex flex-col gap-4 min-h-0">
-                            <div className="flex-1 min-h-0">
-                                {dropZone}
-                            </div>
-                            <div className="shrink-0">
-                                {filterControlsPanel}
                             </div>
                         </div>
                     ) : (
@@ -3345,13 +3064,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
-                <div className={`h-full min-h-0 ${isAdjustOrFilter ? '' : isInfo ? 'lg:col-span-4' : ''}`}>
-                    {isAdjustOrFilter ? (
+                <div className={`h-full min-h-0 ${isImageProcessor ? '' : ''}`}>
+                    {isImageProcessor ? (
                         <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
-                            <div className={`${id === 'adjust' ? 'flex-[1.2]' : 'flex-1'} min-h-0`}>
+                            <div className="flex-[1.15] min-h-0">
                                 {previewPanel}
                             </div>
-                            <div className={`${id === 'adjust' ? 'flex-[0.8]' : 'flex-1'} min-h-0`}>
+                            <div className="flex-[0.85] min-h-0">
                                 {settingsPanel}
                             </div>
                         </div>

@@ -34,7 +34,7 @@ describe('installDesktopRuntime', () => {
         installDesktopRuntime();
 
         const target = document.createElement('div');
-        target.style.setProperty('--wails-drop-target', 'drop');
+        target.style.setProperty('--if-drop-target', 'drop');
         document.body.appendChild(target);
 
         const callback = vi.fn();

@@ -71,7 +71,15 @@ def _run_in_tk_thread(callback):
     done = threading.Event()
     state: dict[str, Any] = {}
     _dialog_queue.put((callback, done, state))
-    done.wait()
+    # Dialogs may legitimately stay open for a long time, so poll instead of a
+    # hard timeout — but bail out if the Tk thread dies, otherwise the caller
+    # would hang forever.
+    while not done.wait(timeout=1.0):
+        thread = _dialog_thread
+        if thread is None or not thread.is_alive():
+            # Reset startup state so the next call recreates the thread.
+            _dialog_started.clear()
+            raise RuntimeError("Dialog thread died while waiting for dialog result")
 
     if "error" in state:
         raise state["error"]
@@ -130,3 +138,29 @@ def open_directory_dialog(options: dict[str, Any] | None = None):
         return filedialog.askdirectory(title=title) or ""
 
     return _run_in_tk_thread(run)
+
+
+def open_path_in_explorer(path: str) -> dict:
+    """Open a folder (or reveal a file) in the OS file manager."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path as _Path
+
+    target = str(path or "").strip()
+    if not target:
+        return {"success": False, "error": "empty path"}
+    p = _Path(target)
+    try:
+        if os.name == "nt":
+            if p.is_file():
+                subprocess.run(["explorer", "/select,", str(p)], check=False)
+            else:
+                os.startfile(str(p))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(p)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(p)], check=False)
+        return {"success": True, "path": str(p)}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}

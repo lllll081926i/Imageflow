@@ -68,7 +68,7 @@ export function usePdfParams() {
     };
 }
 
-export function useAdjustParams() {
+export function useImageProcessorParams() {
     const [exposure, setExposure] = useState(0);
     const [contrast, setContrast] = useState(0);
     const [saturation, setSaturation] = useState(0);
@@ -79,6 +79,10 @@ export function useAdjustParams() {
     const [flipH, setFlipH] = useState(false);
     const [flipV, setFlipV] = useState(false);
     const [cropRatio, setCropRatio] = useState('自由');
+    const [intensity, setIntensity] = useState(80);
+    const [grain, setGrain] = useState(0);
+    const [vignette, setVignette] = useState(0);
+    const [filterSelected, setFilterSelected] = useState(0);
 
     return {
         exposure, setExposure,
@@ -91,20 +95,10 @@ export function useAdjustParams() {
         flipH, setFlipH,
         flipV, setFlipV,
         cropRatio, setCropRatio,
-    };
-}
-
-export function useFilterParams() {
-    const [intensity, setIntensity] = useState(80);
-    const [grain, setGrain] = useState(0);
-    const [vignette, setVignette] = useState(0);
-    const [selected, setSelected] = useState(0);
-
-    return {
         intensity, setIntensity,
         grain, setGrain,
         vignette, setVignette,
-        selected, setSelected,
+        filterSelected, setFilterSelected,
     };
 }
 

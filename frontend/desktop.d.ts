@@ -19,7 +19,7 @@ type RuntimeOpenDirectoryDialogOptions = {
   title?: string;
 };
 
-type WailsRuntimeBridge = {
+type DesktopRuntimeBridge = {
   Quit?: () => void;
   WindowMinimise?: () => void;
   WindowToggleMaximise?: () => void;
@@ -33,12 +33,7 @@ type WailsRuntimeBridge = {
 
 declare global {
   interface Window {
-    runtime?: WailsRuntimeBridge;
-    go?: {
-      main?: {
-        App?: Partial<AppBindings>;
-      };
-    };
+    runtime?: DesktopRuntimeBridge;
     pywebview?: {
       api?: Partial<AppBindings> & {
         OpenFileDialog?: (options?: RuntimeOpenFileDialogOptions) => Promise<string | string[] | null | undefined>;

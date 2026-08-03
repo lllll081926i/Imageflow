@@ -6,7 +6,7 @@ import {
     loadAppSettings,
     resolveSelectedFilePaths,
     updateRecentPaths,
-} from '../types/wails-api';
+} from '../types/app-api';
 
 const MIN_CROP_RATIO = 0.1;
 const MAX_CROP_RATIO = 0.35;

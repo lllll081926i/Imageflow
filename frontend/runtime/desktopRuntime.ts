@@ -32,7 +32,7 @@ let fileDropListener: ((event: Event) => void) | null = null;
 const isDropTargetElement = (element: Element | null): boolean => {
     let current: Element | null = element;
     while (current) {
-        if (getComputedStyle(current).getPropertyValue('--wails-drop-target').trim() === 'drop') {
+        if (getComputedStyle(current).getPropertyValue('--if-drop-target').trim() === 'drop') {
             return true;
         }
         current = current.parentElement;

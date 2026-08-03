@@ -3,7 +3,6 @@ from __future__ import annotations
 import atexit
 import os
 import threading
-import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from typing import Any
 
@@ -181,16 +180,17 @@ def execute_engine_batch(
     payloads: list[dict[str, Any]],
     settings: AppSettings,
     task_manager: TaskManager,
+    task_id: int | None = None,
 ) -> list[dict[str, Any]]:
     if not payloads:
         return []
 
-    task_id = task_manager.current_task_id
+    effective_task_id = task_id if task_id is not None else task_manager.current_task_id
     max_workers = max(1, min(settings.max_concurrency, len(payloads)))
     return _run_jobs(
         module_name,
         payloads,
         max_workers=max_workers,
         task_manager=task_manager,
-        task_id=task_id,
+        task_id=effective_task_id,
     )

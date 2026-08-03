@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAppBindings } from '../../types/wails-api';
+import { getAppBindings } from '../../types/app-api';
 
 type UseImagePreviewOptions = {
     enabled: boolean;
@@ -7,7 +7,7 @@ type UseImagePreviewOptions = {
     debounceMs?: number;
 };
 
-export function useImagePreview({ enabled, path, debounceMs = 120 }: UseImagePreviewOptions) {
+export function useImagePreview({ enabled, path, debounceMs = 60 }: UseImagePreviewOptions) {
     const [previewDataUrl, setPreviewDataUrl] = useState('');
     const [previewLoadError, setPreviewLoadError] = useState('');
 

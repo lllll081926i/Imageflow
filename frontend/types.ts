@@ -16,10 +16,8 @@ export type FeatureId =
     | 'pdf'
     | 'gif'
     | 'subtitle_stitch'
-    | 'info'
     | 'watermark'
-    | 'adjust'
-    | 'filter'
+    | 'image_processor'
     | 'settings';
 
 export type ViewState = 'dashboard' | FeatureId;

@@ -15,16 +15,38 @@ def main() -> None:
     except Exception:
         Image.MAX_IMAGE_PIXELS = 64_000_000
 
-    window = webview.create_window(
+    width, height = 1366, 900
+    x = y = None
+    try:
+        from backend.infrastructure.settings_store import load_settings
+        from backend.infrastructure.window_state import load_window_state
+
+        settings = load_settings()
+        if getattr(settings, "remember_window_state", True):
+            state = load_window_state()
+            width = max(1024, int(state.get("width") or width))
+            height = max(600, int(state.get("height") or height))
+            if "x" in state:
+                x = int(state["x"])
+            if "y" in state:
+                y = int(state["y"])
+    except Exception:
+        pass
+
+    window_kwargs = dict(
         title="ImageFlow",
         url=resolve_frontend_entry(),
         js_api=build_window_api(),
-        width=1366,
-        height=900,
+        width=width,
+        height=height,
         min_size=(1024, 600),
         frameless=True,
         easy_drag=False,
     )
+    if x is not None and y is not None:
+        window_kwargs["x"] = x
+        window_kwargs["y"] = y
+    window = webview.create_window(**window_kwargs)
     configure_window(window)
 
     def _warm_runtime() -> None:

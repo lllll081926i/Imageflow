@@ -5,7 +5,7 @@
 <h1 align="center">ImageFlow</h1>
 
 <p align="center">
-  一款面向桌面端的图像处理工作台：格式转换、压缩、GIF、PDF、水印、调色、滤镜、元数据一站式完成。
+  一款面向桌面端的图像处理工作台：格式转换、压缩、GIF、PDF、水印、图片美化（调色+滤镜）一站式完成。
 </p>
 
 <p align="center">
@@ -24,16 +24,15 @@ ImageFlow 当前采用 **纯 Python 后端 + React 前端 + pywebview 宿主** �
 - **backend/main.py**：桌面应用入口，负责窗口启动与宿主生命周期。
 - **backend/api/**：统一对前端暴露的桌面 API，保持原有调用面兼容。
 - **backend/application/**：任务管理、批处理、预览与执行编排。
-- **backend/engines/**：图像能力引擎，负责转换、压缩、GIF、PDF、水印、调色、滤镜、元数据等核心处理。
+- **backend/engines/**：图像能力引擎，负责转换、压缩、GIF、PDF、水印、图片美化、字幕拼接等核心处理。
 - **React**：保留原有前端界面与交互。
 - **pywebview**：提供桌面窗口、原生对话框与拖拽桥接。
 
 适用场景：
 - 批量格式转换与压缩
 - 图像资料整理（命名模板、目录结构保留）
-- 社媒素材处理（滤镜、水印、调色）
-- 动图和文档产出（GIF、PDF）
-- 元数据查看、编辑与隐私清理
+- 社媒素材处理（美化、水印）
+- 动图和文档产出（GIF、PDF、字幕长图）
 
 ---
 
@@ -46,7 +45,7 @@ flowchart LR
     Host --> API[backend/api/DesktopAPI]
     API --> App[application 层<br/>task_manager / image_ops / preview]
     App --> Engines[backend/engines]
-    Engines --> Libs[Pillow + ReportLab + piexif + exifread]
+    Engines --> Libs[Pillow + ReportLab + 压缩库]
     Libs --> IO[本地文件读写]
 ```
 
@@ -74,18 +73,14 @@ sequenceDiagram
 
 | 模块 | 主要能力 | 关键实现 |
 |---|---|---|
-| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO 输出；支持缩放/长边/固定尺寸；可选保留 EXIF | `backend/engines/converter.py` |
-| 图片压缩 | 5 档压缩策略（无损到极限）；可指定目标体积；支持元数据剥离 | `backend/engines/compressor.py` |
-| 转 PDF | 多图合并 PDF；页面尺寸、方向、边距、排版网格 | `backend/engines/pdf_generator.py` |
-| GIF 工具 | 拆帧、倒放、变速、多图合成 GIF | `backend/engines/gif_splitter.py` |
-| 信息查看 | 读取格式/尺寸/位深/EXIF/直方图等信息 | `backend/engines/info_viewer.py` |
-| 元数据处理 | EXIF 编辑；隐私清理（Strip Metadata） | `backend/engines/metadata_tool.py` |
-| 图片水印 | 文字/图片水印、九宫格定位、平铺、混合模式、阴影 | `backend/engines/watermark.py` |
-| 图片调整 | 旋转、翻转、亮度/对比度/饱和度/色相/锐度、裁剪比例 | `backend/engines/adjuster.py` |
-| 图片滤镜 | 基础滤镜 + 高级滤镜 + 30+ 预设滤镜 | `backend/engines/filter.py` |
-| 字幕长图 | 连续截图拼接长图，可选去重 | `backend/engines/subtitle_stitcher.py` |
-
----
+| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO/SVG 等；缩放/长边/固定尺寸；可选保留 EXIF | `backend/engines/converter.py` |
+| 图片压缩 | 多档压缩策略；可指定目标体积 | `backend/engines/compressor.py` |
+| 转 PDF | 多图合并 PDF；页面尺寸、方向、边距 | `backend/engines/pdf_generator.py` |
+| GIF 工具 | 导出、倒放、调帧率、压缩、缩放、互转 | `backend/engines/gif_splitter.py` |
+| 字幕拼接 | 首帧保留，字幕长图拼接 | `backend/engines/subtitle_stitcher.py` |
+| 图片水印 | 文字/图片水印，批量添加 | `backend/engines/watermark.py` |
+| 图片美化 | 调色、裁剪、旋转翻转 + 滤镜/颗粒/暗角一站式 | `backend/engines/image_processor.py` |
+| 全局设置 | 路径、命名模板、并发、自动检查更新、窗口记忆 | `backend/infrastructure/settings_store.py` |
 
 ## 技术栈与依赖
 
@@ -223,9 +218,9 @@ uv run python -m backend.main
 
 ## 并发与性能设计
 
-- 默认并发 `8`，可在设置中调节 `1-32`。
-- `backend/application/image_ops.py` 基于 `multiprocessing` 调度多进程执行。
-- 批处理任务通过 `TaskManager` 管理取消与进程回收。
+- 默认并发按 CPU 自动推导（Windows 上限 `4`，其他平台上限 `8`），可在设置中调节 `1-32`。
+- `backend/application/image_ops.py` 基于 `ProcessPoolExecutor` 调度多进程执行。
+- 批处理取消为协作式：已开始的单项会执行完毕，未开始的项会被跳过并标记为已取消。
 - 大图预览支持阈值控制，防止前端内存飙升。
 
 ---
@@ -246,7 +241,7 @@ uv run python -m backend.main
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `max_concurrency` | `8` | 并发数，范围 `1-32` |
+| `max_concurrency` | 按 CPU 推导（Windows 最多 `4`，其他平台最多 `8`） | 并发数，范围 `1-32`，可用 `IMAGEFLOW_MAX_CONCURRENCY` 覆盖默认值 |
 | `output_prefix` | `IF` | 输出前缀 |
 | `output_template` | `{prefix}{basename}` | 输出命名模板 |
 | `preserve_folder_structure` | `true` | 保留原目录层级 |
@@ -259,7 +254,7 @@ Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/set
 
 ## 输出命名模板
 
-`output_template` 支持占位符：
+`output_template` 支持占位符（模板展开在前端 `frontend/components/DetailView.tsx` 侧完成，后端仅存储该设置）：
 
 | 占位符 | 说明 | 示例 |
 |---|---|---|

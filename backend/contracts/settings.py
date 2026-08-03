@@ -27,6 +27,9 @@ class AppSettings:
     default_output_dir: str = ""
     recent_input_dirs: list[str] = field(default_factory=list)
     recent_output_dirs: list[str] = field(default_factory=list)
+    auto_check_updates: bool = True
+    open_output_folder_on_complete: bool = False
+    remember_window_state: bool = True
 
 
 def default_app_settings() -> AppSettings:

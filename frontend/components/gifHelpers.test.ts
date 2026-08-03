@@ -19,11 +19,11 @@ import { CustomSelect, FileDropZone } from './Controls';
 import DetailView from './DetailView';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
-import { getAppBindings, resolveSelectedFilePaths } from '../types/wails-api';
+import { getAppBindings, resolveSelectedFilePaths } from '../types/app-api';
 import { FEATURES } from '../constants';
 
-vi.mock('../types/wails-api', async () => {
-    const actual = await vi.importActual<typeof import('../types/wails-api')>('../types/wails-api');
+vi.mock('../types/app-api', async () => {
+    const actual = await vi.importActual<typeof import('../types/app-api')>('../types/app-api');
     return {
         ...actual,
         getAppBindings: vi.fn(),
@@ -548,7 +548,7 @@ describe('DetailView 输出模板', () => {
             id: 'converter',
             onBack: vi.fn(),
         }));
-        const dropTarget = container.querySelector('[style*="--wails-drop-target"]') as HTMLElement;
+        const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
             name: 'sample.png',
             size: 12,
@@ -621,36 +621,6 @@ describe('DetailView 输入格式限制', () => {
         });
     });
 
-    it('信息查看页保留 HEIC/HEIF 输入声明用于读取容器信息', async () => {
-        vi.mocked(getAppBindings).mockReturnValue({
-            GetSettings: vi.fn().mockResolvedValue({
-                max_concurrency: 4,
-                output_prefix: 'IF',
-                output_template: '{prefix}_{basename}',
-                preserve_folder_structure: true,
-                conflict_strategy: 'rename',
-                default_output_dir: '',
-                recent_input_dirs: [],
-                recent_output_dirs: [],
-            }),
-        } as any);
-
-        const { container, root } = await renderElement(React.createElement(DetailView, {
-            id: 'info',
-            onBack: vi.fn(),
-        }));
-        const fileInput = container.querySelector('input[type="file"][accept]') as HTMLInputElement | null;
-
-        expect(fileInput).toBeTruthy();
-        const accept = fileInput?.getAttribute('accept') || '';
-        expect(accept).toContain('.heic');
-        expect(accept).toContain('.heif');
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
 
     it('压缩页不把 SVG/GIF 暴露为普通压缩输入', async () => {
         vi.mocked(getAppBindings).mockReturnValue({
@@ -734,7 +704,7 @@ describe('DetailView 图片压缩', () => {
             id: 'compressor',
             onBack: vi.fn(),
         }));
-        const dropTarget = container.querySelector('[style*="--wails-drop-target"]') as HTMLElement;
+        const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
             name: 'icon.ico',
             size: 12,
@@ -849,7 +819,7 @@ describe('DetailView ICO 转换', () => {
             });
         }
 
-        const dropTarget = container.querySelector('[style*="--wails-drop-target"]') as HTMLElement;
+        const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
             name: 'sample.png',
             size: 12,
@@ -895,7 +865,7 @@ describe('DetailView ICO 转换', () => {
     });
 });
 
-describe('DetailView 图片调整', () => {
+describe('DetailView 图片美化', () => {
     it('垂直翻转控件会把 flip_v 参数传给后端', async () => {
         const settings = {
             max_concurrency: 4,
@@ -929,17 +899,17 @@ describe('DetailView 图片调整', () => {
             ExpandDroppedPaths: expandDroppedPaths,
             ResolveOutputPath: resolveOutputPath,
             GetImagePreview: vi.fn().mockResolvedValue({ success: true, data_url: 'data:image/png;base64,' }),
-            Adjust: adjust,
-            AdjustBatch: undefined,
+            ProcessImage: adjust,
+            ProcessImageBatch: undefined,
         };
         vi.mocked(getAppBindings).mockReturnValue(appBindings as any);
         (window as { pywebview?: unknown }).pywebview = { api: appBindings };
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
-            id: 'adjust',
+            id: 'image_processor',
             onBack: vi.fn(),
         }));
-        const dropTarget = container.querySelector('[style*="--wails-drop-target"]') as HTMLElement;
+        const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
             name: 'sample.png',
             size: 12,
@@ -1249,8 +1219,8 @@ describe('GIF 输入模式选项', () => {
 describe('useGifResizeState', () => {
     it('在 GIF 模式下会拉取原始尺寸并初始化宽高', async () => {
         const mockedGetAppBindings = vi.mocked(getAppBindings);
-        const getInfo = vi.fn().mockResolvedValue({ success: true, width: 320, height: 160 });
-        mockedGetAppBindings.mockReturnValue({ GetInfo: getInfo } as any);
+        const splitGif = vi.fn().mockResolvedValue({ success: true, width: 320, height: 160 });
+        mockedGetAppBindings.mockReturnValue({ SplitGIF: splitGif } as any);
 
         const ref = React.createRef<HookSnapshot>();
         let root: Root | null = null;
@@ -1262,7 +1232,7 @@ describe('useGifResizeState', () => {
             await flushMicrotasks();
         });
 
-        expect(getInfo).toHaveBeenCalledTimes(1);
+        expect(splitGif).toHaveBeenCalledTimes(1);
         expect(ref.current?.gifResizeWidth).toBe(320);
         expect(ref.current?.gifResizeHeight).toBe(160);
         expect(ref.current?.gifOriginalSize).toEqual({ width: 320, height: 160 });
@@ -1275,7 +1245,7 @@ describe('useGifResizeState', () => {
     it('保持宽高比时，修改宽度会自动联动高度', async () => {
         const mockedGetAppBindings = vi.mocked(getAppBindings);
         mockedGetAppBindings.mockReturnValue({
-            GetInfo: vi.fn().mockResolvedValue({ success: true, width: 300, height: 150 }),
+            SplitGIF: vi.fn().mockResolvedValue({ success: true, width: 300, height: 150 }),
         } as any);
 
         const ref = React.createRef<HookSnapshot>();
@@ -1303,8 +1273,8 @@ describe('useGifResizeState', () => {
 
     it('非 GIF 功能页不会触发尺寸读取', async () => {
         const mockedGetAppBindings = vi.mocked(getAppBindings);
-        const getInfo = vi.fn().mockResolvedValue({ success: true, width: 200, height: 100 });
-        mockedGetAppBindings.mockReturnValue({ GetInfo: getInfo } as any);
+        const splitGif = vi.fn().mockResolvedValue({ success: true, width: 200, height: 100 });
+        mockedGetAppBindings.mockReturnValue({ SplitGIF: splitGif } as any);
 
         const ref = React.createRef<HookSnapshot>();
         let root: Root | null = null;
@@ -1316,7 +1286,7 @@ describe('useGifResizeState', () => {
             await flushMicrotasks();
         });
 
-        expect(getInfo).not.toHaveBeenCalled();
+        expect(splitGif).not.toHaveBeenCalled();
         expect(ref.current?.gifResizeWidth).toBe(0);
         expect(ref.current?.gifResizeHeight).toBe(0);
         await act(async () => {

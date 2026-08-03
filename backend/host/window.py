@@ -54,10 +54,34 @@ def configure_window(window) -> None:
             prevent_default=True,
         )
 
+    def handle_closing() -> None:
+        try:
+            from backend.infrastructure.settings_store import load_settings
+            from backend.infrastructure.window_state import save_window_state
+
+            settings = load_settings()
+            if not getattr(settings, "remember_window_state", True):
+                return
+            width = int(getattr(window, "width", 0) or 0)
+            height = int(getattr(window, "height", 0) or 0)
+            x = getattr(window, "x", None)
+            y = getattr(window, "y", None)
+            if width >= 1024 and height >= 600:
+                save_window_state(
+                    width,
+                    height,
+                    x if isinstance(x, int) else None,
+                    y if isinstance(y, int) else None,
+                )
+        except Exception:
+            logger.exception("Failed to persist window state")
+
     window.events.loaded += handle_loaded
     window.events.maximized += lambda: set_window_maximized(True)
     window.events.restored += lambda: set_window_maximized(False)
     window.events.minimized += lambda: set_window_maximized(False)
+    if hasattr(window.events, "closing"):
+        window.events.closing += handle_closing
 
 
 def _is_valid_url(url: str) -> bool:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getAppBindings } from '../../types/wails-api';
+import { getAppBindings } from '../../types/app-api';
 
 type GifSourceFile = {
     input_path: string;
@@ -61,16 +61,14 @@ export function useGifResizeState({
             return;
         }
         const app = getAppBindings();
-        if (!app?.GetInfo) {
-            setGifOriginalSize({ width: 0, height: 0 });
-            setGifResizeWidth(0);
-            setGifResizeHeight(0);
+        // GIF size via splitter probe instead of removed GetInfo
+        if (!app?.SplitGIF) {
             return;
         }
         let active = true;
         (async () => {
             try {
-                const info = await app?.GetInfo?.({ input_path: gifReferencePath });
+                const info = await app?.SplitGIF?.({ action: 'get_frame_count', input_path: gifReferencePath } as any);
                 if (!active) return;
                 if (info?.success && Number(info.width) > 0 && Number(info.height) > 0) {
                     const width = Math.round(Number(info.width));
