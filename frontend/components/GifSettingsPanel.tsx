@@ -50,16 +50,19 @@ const GifSettingsPanel = memo(({
     originalHeight,
 }: GifSettingsPanelProps) => {
     const modeOptions = getGifModesForInputKind(sourceType);
-    const modeGridClassName = modeOptions.length > 3 ? 'grid-cols-3' : 'grid-cols-2';
+    const modeGroups = [
+        { label: '帧处理', options: ['导出', '倒放', '修改帧率'] },
+        { label: '体积优化', options: ['压缩', '缩放'] },
+        { label: '格式输出', options: ['合成 GIF', '互转'] },
+    ]
+        .map((group) => ({ ...group, options: group.options.filter((option) => modeOptions.includes(option)) }))
+        .filter((group) => group.options.length > 0);
 
     if (sourceType === 'images') {
         return (
-            <div className="space-y-6">
+            <div className="space-y-6 min-w-0">
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">合成 GIF</label>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        所有输入都会按 PNG 流程处理，非 PNG 会先转换后再合成 GIF。
-                    </div>
                 </div>
                 <div className="space-y-3 animate-enter">
                     <StyledSlider
@@ -70,45 +73,42 @@ const GifSettingsPanel = memo(({
                         onChange={setBuildFps}
                     />
                 </div>
-                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-xs text-purple-700 dark:text-purple-400 mt-2 border border-purple-100 dark:border-purple-500/10">
-                    当前为图片序列模式，将输出合成 GIF。
-                </div>
             </div>
         );
     }
 
     return (
-        <div className="space-y-6">
-            <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
-                <div className={`grid ${modeGridClassName} gap-2`}>
-                    {modeOptions.map((option) => {
-                        const isActive = option === mode;
-
-                        return (
-                            <button
-                                key={option}
-                                type="button"
-                                aria-pressed={isActive}
-                                onClick={() => setMode(option)}
-                                className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
-                                    isActive
-                                        ? 'border-[#007AFF]/20 bg-[#007AFF]/10 text-[#007AFF] shadow-sm dark:border-[#0A84FF]/40 dark:bg-[#0A84FF]/15 dark:text-[#5AC8FA]'
-                                        : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white'
-                                }`}
-                            >
-                                {option}
-                            </button>
-                        );
-                    })}
+        <div className="space-y-6 min-w-0">
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">处理模式</label>
+                    </div>
+                    {modeGroups.map((group) => (
+                        <div key={group.label} className="space-y-1.5">
+                            <div className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">{group.label}</div>
+                            <div className="imageflow-gif-grid grid gap-2">
+                                {group.options.map((option) => {
+                                    const isActive = option === mode;
+                                    return (
+                                        <button
+                                            key={option}
+                                            type="button"
+                                            aria-pressed={isActive}
+                                            onClick={() => setMode(option)}
+                                            className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
+                                                isActive
+                                                    ? 'border-[#007AFF]/20 bg-[#007AFF]/10 text-[#007AFF] shadow-sm dark:border-[#0A84FF]/40 dark:bg-[#0A84FF]/15 dark:text-[#5AC8FA]'
+                                                    : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white'
+                                            }`}
+                                        >
+                                            {option}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
                 </div>
-            </div>
-
-            {sourceType === 'animated' && (
-                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-xs text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-500/10">
-                    当前输入包含 APNG 或 Animated WebP，仅支持导出帧与互转；倒放、调速、压缩、缩放仅支持 GIF。
-                </div>
-            )}
 
             {mode === '导出' && (
                 <div className="space-y-3 animate-enter">
@@ -118,9 +118,6 @@ const GifSettingsPanel = memo(({
                         value={exportFormat}
                         onChange={setExportFormat}
                     />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        GIF 输入导出帧，图片输入合成 GIF（统一按 PNG 流程处理）。
-                    </div>
                 </div>
             )}
 
@@ -132,31 +129,37 @@ const GifSettingsPanel = memo(({
                         value={convertFormat}
                         onChange={setConvertFormat}
                     />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        支持 GIF / APNG / Animated WebP 互转，尽量保留透明背景与帧时序。
-                    </div>
                 </div>
             )}
 
             {mode === '修改帧率' && (
                 <div className="animate-enter space-y-3">
                     <StyledSlider
-                        label="播放速度 (0.5x-3x)"
+                        label="播放速度"
                         value={speedPercent}
                         min={50}
                         max={300}
                         step={10}
                         onChange={setSpeedPercent}
                     />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        50% 为 0.5 倍速，100% 为原速，300% 为 3 倍速。
+                    <div className="flex flex-wrap gap-1.5">
+                        {[50, 100, 150, 200, 300].map((value) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setSpeedPercent(value)}
+                                className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${speedPercent === value ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]' : 'border-gray-200 dark:border-white/10 text-gray-500 hover:border-[#007AFF]/40'}`}
+                            >
+                                {value / 100}×
+                            </button>
+                        ))}
                     </div>
                 </div>
             )}
 
             {mode === '压缩' && (
                 <div className="animate-enter space-y-3">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">保留质量</label>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">压缩质量</label>
                     <div className="flex items-center gap-3">
                         <input
                             type="range"
@@ -171,9 +174,6 @@ const GifSettingsPanel = memo(({
                             {compressQuality}%
                         </div>
                     </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        质量越高细节保留越多，文件体积通常也会更大。
-                    </div>
                 </div>
             )}
 
@@ -182,7 +182,7 @@ const GifSettingsPanel = memo(({
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         原始尺寸：{originalWidth > 0 && originalHeight > 0 ? `${originalWidth} x ${originalHeight} px` : '未读取到 GIF 尺寸'}
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="imageflow-gif-grid grid gap-3">
                         <div className="space-y-1">
                             <label className="text-xs text-gray-500">宽度 (px)</label>
                             <input
@@ -207,9 +207,6 @@ const GifSettingsPanel = memo(({
                         </div>
                     </div>
                     <Switch label="保持纵横比" checked={resizeMaintainAR} onChange={setResizeMaintainAR} />
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                        只填一个边会自动按原比例计算另一边；同时填写宽高时会按比例适配到目标范围内。
-                    </div>
                 </div>
             )}
 

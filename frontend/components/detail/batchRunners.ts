@@ -112,7 +112,9 @@ export async function runGenericBatch(options: {
     const cancelled = ctx.cancelRequestedRef.current;
     const extra = failed > 0 ? `（失败 ${failed}）` : '';
     ctx.flushProgress();
-    ctx.setLastMessage(summarizeBatchProgress(total, completed, failed, cancelled, label, extra));
+    if (cancelled || failed > 0) {
+        ctx.setLastMessage(summarizeBatchProgress(total, completed, failed, cancelled, label, extra));
+    }
 }
 
 
@@ -261,7 +263,9 @@ export async function runConvertBatch(options: {
     const cancelled = ctx.cancelRequestedRef.current;
     const extra = failed > 0 ? `（失败 ${failed}）` : '';
     ctx.flushProgress();
-    ctx.setLastMessage(summarizeBatchProgress(totalTasks, completed, failed, cancelled, '转换', extra));
+    if (cancelled || failed > 0) {
+        ctx.setLastMessage(summarizeBatchProgress(totalTasks, completed, failed, cancelled, '转换', extra));
+    }
 }
 
 export async function runCompressBatch(options: {
@@ -269,6 +273,11 @@ export async function runCompressBatch(options: {
     level: number;
     engine: string;
     targetSizeKB: number;
+    resizeMode: string;
+    resizePercent: number;
+    resizeWidth: number;
+    resizeHeight: number;
+    maintainAspect: boolean;
     overwriteSource: boolean;
     outputDir: string;
     outputTemplate: string;
@@ -280,7 +289,7 @@ export async function runCompressBatch(options: {
     joinPath: (base: string, rel: string) => string;
 }) {
     const {
-        ctx, level, engine, targetSizeKB, overwriteSource,
+        ctx, level, engine, targetSizeKB, resizeMode, resizePercent, resizeWidth, resizeHeight, maintainAspect, overwriteSource,
         outputDir, outputTemplate, outputPrefix, preserveStructure, batchTime,
         buildOutputRelPath, resolveUniquePath, joinPath,
     } = options;
@@ -316,6 +325,11 @@ export async function runCompressBatch(options: {
                 engine,
                 target_size_kb: targetSizeKB,
                 strip_metadata: true,
+                resize_mode: resizeMode,
+                resize_percent: resizePercent,
+                resize_width: resizeWidth,
+                resize_height: resizeHeight,
+                maintain_aspect: maintainAspect,
             } as models.CompressRequest);
             seq += 1;
         }
@@ -359,5 +373,7 @@ export async function runCompressBatch(options: {
     ].filter(Boolean);
     const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
     ctx.flushProgress();
-    ctx.setLastMessage(summarizeBatchProgress(ctx.total, completed, failed, cancelled, '压缩', extra));
+    if (cancelled || failed > 0 || warnings > 0) {
+        ctx.setLastMessage(summarizeBatchProgress(ctx.total, completed, failed, cancelled, '压缩', extra));
+    }
 }

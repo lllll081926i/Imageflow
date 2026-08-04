@@ -33,7 +33,7 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
 
     return (
         <div 
-            className={`${collapsed ? 'w-20' : 'w-64'} h-full bg-white/80 dark:bg-[#1C1C1E]/80 glass border-r border-gray-200 dark:border-white/5 flex flex-col transition-[width] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] relative z-20 shrink-0`}
+            className={`${collapsed ? 'w-16' : 'w-[clamp(13rem,18vw,16rem)]'} min-h-0 my-3 ml-3 rounded-2xl overflow-hidden bg-white/80 dark:bg-[#1C1C1E]/80 glass border border-gray-200 dark:border-white/10 flex flex-col transition-[width] duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] relative z-20 shrink-0`}
         >
             {/* Navigation Items */}
             <div ref={listRef} className="flex-1 overflow-y-auto px-3 space-y-1 no-scrollbar py-4 relative">
@@ -56,7 +56,6 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                         key={item.id}
                         ref={el => { itemRefs.current[item.id] = el; }}
                         onClick={() => setActive(item.id)}
-                        title={collapsed ? item.title : ''}
                         className={`w-full flex items-center h-12 rounded-xl text-sm font-medium transition-all duration-300 group relative px-3 z-10 ${
                             active === item.id 
                                 ? 'bg-transparent'
@@ -75,12 +74,6 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                             </span>
                         </div>
 
-                        {/* Hover Tooltip for Collapsed State */}
-                        {collapsed && (
-                            <div className="absolute left-14 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-xs rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-all duration-200 translate-x-2 group-hover:translate-x-0 pointer-events-none z-50 whitespace-nowrap">
-                                {item.title}
-                            </div>
-                        )}
                     </button>
                 ))}
             </div>

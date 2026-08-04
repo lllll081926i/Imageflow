@@ -81,7 +81,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
     const [minimumStripHeight, setMinimumStripHeight] = useState<number>(24);
     const [isGenerating, setIsGenerating] = useState<boolean>(false);
     const [isDraggingLine, setIsDraggingLine] = useState<boolean>(false);
-    const [message, setMessage] = useState<string>('');
     const [error, setError] = useState<string>('');
 
     const cropPercent = useMemo(() => Math.round(subtitleCropRatio * 100), [subtitleCropRatio]);
@@ -194,7 +193,28 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                     : (typeof selected === 'string' && selected.trim() ? [selected.trim()] : []);
                 if (paths.length > 0) {
                     setInputPaths(paths);
-                    setMessage('');
+                    void updateRecentPaths({ inputDir: dirname(paths[0]) });
+                }
+                return;
+            }
+
+            if (window.runtime?.OpenFileDialog) {
+                const selected = await window.runtime.OpenFileDialog({
+                    title: '选择截图',
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true,
+                    filters: SCREENSHOT_FILE_DIALOG_FILTERS,
+                });
+                if (selected === undefined) {
+                    fileInputRef.current?.click();
+                    return;
+                }
+                const paths = Array.isArray(selected)
+                    ? selected.filter((item) => typeof item === 'string' && item.trim())
+                    : (typeof selected === 'string' && selected.trim() ? [selected.trim()] : []);
+                if (paths.length > 0) {
+                    setInputPaths(paths);
                     void updateRecentPaths({ inputDir: dirname(paths[0]) });
                 }
                 return;
@@ -233,7 +253,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                 return;
             }
             setInputPaths(resolvedPaths);
-            setMessage('');
             setError('');
             void updateRecentPaths({ inputDir: dirname(resolvedPaths[0]) });
         })();
@@ -245,7 +264,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
 
     const handleGenerate = useCallback(async () => {
         setError('');
-        setMessage('');
         if (inputPaths.length === 0) {
             setError('请先选择按时间顺序排列的截图');
             return;
@@ -288,8 +306,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                 return;
             }
 
-            const summary = `完成：输入 ${result.input_count ?? inputPaths.length} 张，保留 ${result.kept_count ?? 0} 段，跳过 ${result.skipped_count ?? 0} 段`;
-            setMessage(summary);
             setOutputName(buildDefaultOutputName());
         } catch (generateError: any) {
             const failureReason = typeof generateError?.message === 'string' ? generateError.message : '字幕拼接失败';
@@ -305,13 +321,12 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
     }, [dedupEnabled, dedupThreshold, inputPaths, minimumStripHeight, onTaskFailure, outputDir, outputName, subtitleCropRatio]);
 
     return (
-        <div className="h-full p-1">
-            <div className="h-full grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-6 min-h-0">
-                <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col min-h-0">
+        <div className="imageflow-subtitle-page min-h-full min-w-0 p-1">
+            <div className="imageflow-subtitle-layout min-h-full grid gap-4 min-w-0">
+                <div className="min-h-[220px] bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col min-w-0">
                     <div className="flex items-start justify-between gap-3 mb-4">
                         <div>
                             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">字幕拼接</h2>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">首帧保留，自动拼接字幕长图</p>
                         </div>
                         <button
                             type="button"
@@ -337,7 +352,7 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                         </div>
                         <div className="flex-1 overflow-y-auto no-scrollbar">
                             {inputPaths.length === 0 ? (
-                                <div className="h-full flex items-center justify-center text-xs text-gray-400 px-4 text-center">选择连续截图后开始处理</div>
+                                <div className="h-full" />
                             ) : (
                                 <div className="divide-y divide-gray-200/70 dark:divide-white/10">
                                     {inputPaths.map((path, index) => (
@@ -348,7 +363,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                                                 type="button"
                                                 onClick={() => handleRemoveInput(path)}
                                                 className="text-gray-400 hover:text-red-500 transition-colors"
-                                                title="移除"
                                             >
                                                 <Icon name="Close" size={12} />
                                             </button>
@@ -360,25 +374,24 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                     </div>
                 </div>
 
-                <div className="grid grid-rows-[minmax(320px,1fr)_auto] gap-6 min-h-0">
-                    <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col min-h-0">
+                <div className="imageflow-subtitle-workspace min-w-0 flex min-h-0 flex-col gap-4">
+                    <div className="imageflow-subtitle-preview min-h-[300px] bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col min-w-0">
                         <div className="flex items-center justify-between mb-4 gap-3">
                             <div>
                                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">首帧预览</span>
-                                <p className="text-xs text-gray-400 mt-1">拖动虚线调整保留高度</p>
                             </div>
                             <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                                 保留高度 {estimatedStripHeight}px ({cropPercent}%)
                             </span>
                         </div>
 
-                        <div className="flex-1 min-h-[260px] rounded-2xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 overflow-hidden flex items-center justify-center px-4 py-4">
+                        <div className="flex-1 min-h-0 rounded-2xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 overflow-hidden flex items-center justify-center px-4 py-4">
                             {previewSrc ? (
                                 <div className="relative max-w-full max-h-full">
                                     <img
                                         src={previewSrc}
                                         alt="首帧预览"
-                                        className="max-w-full max-h-[56vh] object-contain rounded-lg shadow-sm"
+                                        className="max-w-full max-h-full object-contain rounded-lg shadow-sm"
                                         onLoad={(event) => {
                                             const image = event.currentTarget;
                                             if (image.naturalWidth > 0 && image.naturalHeight > 0) {
@@ -406,13 +419,13 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                                     </div>
                                 </div>
                             ) : (
-                                <div className="text-xs text-gray-400 text-center px-6">选择截图后可在此调整裁剪线</div>
+                                <div className="h-full" />
                             )}
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5">
-                        <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-6">
+                    <div className="imageflow-subtitle-settings shrink-0 bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5">
+                        <div className="imageflow-subtitle-settings-grid grid gap-4 min-w-0">
                             <div className="space-y-4">
                                 <StyledSlider
                                     label="字幕区域高度"
@@ -483,11 +496,6 @@ const SubtitleStitchPage: React.FC<SubtitleStitchPageProps> = ({ isActive = fals
                                     {isGenerating ? '处理中...' : '开始拼接'}
                                 </button>
 
-                                {message && (
-                                    <div className="text-xs text-green-600 dark:text-green-300 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/30 rounded-xl px-3 py-2">
-                                        {message}
-                                    </div>
-                                )}
                                 {error && (
                                     <div className="text-xs text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/30 rounded-xl px-3 py-2 break-all">
                                         {error}

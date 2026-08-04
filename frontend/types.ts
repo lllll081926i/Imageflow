@@ -8,7 +8,7 @@ export interface Feature {
     darkBg: string;
 }
 
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';
 
 export type FeatureId =
     | 'converter'

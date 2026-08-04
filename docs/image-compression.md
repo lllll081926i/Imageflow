@@ -29,6 +29,7 @@
 
 | 等级 | 名称 | 质量基准 | 说明 |
 |---|---|---|---|
+| `0` | Smart | 自动选择 | 根据格式和原始文件大小自动选择策略；小 PNG 优先无损，大文件逐步加强压缩 |
 | `1` | Lossless | 100% | 优先使用无损优化 |
 | `2` | Light | 90% | 轻量压缩 |
 | `3` | Medium | 75% | 默认平衡压缩 |
@@ -50,10 +51,14 @@
 |---|---|---|
 | `input_path` | `string` | 输入图片路径 |
 | `output_path` | `string` | 输出图片路径 |
-| `level` | `number` | 压缩等级，范围 `1-5` |
+| `level` | `number` | 压缩等级，`0` 为智能模式，`1-5` 为固定等级 |
 | `engine` | `string` | 可选压缩引擎偏好 |
 | `target_size_kb` | `number` | 可选目标大小，未设置或 `0` 表示不限制 |
 | `strip_metadata` | `boolean` | 是否剥离元数据 |
+| `resize_mode` | `string` | `none`、`percent` 或 `pixels` |
+| `resize_percent` | `number` | 百分比缩放值，`percent` 模式使用 |
+| `resize_width` / `resize_height` | `number` | 像素缩放目标，`pixels` 模式使用 |
+| `maintain_aspect` | `boolean` | 像素缩放是否保持横纵比，默认 `true` |
 
 响应字段：
 
@@ -66,6 +71,8 @@
 | `compressed_size` | `number` | 输出字节数 |
 | `compression_rate` | `number` | 压缩比例 |
 | `compression_level` | `number` | 实际使用等级 |
+| `original_width` / `original_height` | `number` | 原始像素尺寸 |
+| `width` / `height` | `number` | 输出像素尺寸 |
 | `warning` | `string` | 可选警告，例如目标大小未达成 |
 | `error` | `string` | 失败原因 |
 
@@ -85,6 +92,7 @@
 
 - 压缩引擎会完整打开图片，超大图片会占用较多内存。
 - 批量处理会按 `max_concurrency` 开多个进程，过高并发可能增加内存峰值。
+- `level=0` 的智能模式会根据格式和原始大小选择固定等级，避免普通用户手动猜参数。
 - `target_size_kb` 会触发质量搜索，处理时间会比普通等级压缩更长。
 - 元数据剥离会额外读写文件，但可减少隐私信息和部分文件体积。
 

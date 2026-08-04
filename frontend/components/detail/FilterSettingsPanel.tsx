@@ -45,17 +45,13 @@ export const FilterControls = memo(({
     setVignette,
     footer,
 }: FilterControlsProps) => (
-    <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4">
-        <div className="grid grid-cols-1 gap-4">
+    <div className="flex flex-col gap-4 min-w-0">
+        <div className="imageflow-adjust-grid grid gap-4">
             <StyledSlider label="滤镜强度" value={intensity} onChange={setIntensity} unit="%" className="space-y-2" />
             <StyledSlider label="颗粒感 (Grain)" value={grain} onChange={setGrain} className="space-y-2" />
             <StyledSlider label="暗角 (Vignette)" value={vignette} onChange={setVignette} className="space-y-2" />
         </div>
-        {footer && (
-            <div className="pt-3 border-t border-gray-100 dark:border-white/5">
-                {footer}
-            </div>
-        )}
+        {footer}
     </div>
 ));
 
@@ -71,7 +67,7 @@ export const FilterSettings = memo(({
     const hasPreview = Boolean(previewSrc);
 
     return (
-        <div className="flex flex-col h-full min-h-0">
+        <div className="imageflow-filter-settings flex flex-col h-full min-h-0 min-w-0">
             <div className="flex-1 space-y-3 min-h-0 flex flex-col">
                 <div className="flex items-center justify-between shrink-0">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">滤镜库 (LUTs)</label>
@@ -87,7 +83,7 @@ export const FilterSettings = memo(({
                         重置效果
                     </button>
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pr-1 pb-3">
+                <div className="imageflow-filter-scroll flex-1 min-h-0 overflow-y-auto no-scrollbar pr-1 pb-3">
                     <div
                         className="grid gap-1.5 content-start w-full"
                         style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}

@@ -43,10 +43,11 @@ def _dispatch_file_drop(window, event: dict) -> None:
 
 
 def configure_window(window) -> None:
-    from backend.infrastructure.window_ops import set_window_maximized
+    from backend.infrastructure.window_ops import install_native_window_resize, set_window_maximized
     from webview.dom import DOMEventHandler
 
     def handle_loaded() -> None:
+        install_native_window_resize(window)
         document = window.dom.document
         document.events.dragover += DOMEventHandler(lambda _event: None, prevent_default=True)
         document.events.drop += DOMEventHandler(
@@ -66,7 +67,7 @@ def configure_window(window) -> None:
             height = int(getattr(window, "height", 0) or 0)
             x = getattr(window, "x", None)
             y = getattr(window, "y", None)
-            if width >= 1024 and height >= 600:
+            if width >= 900 and height >= 560:
                 save_window_state(
                     width,
                     height,
@@ -77,6 +78,8 @@ def configure_window(window) -> None:
             logger.exception("Failed to persist window state")
 
     window.events.loaded += handle_loaded
+    if hasattr(window.events, "shown"):
+        window.events.shown += lambda: install_native_window_resize(window)
     window.events.maximized += lambda: set_window_maximized(True)
     window.events.restored += lambda: set_window_maximized(False)
     window.events.minimized += lambda: set_window_maximized(False)

@@ -165,6 +165,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         targetSizeKB: compTargetSizeKB, setTargetSizeKB: setCompTargetSizeKB,
         engine: compEngine, setEngine: setCompEngine,
         overwriteSource: compOverwriteSource, setOverwriteSource: setCompOverwriteSource,
+        resizeMode: compResizeMode, setResizeMode: setCompResizeMode,
+        resizePercent: compResizePercent, setResizePercent: setCompResizePercent,
+        resizeWidth: compResizeWidth, setResizeWidth: setCompResizeWidth,
+        resizeHeight: compResizeHeight, setResizeHeight: setCompResizeHeight,
+        maintainAspect: compMaintainAspect, setMaintainAspect: setCompMaintainAspect,
     } = useCompressorParams();
     const {
         size: pdfSize, setSize: setPdfSize,
@@ -868,6 +873,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         setEngine={setCompEngine}
                         overwriteSource={compOverwriteSource}
                         setOverwriteSource={setCompOverwriteSource}
+                        resizeMode={compResizeMode}
+                        setResizeMode={setCompResizeMode}
+                        resizePercent={compResizePercent}
+                        setResizePercent={setCompResizePercent}
+                        resizeWidth={compResizeWidth}
+                        setResizeWidth={setCompResizeWidth}
+                        resizeHeight={compResizeHeight}
+                        setResizeHeight={setCompResizeHeight}
+                        maintainAspect={compMaintainAspect}
+                        setMaintainAspect={setCompMaintainAspect}
                     />
                 );
             case 'watermark':
@@ -1441,17 +1456,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         });
         setSelectedPresetId(preset.id);
         setPresetNameDraft('');
-        setLastMessage(`预设已保存：${name}`);
     };
     const applySelectedPreset = () => {
         const target = currentFeaturePresets.find((p) => p.id === selectedPresetId);
         if (!target) return;
         applyPresetPayload(target.payload || {});
-        setLastMessage(`已应用预设：${target.name}`);
     };
     const deleteSelectedPreset = () => {
         if (!selectedPresetId) return;
-        const target = currentFeaturePresets.find((p) => p.id === selectedPresetId);
         setFeaturePresets((prev) => {
             const nextList = (prev[id] || []).filter((p) => p.id !== selectedPresetId);
             const next: FeaturePresetStore = {
@@ -1462,9 +1474,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             return next;
         });
         setSelectedPresetId('');
-        if (target) {
-            setLastMessage(`预设已删除：${target.name}`);
-        }
     };
     const updateFailedRecordsByPath = (filePath: string) => {
         const normalized = normalizePath(filePath);
@@ -1907,6 +1916,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 const levelMap: Record<string, number> = {
+                    '智能（推荐）': 0,
+                    '更清晰': 2,
+                    '更小': 4,
                     '无损': 1,
                     '轻度': 2,
                     '标准': 3,
@@ -1923,6 +1935,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const level = levelMap[compMode] ?? 3;
                 const engine = engineMap[compEngine] ?? 'auto';
                 const targetSizeKB = compTargetSize ? Math.max(0, Number(compTargetSizeKB) || 0) : 0;
+                const resizeModeMap: Record<string, string> = {
+                    '不缩放': 'none',
+                    '百分比': 'percent',
+                    '像素': 'pixels',
+                };
                 await runCompressBatch({
                     ctx: {
                         app: appAny,
@@ -1941,6 +1958,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     level,
                     engine,
                     targetSizeKB,
+                    resizeMode: resizeModeMap[compResizeMode] ?? 'none',
+                    resizePercent: Math.max(1, Math.min(500, Number(compResizePercent) || 100)),
+                    resizeWidth: Math.max(0, Math.min(65535, Number(compResizeWidth) || 0)),
+                    resizeHeight: Math.max(0, Math.min(65535, Number(compResizeHeight) || 0)),
+                    maintainAspect: compMaintainAspect,
                     overwriteSource: compOverwriteSource,
                     outputDir: outDir,
                     outputTemplate,
@@ -2184,7 +2206,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const res = await appAny.GeneratePDF(req);
                 setProgress(100);
                 if (res?.success) {
-                    setLastMessage(`PDF 已生成：${req.output_path}`);
                 } else {
                     if (isCancellationError(res?.error)) {
                         cancelRequestedRef.current = true;
@@ -2313,9 +2334,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         const cancelled = cancelRequestedRef.current;
                         const success = Math.max(0, completed - failed);
                         const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                        setLastMessage(cancelled
-                            ? `导出已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
-                            : `导出完成：成功 ${success}/${animatedFiles.length} 项${extra}`);
+                        if (cancelled || failed > 0) {
+                            setLastMessage(cancelled
+                                ? `导出已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
+                                : `导出失败：成功 ${success}/${animatedFiles.length} 项${extra}`);
+                        }
                         return;
                     }
 
@@ -2342,7 +2365,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             };
                             const res = await appAny.SplitGIF(req);
                             if (res?.success) {
-                                setLastMessage(`合成完成：${res.output_path || outputPath}`);
                             } else {
                                 const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                                 if (isCancellationError(res?.error)) {
@@ -2446,9 +2468,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     const cancelled = cancelRequestedRef.current;
                     const success = Math.max(0, completed - failed);
                     const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                    setLastMessage(cancelled
-                        ? `互转已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
-                        : `互转完成：成功 ${success}/${animatedFiles.length} 项${extra}`);
+                    if (cancelled || failed > 0) {
+                        setLastMessage(cancelled
+                            ? `互转已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
+                            : `互转失败：成功 ${success}/${animatedFiles.length} 项${extra}`);
+                    }
                     return;
                 }
 
@@ -2534,9 +2558,11 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const cancelled = cancelRequestedRef.current;
                 const success = Math.max(0, completed - failed);
                 const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                setLastMessage(cancelled
-                    ? `${gifMode}已停止：成功 ${success}/${pureGifFiles.length} 项${extra}`
-                    : `${gifMode}完成：成功 ${success}/${pureGifFiles.length} 项${extra}`);
+                if (cancelled || failed > 0) {
+                    setLastMessage(cancelled
+                        ? `${gifMode}已停止：成功 ${success}/${pureGifFiles.length} 项${extra}`
+                        : `${gifMode}失败：成功 ${success}/${pureGifFiles.length} 项${extra}`);
+                }
                 return;
             }
 
@@ -2601,7 +2627,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             acceptedFormats={acceptedInputFormats}
             fileDialogFilters={inputFileDialogFilters}
             allowMultiple={true}
-            title="拖拽文件 / 文件夹到这里"
             subTitle=""
         />
     );
@@ -2667,16 +2692,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                                 </button>
                             </div>
                             <div className="flex gap-2">
-                                <select
-                                    value={selectedPresetId}
-                                    onChange={(e) => setSelectedPresetId(e.target.value)}
-                                    className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs outline-none dark:text-white"
-                                >
-                                    <option value="">选择预设</option>
-                                    {currentFeaturePresets.map((preset) => (
-                                        <option key={preset.id} value={preset.id}>{preset.name}</option>
-                                    ))}
-                                </select>
+                                <div className="flex-1 min-w-0">
+                                    <CustomSelect
+                                        options={[
+                                            { label: '选择预设', value: '' },
+                                            ...currentFeaturePresets.map((preset) => ({ label: preset.name, value: preset.id })),
+                                        ]}
+                                        value={selectedPresetId}
+                                        onChange={setSelectedPresetId}
+                                    />
+                                </div>
                                 <button
                                     onClick={applySelectedPreset}
                                     disabled={!selectedPresetId}
@@ -2752,19 +2777,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
     const settingsPanel = (
         <div
-            className={`bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0`}
+            className={`imageflow-settings-panel bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0`}
         >
             {showInputInSettings && renderInputSection()}
-            {lastMessage && showInputInSettings && (
-                <div
-                    className="mb-4 text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
-                    style={clampTwoLinesStyle}
-                >
-                    {lastMessage}
-                </div>
-            )}
-            
-            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-1 pb-2">
+            <div className="imageflow-settings-scroll flex-1 min-h-0 overflow-y-auto no-scrollbar px-1 pb-2">
                 {renderSettings()}
             </div>
 
@@ -3025,27 +3041,55 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
     if (isWatermark) {
         return (
-            <div className="h-full flex flex-col p-1">
-                <div className="grid grid-cols-1 lg:grid-cols-[minmax(360px,4fr)_minmax(0,6fr)] gap-6 min-h-0">
-                    <div className="h-[320px] lg:h-[420px]">
-                        {dropZone}
+            <div className="imageflow-detail-page imageflow-detail-page--watermark min-h-full flex flex-col p-1">
+                <div className="imageflow-detail-layout imageflow-detail-layout--watermark flex-1 min-h-0 gap-4">
+                    <div className="min-h-0 flex flex-col gap-4">
+                        <div className="flex-1 min-h-0">
+                            {previewPanel}
+                        </div>
+                        <div className="imageflow-watermark-drop-slot shrink-0">
+                            {dropZone}
+                        </div>
                     </div>
-                    <div className="h-[320px] lg:h-[420px]">
-                        {previewPanel}
+                    <div className="min-h-0">
+                        {settingsPanel}
                     </div>
                 </div>
-                <div className="mt-6 flex-1 min-h-0">
-                    {settingsPanel}
+            </div>
+        );
+    }
+
+    if (isImageProcessor) {
+        return (
+            <div className="imageflow-detail-page imageflow-detail-page--processor min-h-full flex flex-col p-1">
+                <div className="imageflow-detail-layout imageflow-detail-layout--processor flex-1 min-h-0 gap-4">
+                    <div className="imageflow-processor-workspace min-h-0 flex flex-col gap-4">
+                        <div className="imageflow-processor-preview flex-1 min-h-0">
+                            {previewPanel}
+                        </div>
+                        <div className="imageflow-processor-input-card shrink-0 bg-white dark:bg-[#2C2C2E] rounded-3xl p-3 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-2 min-h-0 overflow-hidden">
+                            <div className="imageflow-processor-dropzone min-h-0">
+                                {dropZone}
+                            </div>
+                            <div className="shrink-0">
+                                {renderInputSection(true)}
+                            </div>
+                            {renderActionSection(true)}
+                        </div>
+                    </div>
+                    <div className="min-h-0">
+                        {settingsPanel}
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="h-full flex flex-col p-1">
-            <div className={`flex-1 grid grid-cols-1 ${isImageProcessor ? 'lg:grid-cols-[300px_minmax(0,1fr)]' : 'lg:grid-cols-3'} gap-6 min-h-0`}>
+        <div className="imageflow-detail-page imageflow-detail-page--standard min-h-full flex flex-col p-1">
+            <div className="imageflow-detail-layout imageflow-detail-layout--standard flex-1 gap-6 min-h-0">
                 {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className={`h-full min-h-0 ${isImageProcessor ? '' : 'lg:col-span-2'}`}>
+                <div className="imageflow-standard-input h-full min-h-0">
                     {isImageProcessor ? (
                         <div className="h-full flex flex-col gap-4 min-h-0">
                             <div className="flex-1 min-h-0">
@@ -3064,7 +3108,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 </div>
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
-                <div className={`h-full min-h-0 ${isImageProcessor ? '' : ''}`}>
+                <div className="h-full min-h-0">
                     {isImageProcessor ? (
                         <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
                             <div className="flex-[1.15] min-h-0">

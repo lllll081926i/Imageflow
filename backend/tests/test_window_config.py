@@ -99,6 +99,12 @@ class WindowConfigTests(unittest.TestCase):
             else:
                 sys.modules["webview"] = previous_webview
 
+    def test_native_resize_install_is_safe_without_a_native_handle(self):
+        class DummyWindow:
+            native = None
+
+        self.assertFalse(window_ops.install_native_window_resize(DummyWindow()))
+
     def test_main_creates_frameless_window_for_custom_titlebar(self):
         captured: dict[str, object] = {}
         fake_window = object()
@@ -125,6 +131,8 @@ class WindowConfigTests(unittest.TestCase):
 
             self.assertTrue(captured["frameless"])
             self.assertFalse(captured["easy_drag"])
+            self.assertTrue(captured["resizable"])
+            self.assertEqual(captured["min_size"], (900, 560))
             self.assertEqual(captured["configured_window"], fake_window)
             self.assertTrue(captured["started"])
         finally:

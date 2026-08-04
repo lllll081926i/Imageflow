@@ -31,15 +31,16 @@ export function shouldPreventWindowDragEvent(dataTransfer: Pick<DataTransfer, 't
 }
 
 const App: React.FC = () => {
-    const [theme, setTheme] = useState<Theme>(() => {
+    const [themePreference, setThemePreference] = useState<Theme>(() => {
         try {
             const saved = localStorage.getItem('imageflow_theme');
-            if (saved === 'dark' || saved === 'light') return saved;
+            if (saved === 'dark' || saved === 'light' || saved === 'system') return saved;
         } catch {
             // Ignore storage errors
         }
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        return 'system';
     });
+    const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
     const [activeView, setActiveView] = useState<ViewState>('dashboard');
     const [direction, setDirection] = useState<'left' | 'right'>('right');
     const [failureNotifications, setFailureNotifications] = useState<TaskFailureNotification[]>([]);
@@ -64,20 +65,9 @@ const App: React.FC = () => {
         window.addEventListener('dragover', preventDefault);
         window.addEventListener('drop', preventDefault);
 
-        // Initialize theme class on element
-        try {
-            const saved = localStorage.getItem('imageflow_theme');
-            const initialDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-            if (initialDark) {
-                document.documentElement.classList.add('dark');
-            } else {
-                document.documentElement.classList.remove('dark');
-            }
-        } catch {
-            if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                document.documentElement.classList.add('dark');
-            }
-        }
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleSystemThemeChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches);
+        mediaQuery.addEventListener?.('change', handleSystemThemeChange);
 
         return () => {
             if (closeNotificationTimerRef.current) {
@@ -86,8 +76,18 @@ const App: React.FC = () => {
             }
             window.removeEventListener('dragover', preventDefault);
             window.removeEventListener('drop', preventDefault);
+            mediaQuery.removeEventListener?.('change', handleSystemThemeChange);
         };
     }, []);
+
+    const resolvedTheme = themePreference === 'system'
+        ? (systemPrefersDark ? 'dark' : 'light')
+        : themePreference;
+
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
+        document.documentElement.style.colorScheme = resolvedTheme;
+    }, [resolvedTheme]);
 
     useEffect(() => {
         const container = pageTransitionRef.current;
@@ -98,19 +98,22 @@ const App: React.FC = () => {
         container.classList.add(enterClass);
     }, [activeView, direction]);
 
-    const toggleTheme = () => {
-        const nextTheme = theme === 'light' ? 'dark' : 'light';
-        setTheme(nextTheme);
-        if (nextTheme === 'dark') {
-            document.documentElement.classList.add('dark');
-        } else {
-            document.documentElement.classList.remove('dark');
-        }
+    const applyThemePreference = useCallback((nextTheme: Theme) => {
+        setThemePreference(nextTheme);
         try {
             localStorage.setItem('imageflow_theme', nextTheme);
         } catch {
             // Ignore storage errors
         }
+    }, []);
+
+    const cycleTheme = () => {
+        const nextTheme: Theme = themePreference === 'system'
+            ? 'light'
+            : themePreference === 'light'
+                ? 'dark'
+                : 'system';
+        applyThemePreference(nextTheme);
     };
 
     const handleNavigate = useCallback((view: ViewState) => {
@@ -210,7 +213,7 @@ const App: React.FC = () => {
     }, [isNotificationOpen]);
 
     return (
-        <div className={`w-full h-screen overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
+        <div className={`imageflow-app-shell w-full h-screen h-[100dvh] min-w-0 min-h-0 overflow-hidden flex flex-col bg-[#F5F5F7] dark:bg-[#1E1E1E] text-gray-900 transition-colors duration-300`}>
             {/* Custom Title Bar */}
             <div className="h-11 flex items-center gap-3 px-4 bg-[#F5F5F7] dark:bg-[#1E1E1E] select-none shrink-0 z-50 relative">
                 {/* Logo & Title */}
@@ -218,7 +221,6 @@ const App: React.FC = () => {
                     type="button"
                     className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity cursor-pointer group"
                     onClick={() => handleNavigate('dashboard')}
-                    title="返回主页"
                 >
                     <div className="w-6 h-6 flex items-center justify-center transition-transform group-hover:scale-105">
                         <Icon name="AppLogo" size={22} />
@@ -230,7 +232,7 @@ const App: React.FC = () => {
 
                 {/* Window Controls */}
                 <div className="flex items-center gap-2 shrink-0">
-                    <div
+                    {failureNotifications.length > 0 && <div
                         ref={notificationContainerRef}
                         className="relative"
                         onMouseEnter={handleNotificationMouseEnter}
@@ -246,7 +248,6 @@ const App: React.FC = () => {
                     >
                         <button
                             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50 relative"
-                            title="通知"
                             aria-expanded={isNotificationOpen}
                             aria-haspopup="dialog"
                             aria-controls="notification-panel"
@@ -286,7 +287,6 @@ const App: React.FC = () => {
                                                     type="button"
                                                     onClick={() => handleDismissNotification(item.id)}
                                                     className="shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-200 transition-colors"
-                                                    title="移除通知"
                                                     aria-label="移除通知"
                                                 >
                                                     <Icon name="X" size={12} />
@@ -299,34 +299,35 @@ const App: React.FC = () => {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </div>}
                     <button 
-                        onClick={toggleTheme}
+                        onClick={cycleTheme}
                         className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50"
-                        title={theme === 'light' ? '切换到深色模式' : '切换到浅色模式'}
                     >
-                        <Icon name={theme === 'light' ? 'Moon' : 'Sun'} size={16} />
+                        <Icon name={themePreference === 'system' ? 'Monitor' : resolvedTheme === 'light' ? 'Moon' : 'Sun'} size={16} />
                     </button>
                     <WindowControls />
                 </div>
             </div>
 
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 min-h-0 flex overflow-hidden">
                 <Sidebar active={activeView} setActive={handleNavigate} />
-                <main className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
-                    <div className={`flex-1 overflow-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
-                        <div className="max-w-full mx-auto h-full">
-                            <div ref={pageTransitionRef} className="h-full flex flex-col">
-                                <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} h-full`}>
+                <main className="imageflow-content-container imageflow-main-panel flex-1 min-w-0 min-h-0 flex flex-col my-3 mr-3 ml-3 rounded-2xl bg-white/35 dark:bg-white/[0.025] border border-gray-200 dark:border-white/10 relative z-10 overflow-hidden">
+                    <div className={`imageflow-page-scroll flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden ${isSecondaryView ? 'px-4 py-3 md:px-6 md:py-4' : 'p-4 md:p-6'}`}>
+                        <div className="imageflow-page-content max-w-full min-h-full mx-auto">
+                            <div ref={pageTransitionRef} className="imageflow-page-transition min-h-full flex flex-col">
+                                <div className={`${activeView === 'dashboard' ? 'block' : 'hidden'} imageflow-view-frame h-full min-w-0`}>
                                     <Dashboard onSelect={handleNavigate} />
                                 </div>
                                 <React.Suspense fallback={<div className="h-full" />}>
                                     <ErrorBoundary title="页面渲染出错">
-                                        <div className={`${activeView === 'settings' ? 'block' : 'hidden'} h-full`}>
-                                            {activeView === 'settings' && <SettingsView />}
+                                        <div className={`${activeView === 'settings' ? 'block' : 'hidden'} imageflow-view-frame h-full min-w-0`}>
+                                            {activeView === 'settings' && (
+                                                <SettingsView themePreference={themePreference} onThemeChange={applyThemePreference} />
+                                            )}
                                         </div>
                                         {isFeatureView && (
-                                            <div className="h-full">
+                                            <div className={`imageflow-view-frame imageflow-view-frame--${activeView} h-full min-w-0 min-h-0`}>
                                                 {activeView === 'subtitle_stitch' ? (
                                                     <SubtitleStitchPage
                                                         isActive={true}

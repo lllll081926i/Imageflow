@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Icon from './Icon';
-import { Switch } from './Controls';
+import { SegmentedControl, Switch } from './Controls';
+import type { Theme } from '../types';
 import {
     DEFAULT_APP_SETTINGS,
     getAppBindings,
@@ -24,12 +25,11 @@ type UpdateCheckResult = {
 
 const Section: React.FC<{
     title: string;
-    desc: string;
     icon: string;
     children: React.ReactNode;
     action?: React.ReactNode;
-}> = ({ title, desc, icon, children, action }) => (
-    <section className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-6">
+}> = ({ title, icon, children, action }) => (
+    <section className="bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-200 dark:border-white/10 shadow-sm p-4 sm:p-6 min-w-0">
         <div className="flex items-start justify-between gap-4 mb-5">
             <div className="flex items-start gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-2xl bg-[#007AFF]/10 text-[#007AFF] flex items-center justify-center shrink-0">
@@ -37,7 +37,6 @@ const Section: React.FC<{
                 </div>
                 <div className="min-w-0">
                     <div className="text-base font-semibold text-gray-900 dark:text-white">{title}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">{desc}</div>
                 </div>
             </div>
             {action}
@@ -46,7 +45,12 @@ const Section: React.FC<{
     </section>
 );
 
-const SettingsView: React.FC = () => {
+type SettingsViewProps = {
+    themePreference: Theme;
+    onThemeChange: (theme: Theme) => void;
+};
+
+const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeChange }) => {
     const [settings, setSettings] = useState<AppSettingsSnapshot>({ ...DEFAULT_APP_SETTINGS });
     const [saving, setSaving] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -87,14 +91,11 @@ const SettingsView: React.FC = () => {
             if (!silent) {
                 if (res?.update_available) {
                     setMessage(`发现新版本 ${res.latest_version}`);
-                } else if (res?.checked) {
-                    setMessage('已是最新版本');
                 } else if (res?.error) {
                     setMessage(`检查更新失败：${res.error}`);
                 } else {
-                    setMessage('检查更新完成');
+                    setMessage('');
                 }
-                window.setTimeout(() => setMessage(''), 2200);
             }
         } catch (error: any) {
             if (!silent) setMessage(error?.message ? `检查更新失败：${error.message}` : '检查更新失败');
@@ -137,8 +138,7 @@ const SettingsView: React.FC = () => {
             const payload = next || { ...settings, max_concurrency: maxConcurrency };
             const saved = await saveAppSettings(payload);
             setSettings(saved);
-            setMessage('设置已保存');
-            window.setTimeout(() => setMessage(''), 1800);
+            setMessage('');
         } catch (error: any) {
             console.error(error);
             setMessage(error?.message ? `保存失败：${error.message}` : '保存失败');
@@ -178,24 +178,21 @@ const SettingsView: React.FC = () => {
 
     return (
         <div className="h-full flex flex-col min-h-0">
-            <div className="flex items-start justify-between gap-4 mb-6">
-                <div className="flex items-center gap-3">
+            <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-2xl bg-white dark:bg-[#2C2C2E] border border-gray-200 dark:border-white/10 shadow-sm flex items-center justify-center">
                         <Icon name="Settings" size={20} className="text-[#007AFF]" />
                     </div>
                     <div>
                         <div className="text-xl font-semibold text-gray-900 dark:text-white">全局设置</div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                            路径、输出规则、性能与更新
-                            {appVersion ? ` · v${appVersion}` : ''}
-                        </div>
+                        {appVersion && <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">v{appVersion}</div>}
                     </div>
                 </div>
-                <div className="flex items-center gap-3">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 min-w-[90px] text-right">
+                <div className="flex items-center gap-3 flex-wrap justify-end min-w-0">
+                    <div className="text-xs text-gray-500 dark:text-gray-400 min-w-0 max-w-full text-right">
                         {loading
                             ? '读取中...'
-                            : (message ? <span className={message.includes('失败') ? 'text-red-500' : 'text-[#007AFF]'}>{message}</span> : '已就绪')}
+                            : (message ? <span className={message.includes('失败') ? 'text-red-500' : 'text-[#007AFF]'}>{message}</span> : null)}
                     </div>
                     <button
                         type="button"
@@ -208,12 +205,11 @@ const SettingsView: React.FC = () => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto pr-1">
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="flex-1 min-h-0 min-w-0 overflow-y-auto pr-1">
+                <div className="imageflow-settings-grid grid gap-6">
                     <div className="space-y-6">
                         <Section
                             title="常用路径"
-                            desc="默认输出目录会自动带入处理页，最近路径最多保留 4 条"
                             icon="Upload"
                             action={(
                                 <button
@@ -234,7 +230,6 @@ const SettingsView: React.FC = () => {
                                             type="text"
                                             value={settings.default_output_dir}
                                             onChange={(event) => setSettings((previous) => ({ ...previous, default_output_dir: event.target.value }))}
-                                            placeholder="未设置时沿用当前任务目录"
                                             className="flex-1 px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
                                         />
                                         <button
@@ -246,7 +241,7 @@ const SettingsView: React.FC = () => {
                                         </button>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="imageflow-settings-grid grid gap-4">
                                     <div className="rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200/80 dark:border-white/10 p-4">
                                         <div className="text-sm font-medium text-gray-800 dark:text-gray-100 mb-3">最近输入</div>
                                         <div className="space-y-2 max-h-40 overflow-y-auto">
@@ -270,7 +265,7 @@ const SettingsView: React.FC = () => {
                                                     type="button"
                                                     onClick={() => {
                                                         setSettings((previous) => ({ ...previous, default_output_dir: path }));
-                                                        setMessage('已填入默认输出目录，记得保存');
+                                                        setMessage('');
                                                     }}
                                                     className="w-full text-left rounded-xl bg-white dark:bg-white/5 border border-gray-200/70 dark:border-white/10 px-3 py-2 text-xs text-gray-600 dark:text-gray-300 break-all hover:border-[#007AFF]/40 hover:text-[#007AFF] transition-colors"
                                                 >
@@ -283,7 +278,7 @@ const SettingsView: React.FC = () => {
                             </div>
                         </Section>
 
-                        <Section title="输出规则" desc="批量命名、冲突策略与目录结构" icon="FileType">
+                        <Section title="输出规则" icon="FileType">
                             <div className="space-y-4">
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">命名模板</label>
@@ -294,7 +289,6 @@ const SettingsView: React.FC = () => {
                                         placeholder="{prefix}{basename}_{date:YYYYMMDD}_{seq:3}"
                                         className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white"
                                     />
-                                    <div className="text-[11px] text-gray-400">可用变量：{'{prefix} {basename} {date:YYYYMMDD} {seq:3} {op}'}</div>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">默认前缀</label>
@@ -327,7 +321,7 @@ const SettingsView: React.FC = () => {
                     </div>
 
                     <div className="space-y-6">
-                        <Section title="处理性能" desc="控制批量任务并发，数值越大越吃 CPU / 内存" icon="Layers">
+                        <Section title="处理性能" icon="Layers">
                             <div className="flex items-center justify-between gap-3 mb-4">
                                 <div className="text-sm font-medium text-gray-700 dark:text-gray-300">全局并发数</div>
                                 <input
@@ -365,12 +359,10 @@ const SettingsView: React.FC = () => {
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
                                 />
                             </div>
-                            <div className="mt-3 text-xs text-gray-400">Windows 建议 2–4；机器性能好可适当提高。</div>
                         </Section>
 
                         <Section
                             title="软件更新"
-                            desc="从 GitHub Releases 检查新版本"
                             icon="ArrowRight"
                             action={(
                                 <button
@@ -419,16 +411,21 @@ const SettingsView: React.FC = () => {
                             </div>
                         </Section>
 
-                        <Section title="界面与其它" desc="窗口与体验行为" icon="PanelLeft">
+                        <Section title="界面与其它" icon="PanelLeft">
                             <div className="space-y-3">
+                                <div className="space-y-2">
+                                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">主题</div>
+                                    <SegmentedControl
+                                        options={['浅色', '深色', '跟随系统']}
+                                        value={themePreference === 'light' ? '浅色' : themePreference === 'dark' ? '深色' : '跟随系统'}
+                                        onChange={(value) => onThemeChange(value === '浅色' ? 'light' : value === '深色' ? 'dark' : 'system')}
+                                    />
+                                </div>
                                 <Switch
                                     checked={Boolean(settings.remember_window_state)}
                                     onChange={(checked) => setSettings((previous) => ({ ...previous, remember_window_state: checked }))}
                                     label="记住窗口大小与位置"
                                 />
-                                <div className="text-xs text-gray-400 leading-relaxed">
-                                    主题切换请使用标题栏旁的明暗按钮。
-                                </div>
                             </div>
                         </Section>
                     </div>

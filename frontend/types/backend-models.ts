@@ -95,6 +95,11 @@ export namespace models {
 	    engine?: string;
 	    target_size_kb?: number;
 	    strip_metadata?: boolean;
+	    resize_mode?: string;
+	    resize_percent?: number;
+	    resize_width?: number;
+	    resize_height?: number;
+	    maintain_aspect?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CompressRequest(source);
@@ -108,6 +113,11 @@ export namespace models {
 	        this.engine = source["engine"];
 	        this.target_size_kb = source["target_size_kb"];
 	        this.strip_metadata = source["strip_metadata"];
+	        this.resize_mode = source["resize_mode"];
+	        this.resize_percent = source["resize_percent"];
+	        this.resize_width = source["resize_width"];
+	        this.resize_height = source["resize_height"];
+	        this.maintain_aspect = source["maintain_aspect"];
 	    }
 	}
 	export class CompressResult {

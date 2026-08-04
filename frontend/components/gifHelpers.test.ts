@@ -17,6 +17,7 @@ import {
 } from './gifHelpers';
 import { CustomSelect, FileDropZone } from './Controls';
 import DetailView from './DetailView';
+import Dashboard from './Dashboard';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/app-api';
@@ -1304,6 +1305,28 @@ describe('FEATURES', () => {
         expect(gifFeature?.title).toBe('GIF 工具');
         expect(subtitleFeature?.title).toBe('字幕拼接');
     });
+
+    it('落地页工具卡可以触发对应功能入口', async () => {
+        const onSelect = vi.fn();
+        const { container, root } = await renderElement(
+            React.createElement(Dashboard, { onSelect })
+        );
+        const subtitleCard = Array.from(container.querySelectorAll('button'))
+            .find((button) => button.textContent?.includes('字幕拼接')) as HTMLButtonElement | undefined;
+
+        expect(container.querySelector('.imageflow-dashboard-grid')).toBeTruthy();
+        expect(subtitleCard).toBeTruthy();
+        await act(async () => {
+            subtitleCard?.click();
+            await flushMicrotasks();
+        });
+        expect(onSelect).toHaveBeenCalledWith('subtitle_stitch');
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+    });
 });
 
 describe('SubtitleStitchPage', () => {
@@ -1333,6 +1356,35 @@ describe('SubtitleStitchPage', () => {
                 Pattern: expect.stringContaining('*.png'),
             })],
         }));
+
+        await act(async () => {
+            root.unmount();
+            await flushMicrotasks();
+        });
+    });
+
+    it('桌面桥接未直接提供绑定时使用运行时文件选择器', async () => {
+        vi.mocked(getAppBindings).mockReturnValue(null);
+        const openFileDialog = vi.fn().mockResolvedValue(['D:/input/subtitle-01.png']);
+        (window as { runtime?: unknown }).runtime = { OpenFileDialog: openFileDialog };
+        const { default: SubtitleStitchPage } = await import('./SubtitleStitchPage');
+
+        const { container, root } = await renderElement(
+            React.createElement(SubtitleStitchPage, { isActive: true })
+        );
+        const selectButton = Array.from(container.querySelectorAll('button'))
+            .find((button) => button.textContent?.includes('选择截图')) as HTMLButtonElement | undefined;
+
+        await act(async () => {
+            selectButton?.click();
+            await flushMicrotasks();
+        });
+
+        expect(openFileDialog).toHaveBeenCalledWith(expect.objectContaining({
+            allowsMultipleSelection: true,
+            filters: [expect.objectContaining({ DisplayName: 'Screenshots' })],
+        }));
+        expect(container.textContent).toContain('subtitle-01.png');
 
         await act(async () => {
             root.unmount();

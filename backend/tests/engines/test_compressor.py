@@ -33,6 +33,82 @@ class CompressorTests(unittest.TestCase):
     def _path(self, name):
         return os.path.join(self.temp_dir.name, name)
 
+    def test_smart_compression_uses_lossless_for_small_png(self):
+        src = self._path("small.png")
+        out = self._path("small_out.png")
+        Image.new("RGBA", (16, 16), (20, 120, 240, 255)).save(src, format="PNG")
+
+        result = ImageCompressor().compress(
+            input_path=src,
+            output_path=out,
+            level=CompressionLevel.SMART,
+            engine="pillow",
+        )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("compression_level"), CompressionLevel.LOSSLESS)
+
+    def test_percent_resize_preserves_aspect_ratio(self):
+        src = self._path("percent.png")
+        out = self._path("percent_out.png")
+        Image.new("RGB", (400, 200), (20, 120, 240)).save(src, format="PNG")
+
+        result = ImageCompressor().compress(
+            input_path=src,
+            output_path=out,
+            level=CompressionLevel.LOSSLESS,
+            engine="pillow",
+            resize_mode="percent",
+            resize_percent=50,
+            maintain_aspect=True,
+        )
+
+        self.assertTrue(result.get("success"))
+        with Image.open(out) as output:
+            self.assertEqual(output.size, (200, 100))
+        self.assertEqual(result.get("width"), 200)
+        self.assertEqual(result.get("height"), 100)
+
+    def test_pixel_resize_locks_to_target_box_by_default(self):
+        src = self._path("pixel_locked.png")
+        out = self._path("pixel_locked_out.png")
+        Image.new("RGB", (400, 200), (20, 120, 240)).save(src, format="PNG")
+
+        result = ImageCompressor().compress(
+            input_path=src,
+            output_path=out,
+            level=CompressionLevel.LOSSLESS,
+            engine="pillow",
+            resize_mode="pixels",
+            resize_width=100,
+            resize_height=100,
+            maintain_aspect=True,
+        )
+
+        self.assertTrue(result.get("success"))
+        with Image.open(out) as output:
+            self.assertEqual(output.size, (100, 50))
+
+    def test_pixel_resize_can_unlock_aspect_ratio(self):
+        src = self._path("pixel_free.png")
+        out = self._path("pixel_free_out.png")
+        Image.new("RGB", (400, 200), (20, 120, 240)).save(src, format="PNG")
+
+        result = ImageCompressor().compress(
+            input_path=src,
+            output_path=out,
+            level=CompressionLevel.LOSSLESS,
+            engine="pillow",
+            resize_mode="pixels",
+            resize_width=120,
+            resize_height=80,
+            maintain_aspect=False,
+        )
+
+        self.assertTrue(result.get("success"))
+        with Image.open(out) as output:
+            self.assertEqual(output.size, (120, 80))
+
     def test_strip_metadata_flag_respected(self):
         src = self._path("input.jpg")
         img = Image.new("RGB", (16, 16), (255, 0, 0))

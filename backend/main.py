@@ -24,8 +24,8 @@ def main() -> None:
         settings = load_settings()
         if getattr(settings, "remember_window_state", True):
             state = load_window_state()
-            width = max(1024, int(state.get("width") or width))
-            height = max(600, int(state.get("height") or height))
+            width = max(900, int(state.get("width") or width))
+            height = max(560, int(state.get("height") or height))
             if "x" in state:
                 x = int(state["x"])
             if "y" in state:
@@ -39,7 +39,8 @@ def main() -> None:
         js_api=build_window_api(),
         width=width,
         height=height,
-        min_size=(1024, 600),
+        min_size=(900, 560),
+        resizable=True,
         frameless=True,
         easy_drag=False,
     )

@@ -205,6 +205,7 @@ def _strip_jpeg_metadata_file(path: str) -> None:
 class CompressionLevel:
     """Compression level constants."""
 
+    SMART = 0  # Automatically choose a safe level from format and source size
     LOSSLESS = 1  # 100% quality, lossless
     LIGHT = 2  # 90% quality
     MEDIUM = 3  # 75% quality
@@ -215,6 +216,7 @@ class CompressionLevel:
     def get_quality(cls, level):
         """Get quality percentage for a given level."""
         quality_map = {
+            cls.SMART: 75,
             cls.LOSSLESS: 100,
             cls.LIGHT: 90,
             cls.MEDIUM: 75,
@@ -226,7 +228,7 @@ class CompressionLevel:
     @classmethod
     def validate(cls, level):
         """Validate compression level."""
-        return level in [cls.LOSSLESS, cls.LIGHT, cls.MEDIUM, cls.HEAVY, cls.EXTREME]
+        return level in [cls.SMART, cls.LOSSLESS, cls.LIGHT, cls.MEDIUM, cls.HEAVY, cls.EXTREME]
 
 
 class ImageCompressor:
@@ -243,6 +245,117 @@ class ImageCompressor:
         logger.info(f"  - PNGQuant (imagequant): {self.imagequant_available}")
         logger.info(f"  - OxiPNG (pyoxipng): {self.oxipng_available}")
 
+    @staticmethod
+    def _resolve_smart_level(format_type, original_size, img):
+        """Choose a conservative level for the simple "smart" UI mode.
+
+        Small assets benefit more from lossless optimization, while large assets
+        are where a stronger quality reduction usually produces a meaningful
+        size win. The existing per-format engines still make the final decision.
+        """
+        size = max(0, int(original_size or 0))
+        normalized_format = str(format_type or "").upper()
+        if normalized_format == "PNG" and size <= 512 * 1024:
+            return CompressionLevel.LOSSLESS
+        if size <= 512 * 1024:
+            return CompressionLevel.LIGHT
+        if size <= 4 * 1024 * 1024:
+            return CompressionLevel.MEDIUM
+        if size <= 12 * 1024 * 1024:
+            return CompressionLevel.HEAVY
+        return CompressionLevel.EXTREME
+
+    @staticmethod
+    def _resolve_resize_size(
+        source_width,
+        source_height,
+        resize_mode="none",
+        resize_percent=100,
+        resize_width=0,
+        resize_height=0,
+        maintain_aspect=True,
+    ):
+        """Resolve a safe target size for batch image resizing."""
+        source_width = max(1, int(source_width or 0))
+        source_height = max(1, int(source_height or 0))
+        mode = str(resize_mode or "none").strip().lower()
+        if mode in {"percentage", "percent", "比例", "百分比"}:
+            try:
+                percent = float(resize_percent)
+            except (TypeError, ValueError):
+                percent = 100.0
+            percent = max(1.0, min(500.0, percent))
+            scale = percent / 100.0
+            target = (
+                max(1, min(65535, round(source_width * scale))),
+                max(1, min(65535, round(source_height * scale))),
+            )
+            return None if target == (source_width, source_height) else target
+
+        if mode not in {"pixel", "pixels", "像素"}:
+            return None
+
+        try:
+            target_width = max(0, min(65535, int(float(resize_width or 0))))
+        except (TypeError, ValueError):
+            target_width = 0
+        try:
+            target_height = max(0, min(65535, int(float(resize_height or 0))))
+        except (TypeError, ValueError):
+            target_height = 0
+
+        if not target_width and not target_height:
+            return None
+        if not maintain_aspect:
+            target = (
+                target_width or source_width,
+                target_height or source_height,
+            )
+            return None if target == (source_width, source_height) else target
+
+        scales = []
+        if target_width:
+            scales.append(target_width / source_width)
+        if target_height:
+            scales.append(target_height / source_height)
+        scale = min(scales)
+        target = (
+            max(1, min(65535, round(source_width * scale))),
+            max(1, min(65535, round(source_height * scale))),
+        )
+        return None if target == (source_width, source_height) else target
+
+    @classmethod
+    def _resize_image(
+        cls,
+        img,
+        resize_mode="none",
+        resize_percent=100,
+        resize_width=0,
+        resize_height=0,
+        maintain_aspect=True,
+    ):
+        target_size = cls._resolve_resize_size(
+            img.width,
+            img.height,
+            resize_mode=resize_mode,
+            resize_percent=resize_percent,
+            resize_width=resize_width,
+            resize_height=resize_height,
+            maintain_aspect=bool(maintain_aspect),
+        )
+        if not target_size:
+            return img, False
+
+        resampling = getattr(Image, "Resampling", Image)
+        resized = img.resize(target_size, resample=resampling.LANCZOS)
+        try:
+            resized.info.update(img.info)
+        except Exception:
+            pass
+        resized.format = img.format
+        return resized, True
+
     def compress(
         self,
         input_path,
@@ -251,6 +364,11 @@ class ImageCompressor:
         engine="",
         target_size_kb=0,
         strip_metadata=False,
+        resize_mode="none",
+        resize_percent=100,
+        resize_width=0,
+        resize_height=0,
+        maintain_aspect=True,
     ):
         """
         Compress an image.
@@ -296,6 +414,7 @@ class ImageCompressor:
             # Open input image
             logger.info(f"Opening image: {input_path}")
             img = Image.open(input_path)
+            original_width, original_height = img.size
 
             # Get original file size
             original_size = os.path.getsize(input_path)
@@ -309,6 +428,25 @@ class ImageCompressor:
             # Get image format and compress accordingly
             format_type = img.format or "PNG"
             logger.info(f"Image format: {format_type}")
+
+            resized_img, resize_applied = self._resize_image(
+                img,
+                resize_mode=resize_mode,
+                resize_percent=resize_percent,
+                resize_width=resize_width,
+                resize_height=resize_height,
+                maintain_aspect=maintain_aspect,
+            )
+            if resize_applied:
+                img.close()
+                img = resized_img
+                img.format = format_type
+                logger.info("Resized image from %sx%s to %sx%s", original_width, original_height, img.width, img.height)
+
+            smart_mode = level == CompressionLevel.SMART
+            if smart_mode:
+                level = self._resolve_smart_level(format_type, original_size, img)
+                logger.info("Smart compression selected level %s", level)
 
             target_bytes = 0
             try:
@@ -365,6 +503,8 @@ class ImageCompressor:
                     strip_metadata=bool(strip_metadata),
                 )
 
+            output_width, output_height = img.size
+
             # Explicitly close image to free memory
             img.close()
             img = None
@@ -374,6 +514,7 @@ class ImageCompressor:
                 original_size > 0
                 and candidate_size > original_size
                 and (not strip_metadata or fallback_used)
+                and not resize_applied
             ):
                 warning = _append_warning(warning, "压缩结果大于原图，已保留原文件内容")
                 if same_file:
@@ -405,6 +546,10 @@ class ImageCompressor:
                 "compressed_size": compressed_size,
                 "compression_rate": round(compression_rate, 2),
                 "compression_level": level,
+                "original_width": original_width,
+                "original_height": original_height,
+                "width": output_width,
+                "height": output_height,
             }
             if warning:
                 out["warning"] = warning
@@ -912,6 +1057,11 @@ def process(input_data):
         engine = input_data.get("engine", "")
         target_size_kb = input_data.get("target_size_kb", 0)
         strip_metadata = input_data.get("strip_metadata", False)
+        resize_mode = input_data.get("resize_mode", "none")
+        resize_percent = input_data.get("resize_percent", 100)
+        resize_width = input_data.get("resize_width", 0)
+        resize_height = input_data.get("resize_height", 0)
+        maintain_aspect = input_data.get("maintain_aspect", True)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -929,6 +1079,11 @@ def process(input_data):
             engine=engine,
             target_size_kb=target_size_kb,
             strip_metadata=strip_metadata,
+            resize_mode=resize_mode,
+            resize_percent=resize_percent,
+            resize_width=resize_width,
+            resize_height=resize_height,
+            maintain_aspect=maintain_aspect,
         )
 
         return result
@@ -954,6 +1109,11 @@ def main():
         engine = input_data.get("engine", "")
         target_size_kb = input_data.get("target_size_kb", 0)
         strip_metadata = input_data.get("strip_metadata", False)
+        resize_mode = input_data.get("resize_mode", "none")
+        resize_percent = input_data.get("resize_percent", 100)
+        resize_width = input_data.get("resize_width", 0)
+        resize_height = input_data.get("resize_height", 0)
+        maintain_aspect = input_data.get("maintain_aspect", True)
 
         # Validate required parameters
         if not input_path or not output_path:
@@ -971,6 +1131,11 @@ def main():
                 engine=engine,
                 target_size_kb=target_size_kb,
                 strip_metadata=strip_metadata,
+                resize_mode=resize_mode,
+                resize_percent=resize_percent,
+                resize_width=resize_width,
+                resize_height=resize_height,
+                maintain_aspect=maintain_aspect,
             )
 
         # Write result to stdout

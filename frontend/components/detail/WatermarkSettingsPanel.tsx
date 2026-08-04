@@ -71,6 +71,7 @@ export const WatermarkSettings = memo(({
     systemFontsCount,
 }: WatermarkSettingsProps) => {
     const [colorInput, setColorInput] = useState(color.toUpperCase());
+    const [advancedOpen, setAdvancedOpen] = useState(false);
     const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
     const [colorPickerStyle, setColorPickerStyle] = useState<{ top: number; left: number } | null>(null);
     const colorPickerRef = useRef<HTMLDivElement>(null);
@@ -144,9 +145,22 @@ export const WatermarkSettings = memo(({
     const tileGapValue = Math.max(0, Math.round((margin.x + margin.y) / 2));
 
     return (
-        <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="space-y-5">
+        <div className="space-y-4 min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-4 rounded-2xl border border-gray-200/80 dark:border-white/10 bg-gray-50/80 dark:bg-white/[0.03] px-3 py-2.5">
+                <div>
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">常用水印设置</div>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setAdvancedOpen((previous) => !previous)}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/10 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:border-[#007AFF]/40 hover:text-[#007AFF] transition-colors"
+                >
+                    高级设置
+                    <Icon name="ChevronDown" size={14} className={`transition-transform ${advancedOpen ? 'rotate-0' : '-rotate-90'}`} />
+                </button>
+            </div>
+            <div className="space-y-4">
+                <div className="space-y-4">
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
                         <SegmentedControl options={['文字', '图片']} value={type} onChange={setType} />
@@ -164,7 +178,6 @@ export const WatermarkSettings = memo(({
                                          className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
                                          style={{ backgroundColor: color }}
                                          aria-label="文字颜色"
-                                         title="文字颜色"
                                      />
                                      {isColorPickerOpen && colorPickerStyle && createPortal(
                                          <div
@@ -222,18 +235,18 @@ export const WatermarkSettings = memo(({
                                       />
                                   </div>
                              </div>
-                             <div className="space-y-1.5">
-                                 <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
-                                 {useSystemFonts && (
-                                     <div className="text-xs text-gray-500">
-                                         {isSystemFontsLoading
-                                             ? '正在读取系统字体...'
-                                             : systemFontsCount > 0
-                                                 ? `已读取 ${systemFontsCount} 个字体文件`
-                                                 : '未检测到系统字体或读取失败'}
-                                     </div>
-                                 )}
-                             </div>
+                            {advancedOpen && <div className="space-y-1.5">
+                                <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
+                                {useSystemFonts && (
+                                    <div className="text-xs text-gray-500">
+                                        {isSystemFontsLoading
+                                            ? '正在读取系统字体...'
+                                            : systemFontsCount > 0
+                                                ? `已读取 ${systemFontsCount} 个字体文件`
+                                                : '未检测到系统字体或读取失败'}
+                                    </div>
+                                )}
+                            </div>}
                          </div>
                      ) : (
                          <button
@@ -246,21 +259,21 @@ export const WatermarkSettings = memo(({
                         </button>
                     )}
                 </div>
-                <div className="space-y-[18px]">
+                <div className="imageflow-watermark-grid grid gap-4">
                     <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
                     <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
-                    <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />
+                    {advancedOpen && <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />}
                 </div>
-                <div className="flex flex-col gap-4 min-w-0">
+                <div className="flex flex-col gap-4 min-w-0 sm:col-span-2">
                     <div className="space-y-2 w-full">
                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
                         <div className="flex justify-center">
                             <PositionGrid value={position} onChange={setPosition} />
                         </div>
                     </div>
-                    <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />
+                    {advancedOpen && <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />}
                 </div>
-                <div className="flex flex-col gap-4 min-w-0">
+                {advancedOpen && <div className="imageflow-watermark-grid grid gap-4 min-w-0 animate-enter">
                     <div className="space-y-2 w-full">
                         {tiled ? (
                             <>
@@ -301,7 +314,7 @@ export const WatermarkSettings = memo(({
                     </div>
                     <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
                     <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
-                </div>
+                </div>}
             </div>
         </div>
     );

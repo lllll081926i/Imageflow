@@ -67,7 +67,7 @@ export const AdjustCropControls = memo(({
                 );
             })}
         </div>
-        <div className="grid grid-cols-2 gap-2 mt-2">
+        <div className="imageflow-gif-grid grid gap-2 mt-2">
             <button
                 onClick={() => setRotate((rotate + 90) % 360)}
                 className="flex items-center justify-center gap-2 py-2 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
@@ -132,7 +132,7 @@ export const AdjustSettings = memo(({
         && typeof setFlipV === 'function';
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
             {canShowCrop && (
                 <AdjustCropControls
                     cropRatio={cropRatio}
@@ -152,7 +152,7 @@ export const AdjustSettings = memo(({
                     专业调色
                  </label>
                  <div className="w-full">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="imageflow-adjust-grid grid gap-4">
                     <StyledSlider label="曝光度" value={exposure} min={-100} max={100} onChange={setExposure} className="space-y-2" />
                     <StyledSlider label="对比度" value={contrast} min={-100} max={100} onChange={setContrast} className="space-y-2" />
                     <StyledSlider label="自然饱和度" value={vibrance} min={-100} max={100} onChange={setVibrance} className="space-y-2" />

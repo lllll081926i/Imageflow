@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue, useId, memo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue, useId, useLayoutEffect, memo } from 'react';
 import VirtualList from './VirtualList';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
@@ -57,7 +57,7 @@ export const SegmentedControl: React.FC<{ options: string[]; value: string; onCh
                 <button
                     key={opt}
                     onClick={() => onChange(opt)}
-                    className={`relative flex-1 py-1.5 text-sm font-medium z-10 transition-colors duration-200 select-none truncate px-1 ${
+                    className={`relative flex-1 min-w-0 py-1.5 text-sm font-medium z-10 transition-colors duration-200 select-none truncate px-1 ${
                         value === opt 
                         ? 'text-gray-900 dark:text-white' 
                         : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
@@ -146,12 +146,21 @@ export const ProgressBar: React.FC<{ progress: number; label?: string }> = memo(
 
 type SelectOption = string | { label: string; value: string };
 
+type SelectMenuStyle = {
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    placement: 'top' | 'bottom';
+};
+
 export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; value: string; onChange: (val: string) => void }> = memo(({ label, options, value, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
     const buttonRef = useRef<HTMLButtonElement>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
     const listboxId = useId();
-    const [menuStyle, setMenuStyle] = useState<{top: number, left: number, width: number} | null>(null);
+    const [menuStyle, setMenuStyle] = useState<SelectMenuStyle | null>(null);
     const normalizedOptions = useMemo(() => options.map((opt) => (
         typeof opt === 'string' ? { label: opt, value: opt } : opt
     )), [options]);
@@ -161,19 +170,52 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
         return matched?.label ?? value;
     }, [normalizedOptions, value]);
 
+    const calculateMenuStyle = useCallback((menuHeight = 0): SelectMenuStyle | null => {
+        const button = buttonRef.current;
+        if (!button) {
+            return null;
+        }
+
+        const rect = button.getBoundingClientRect();
+        const viewportPadding = 8;
+        const gap = 6;
+        const preferredMaxHeight = 320;
+        const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+        const spaceAbove = rect.top - viewportPadding;
+        const placement: SelectMenuStyle['placement'] = spaceBelow < 220 && spaceAbove > spaceBelow ? 'top' : 'bottom';
+        const availableSpace = Math.max(120, placement === 'top' ? spaceAbove - gap : spaceBelow - gap);
+        const maxHeight = Math.min(preferredMaxHeight, availableSpace);
+        const visibleHeight = menuHeight > 0 ? Math.min(menuHeight, maxHeight) : maxHeight;
+        const unclampedTop = placement === 'top'
+            ? rect.top - gap - visibleHeight
+            : rect.bottom + gap;
+        const top = Math.max(
+            viewportPadding,
+            Math.min(unclampedTop, window.innerHeight - viewportPadding - visibleHeight),
+        );
+        const left = Math.min(
+            Math.max(viewportPadding, rect.left),
+            Math.max(viewportPadding, window.innerWidth - rect.width - viewportPadding),
+        );
+
+        return {
+            top,
+            left,
+            width: rect.width,
+            maxHeight,
+            placement,
+        };
+    }, []);
+
     const openMenu = useCallback((nextActiveIndex = selectedIndex >= 0 ? selectedIndex : 0) => {
-        if (buttonRef.current) {
-            const rect = buttonRef.current.getBoundingClientRect();
-            setMenuStyle({
-                top: rect.bottom + 6,
-                left: rect.left,
-                width: rect.width
-            });
+        const nextStyle = calculateMenuStyle();
+        if (nextStyle) {
+            setMenuStyle(nextStyle);
         }
         const maxIndex = Math.max(0, normalizedOptions.length - 1);
         setActiveIndex(Math.min(Math.max(nextActiveIndex, 0), maxIndex));
         setIsOpen(true);
-    }, [normalizedOptions.length, selectedIndex]);
+    }, [calculateMenuStyle, normalizedOptions.length, selectedIndex]);
 
     const closeMenu = useCallback(() => {
         setIsOpen(false);
@@ -187,6 +229,17 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
         }
         closeMenu();
     }, [closeMenu, isOpen, openMenu]);
+
+    useLayoutEffect(() => {
+        if (!isOpen || !menuRef.current) {
+            return;
+        }
+
+        const nextStyle = calculateMenuStyle(menuRef.current.getBoundingClientRect().height);
+        if (nextStyle) {
+            setMenuStyle(nextStyle);
+        }
+    }, [calculateMenuStyle, isOpen, normalizedOptions.length]);
 
     const selectOptionAtIndex = useCallback((index: number) => {
         const option = normalizedOptions[index];
@@ -284,36 +337,37 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
         
         const menu = (
             <div 
+                ref={menuRef}
                 id={listboxId}
                 role="listbox"
                 aria-label={label || '下拉选项'}
-                className="fixed z-[9999] bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-white/10 rounded-xl shadow-xl shadow-black/10 max-h-60 overflow-y-auto no-scrollbar animate-enter p-1.5 origin-top"
+                data-placement={menuStyle.placement}
+                className="imageflow-select-menu fixed z-[9999] no-scrollbar"
                 style={{ 
                     top: menuStyle.top, 
                     left: menuStyle.left, 
-                    width: menuStyle.width 
+                    width: menuStyle.width,
+                    maxHeight: menuStyle.maxHeight,
                 }}
                 onClick={(e) => e.stopPropagation()}
             >
                 {normalizedOptions.map((opt, i) => (
                     <button
                         key={i}
+                        id={`${listboxId}-option-${i}`}
                         type="button"
                         role="option"
                         aria-selected={opt.value === value}
+                        data-active={i === activeIndex}
+                        onMouseEnter={() => setActiveIndex(i)}
                         onClick={(e) => { 
                             e.preventDefault();
                             selectOptionAtIndex(i);
                         }}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors mb-0.5 last:mb-0 ${
-                            i === activeIndex
-                                ? 'bg-[#007AFF]/12 text-[#007AFF] font-medium'
-                                : opt.value === value
-                                    ? 'bg-[#007AFF]/10 text-[#007AFF] font-medium'
-                                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5'
-                        }`}
+                        className="imageflow-select-option"
                     >
-                        {opt.label}
+                        <span className="min-w-0 flex-1 truncate text-left">{opt.label}</span>
+                        {opt.value === value && <Icon name="Check" size={14} className="ml-3 shrink-0 text-[#007AFF]" />}
                     </button>
                 ))}
             </div>
@@ -322,8 +376,8 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
     };
 
     return (
-        <div className="space-y-2">
-            {label && <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
+        <div className="space-y-2 min-w-0">
+            {label && <label className="imageflow-select-label text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
             <button
                 ref={buttonRef}
                 type="button"
@@ -332,12 +386,15 @@ export const CustomSelect: React.FC<{ label?: string; options: SelectOption[]; v
                 aria-haspopup="listbox"
                 aria-expanded={isOpen}
                 aria-controls={isOpen ? listboxId : undefined}
-                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 dark:bg-white/5 dark:hover:bg-white/10 border text-sm transition-all duration-200 outline-none ${
-                    isOpen ? 'border-[#007AFF] ring-2 ring-[#007AFF]/20 bg-white dark:bg-white/10' : 'border-gray-200 dark:border-white/10'
-                }`}
+                aria-activedescendant={isOpen && activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined}
+                aria-label={label}
+                data-open={isOpen}
+                className="imageflow-select-trigger"
             >
-                <span className="text-gray-900 dark:text-white truncate">{selectedLabel}</span>
-                <Icon name="ChevronDown" size={16} className={`text-gray-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
+                <span className="min-w-0 flex-1 truncate text-left text-gray-900 dark:text-white">{selectedLabel}</span>
+                <span className="ml-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gray-100/80 dark:bg-white/10">
+                    <Icon name="ChevronDown" size={14} className={`text-gray-500 dark:text-gray-300 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                </span>
             </button>
             {renderMenu()}
         </div>
@@ -621,7 +678,6 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                     <button
                         onClick={(e) => onRemoveFolder(node.path, e)}
                         className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                        title="移除文件夹"
                     >
                         <Icon name="Trash2" size={14} />
                     </button>
@@ -681,7 +737,6 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
                                             <button
                                                 onClick={(e) => onRemoveFile(f.input_path, e)}
                                                 className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
-                                                title="移除文件"
                                             >
                                                 <Icon name="X" size={14} />
                                             </button>
@@ -705,8 +760,8 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
     acceptedFormats = "image/*,.svg,.avif,.ico",
     fileDialogFilters,
     allowMultiple = true,
-    title = "拖拽图片到这里",
-    subTitle = "或点击选择文件 (支持批量处理)",
+    title = "",
+    subTitle = "",
     isActive = true,
 }) => {
     const [isDragOver, setIsDragOver] = useState(false);
@@ -1197,10 +1252,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                 <>
                                     <div className="fixed inset-0 z-40" onClick={() => setIsSortMenuOpen(false)} />
                                     <div 
-                                        className="fixed z-50 bg-white dark:bg-[#1C1C1E] rounded-xl shadow-xl border border-gray-200 dark:border-white/10 p-1 min-w-[120px] animate-enter"
+                                        className="imageflow-select-menu fixed z-50"
+                                        data-placement="bottom"
                                         style={{
                                             top: sortButtonRef.current.getBoundingClientRect().bottom + 4,
-                                            left: sortButtonRef.current.getBoundingClientRect().right - 120, // Align right
+                                            left: Math.max(8, Math.min(
+                                                window.innerWidth - 168,
+                                                sortButtonRef.current.getBoundingClientRect().right - 160,
+                                            )),
+                                            width: 160,
+                                            maxHeight: 240,
                                         }}
                                     >
                                         {[
@@ -1210,30 +1271,30 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                         ].map(opt => (
                                             <button
                                                 key={opt.key}
+                                                type="button"
                                                 onClick={() => {
                                                     setSortKey(opt.key);
                                                     setIsSortMenuOpen(false);
                                                 }}
-                                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
-                                                    sortKey === opt.key 
-                                                        ? 'bg-[#007AFF] text-white' 
-                                                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5'
-                                                }`}
+                                                aria-selected={sortKey === opt.key}
+                                                data-active={sortKey === opt.key}
+                                                className="imageflow-select-option"
                                             >
-                                                <span>{opt.label}</span>
-                                                {sortKey === opt.key && <Icon name="Check" size={14} />}
+                                                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                                                {sortKey === opt.key && <Icon name="Check" size={14} className="ml-3 shrink-0 text-[#007AFF]" />}
                                             </button>
                                         ))}
                                         <div className="h-px bg-gray-200 dark:bg-white/10 my-1 mx-1" />
                                         <button
+                                            type="button"
                                             onClick={() => {
                                                 toggleSortOrder();
                                                 setIsSortMenuOpen(false);
                                             }}
-                                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+                                            className="imageflow-select-option"
                                         >
-                                            <span>{sortOrder === 'asc' ? '升序' : '降序'}</span>
-                                            <Icon name={sortOrder === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} />
+                                            <span className="min-w-0 flex-1 truncate">{sortOrder === 'asc' ? '升序' : '降序'}</span>
+                                            <Icon name={sortOrder === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} className="ml-3 shrink-0 text-gray-400 dark:text-gray-500" />
                                         </button>
                                     </div>
                                 </>,
@@ -1293,7 +1354,6 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                                                 <button
                                                     onClick={(e) => handleRemoveFile(f.input_path, e)}
                                                     className="opacity-0 group-hover/file:opacity-100 p-1 rounded-md text-gray-400 hover:text-red-500 transition-all"
-                                                    title="移除文件"
                                                 >
                                                     <Icon name="X" size={14} />
                                                 </button>
@@ -1330,12 +1390,16 @@ export const FileDropZone: React.FC<FileDropZoneProps> = ({
                         <Icon name="Upload" size={32} />
                     </div>
                     
-                    <p className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center pointer-events-none relative z-10">
-                        {title}
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
-                        {subTitle}
-                    </p>
+                    {title && (
+                        <p className="text-xl font-semibold text-gray-900 dark:text-white mb-2 text-center pointer-events-none relative z-10">
+                            {title}
+                        </p>
+                    )}
+                    {subTitle && (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center pointer-events-none relative z-10 px-8 leading-relaxed">
+                            {subTitle}
+                        </p>
+                    )}
                     {selectionStatus && (
                         <div className="mt-3 flex items-center gap-2 text-xs text-[#007AFF] dark:text-[#64AFFF] relative z-10">
                             <span className="w-2 h-2 rounded-full bg-current animate-pulse" />

@@ -64,9 +64,9 @@ export const ConverterSettings = memo(({
     };
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
             {/* Top Row: Format & Quality/Compression */}
-            <div className="grid grid-cols-[1fr_2fr] gap-4">
+            <div className="imageflow-converter-top-grid grid gap-4">
                 <CustomSelect 
                     label="目标格式" 
                     options={['JPG', 'PNG', 'WEBP', 'AVIF', 'TIFF', 'ICO', 'BMP']} 
@@ -136,7 +136,7 @@ export const ConverterSettings = memo(({
 
             {resizeMode === '固定宽高' && (
                 <div className="flex flex-col gap-3 animate-enter">
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                         <div className="flex-1 space-y-1">
                             <label className="text-xs text-gray-500">宽度 (px)</label>
                             <input type="number" value={fixedWidth || ''} onChange={e => setFixedWidth(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="自动" />
@@ -159,7 +159,7 @@ export const ConverterSettings = memo(({
             )}
 
             {resizeMode === '最长边' && (
-                <div className="flex gap-3 animate-enter">
+                <div className="flex flex-wrap gap-3 animate-enter">
                     <div className="flex-1 space-y-1">
                         <label className="text-xs text-gray-500">最长边 (px)</label>
                         <input type="number" value={longEdge || ''} onChange={e => setLongEdge(Number(e.target.value || 0))} className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] outline-none dark:text-white" placeholder="2048" />

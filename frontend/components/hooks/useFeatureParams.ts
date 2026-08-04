@@ -31,11 +31,16 @@ export function useConverterParams() {
 }
 
 export function useCompressorParams() {
-    const [mode, setMode] = useState('标准');
+    const [mode, setMode] = useState('智能（推荐）');
     const [targetSize, setTargetSize] = useState(false);
     const [targetSizeKB, setTargetSizeKB] = useState(500);
     const [engine, setEngine] = useState('自动 (推荐)');
     const [overwriteSource, setOverwriteSource] = useState(false);
+    const [resizeMode, setResizeMode] = useState('不缩放');
+    const [resizePercent, setResizePercent] = useState(100);
+    const [resizeWidth, setResizeWidth] = useState(1920);
+    const [resizeHeight, setResizeHeight] = useState(1080);
+    const [maintainAspect, setMaintainAspect] = useState(true);
 
     return {
         mode, setMode,
@@ -43,6 +48,11 @@ export function useCompressorParams() {
         targetSizeKB, setTargetSizeKB,
         engine, setEngine,
         overwriteSource, setOverwriteSource,
+        resizeMode, setResizeMode,
+        resizePercent, setResizePercent,
+        resizeWidth, setResizeWidth,
+        resizeHeight, setResizeHeight,
+        maintainAspect, setMaintainAspect,
     };
 }
 
