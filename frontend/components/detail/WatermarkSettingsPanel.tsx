@@ -1,320 +1,140 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import Icon from '../Icon';
-import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid } from '../Controls';
+﻿import React, { memo, useCallback, useMemo } from 'react';
+import { CustomSelect, SegmentedControl, StyledSlider, Switch } from '../Controls';
+import { ColorField } from '../ColorField';
+import { PresetBar } from './PresetBar';
+import type { WatermarkStyle } from '../hooks/useFeatureParams';
 
 type WatermarkSettingsProps = {
-    type: string;
-    setType: (v: string) => void;
-    text: string;
-    setText: (v: string) => void;
-    imagePath: string;
-    setImagePath: (v: string) => void;
-    position: string;
-    setPosition: (v: string) => void;
-    opacity: number;
-    setOpacity: (v: number) => void;
-    rotate: number;
-    setRotate: (v: number) => void;
-    size: number;
-    setSize: (v: number) => void;
-    tiled: boolean;
-    setTiled: (v: boolean) => void;
-    blendMode: string;
-    setBlendMode: (v: string) => void;
-    shadow: boolean;
-    setShadow: (v: boolean) => void;
-    margin: { x: number; y: number };
-    setMargin: (v: { x: number; y: number }) => void;
-    font: string;
-    setFont: (v: string) => void;
-    color: string;
-    setColor: (v: string) => void;
-    useSystemFonts: boolean;
-    setUseSystemFonts: (v: boolean) => void;
-    isSystemFontsLoading: boolean;
-    fontOptions: Array<string | { label: string; value: string }>;
-    systemFontsCount: number;
+    style: WatermarkStyle;
+    patch: (partial: Partial<WatermarkStyle>) => void;
 };
 
-export const WatermarkSettings = memo(({
-    type,
-    setType,
-    text,
-    setText,
-    imagePath,
-    setImagePath,
-    position,
-    setPosition,
-    opacity,
-    setOpacity,
-    rotate,
-    setRotate,
-    size,
-    setSize,
-    tiled,
-    setTiled,
-    blendMode,
-    setBlendMode,
-    shadow,
-    setShadow,
-    margin,
-    setMargin,
-    font,
-    setFont,
-    color,
-    setColor,
-    useSystemFonts,
-    setUseSystemFonts,
-    isSystemFontsLoading,
-    fontOptions,
-    systemFontsCount,
-}: WatermarkSettingsProps) => {
-    const [colorInput, setColorInput] = useState(color.toUpperCase());
-    const [advancedOpen, setAdvancedOpen] = useState(false);
-    const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-    const [colorPickerStyle, setColorPickerStyle] = useState<{ top: number; left: number } | null>(null);
-    const colorPickerRef = useRef<HTMLDivElement>(null);
-    const colorButtonRef = useRef<HTMLButtonElement>(null);
-    const colorPopoverRef = useRef<HTMLDivElement>(null);
+const FONT_OPTIONS = ['微软雅黑', '黑体', '宋体', '等线', 'Arial'];
+const POSITION_OPTIONS = [
+    { label: '左上', value: 'tl' }, { label: '上中', value: 'tc' }, { label: '右上', value: 'tr' },
+    { label: '左中', value: 'cl' }, { label: '居中', value: 'c' }, { label: '右中', value: 'cr' },
+    { label: '左下', value: 'bl' }, { label: '下中', value: 'bc' }, { label: '右下', value: 'br' },
+];
 
-    useEffect(() => {
-        setColorInput(color.toUpperCase());
-    }, [color]);
-
-    useEffect(() => {
-        if (!isColorPickerOpen) return;
-        const handleClickOutside = (event: MouseEvent) => {
-            if (!(event.target instanceof Node)) return;
-            if (colorPickerRef.current?.contains(event.target)) return;
-            if (colorPopoverRef.current?.contains(event.target)) return;
-            setIsColorPickerOpen(false);
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isColorPickerOpen]);
-
-    useEffect(() => {
-        if (!isColorPickerOpen || !colorButtonRef.current) return;
-        const rect = colorButtonRef.current.getBoundingClientRect();
-        const popoverWidth = 192;
-        const left = Math.min(Math.max(8, rect.left), window.innerWidth - popoverWidth - 8);
-        const top = rect.bottom + 8;
-        setColorPickerStyle({ top, left });
-    }, [isColorPickerOpen]);
-
-    const presetColors = ['#FFFFFF', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#5AC8FA', '#5856D6', '#AF52DE', '#FF2D55', '#8E8E93'];
-    const normalizeHex = (value: string) => {
-        const trimmed = value.trim();
-        if (!trimmed) return '';
-        return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-    };
-    const isValidHex = (value: string) => /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(value);
-    const applyHex = (value: string) => {
-        const normalized = normalizeHex(value).toUpperCase();
-        if (isValidHex(normalized)) {
-            setColor(normalized);
-            return normalized;
-        }
-        return '';
-    };
-
-    const handleSelectImage = async () => {
-        try {
-            if (window.runtime?.OpenFileDialog) {
-                const res = await window.runtime.OpenFileDialog({
-                    title: '选择水印图片',
-                    canChooseFiles: true,
-                    canChooseDirectories: false,
-                    allowsMultipleSelection: false,
-                    filters: [{
-                        DisplayName: "Images",
-                        Pattern: "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.bmp;*.tiff;*.tif"
-                    }]
-                } as any);
-                const picked = Array.isArray(res) ? res[0] : res;
-                if (typeof picked === 'string' && picked) {
-                    setImagePath(picked);
-                }
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    };
-    const imageLabel = imagePath ? imagePath.replace(/\\/g, '/').split('/').pop() || imagePath : '点击上传水印图';
-    const tileGapValue = Math.max(0, Math.round((margin.x + margin.y) / 2));
+export const WatermarkSettings = memo(({ style, patch }: WatermarkSettingsProps) => {
+    const payload = useMemo(() => ({ ...style }), [style]);
+    const apply = useCallback((data: Record<string, unknown>) => {
+        patch(data as Partial<WatermarkStyle>);
+    }, [patch]);
 
     return (
-        <div className="space-y-4 min-w-0">
-            <div className="flex items-center justify-between gap-3 mb-4 rounded-2xl border border-gray-200/80 dark:border-white/10 bg-gray-50/80 dark:bg-white/[0.03] px-3 py-2.5">
-                <div>
-                    <div className="text-sm font-medium text-gray-700 dark:text-gray-200">常用水印设置</div>
-                </div>
-                <button
-                    type="button"
-                    onClick={() => setAdvancedOpen((previous) => !previous)}
-                    className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-white/10 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:border-[#007AFF]/40 hover:text-[#007AFF] transition-colors"
-                >
-                    高级设置
-                    <Icon name="ChevronDown" size={14} className={`transition-transform ${advancedOpen ? 'rotate-0' : '-rotate-90'}`} />
-                </button>
-            </div>
-            <div className="space-y-4">
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印来源</label>
-                        <SegmentedControl options={['文字', '图片']} value={type} onChange={setType} />
-                    </div>
+        <div className="space-y-6">
+            <PresetBar scope="watermark" buildPayload={() => payload} applyPayload={apply} />
 
-                    {type === '文字' ? (
-                        <div className="space-y-3 animate-enter">
-                            <input type="text" value={text} onChange={e => setText(e.target.value)} placeholder="© ImageFlow Pro" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
-                            <div className="flex gap-2 items-center">
-                                 <div ref={colorPickerRef} className="relative">
-                                     <button
-                                         ref={colorButtonRef}
-                                         type="button"
-                                         onClick={() => setIsColorPickerOpen(prev => !prev)}
-                                         className="w-10 h-10 rounded-lg border-2 border-white/20 shadow-sm shrink-0 cursor-pointer bg-transparent"
-                                         style={{ backgroundColor: color }}
-                                         aria-label="文字颜色"
-                                     />
-                                     {isColorPickerOpen && colorPickerStyle && createPortal(
-                                         <div
-                                             ref={colorPopoverRef}
-                                             className="fixed z-[9999] w-48 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#2C2C2E] shadow-xl p-3 animate-enter"
-                                             style={colorPickerStyle}
-                                         >
-                                             <div className="grid grid-cols-6 gap-1.5">
-                                                 {presetColors.map((hex) => (
-                                                     <button
-                                                         key={hex}
-                                                         type="button"
-                                                         onClick={() => {
-                                                             setColor(hex);
-                                                             setColorInput(hex);
-                                                             setIsColorPickerOpen(false);
-                                                         }}
-                                                         className={`w-6 h-6 rounded-full border transition-all ${color.toUpperCase() === hex ? 'border-[#007AFF] ring-2 ring-[#007AFF]/30' : 'border-gray-200 dark:border-white/10 hover:scale-105'}`}
-                                                         style={{ backgroundColor: hex }}
-                                                         aria-label={`选择颜色 ${hex}`}
-                                                     />
-                                                 ))}
-                                             </div>
-                                             <div className="mt-3 flex items-center gap-2">
-                                                 <div
-                                                     className="w-7 h-7 rounded-md border border-gray-200 dark:border-white/10"
-                                                     style={{ backgroundColor: color }}
-                                                 />
-                                                 <input
-                                                     type="text"
-                                                     value={colorInput}
-                                                     onChange={(e) => {
-                                                         const next = e.target.value;
-                                                         setColorInput(next);
-                                                         applyHex(next);
-                                                     }}
-                                                     onBlur={() => {
-                                                         const applied = applyHex(colorInput);
-                                                         if (!applied) setColorInput(color);
-                                                     }}
-                                                     placeholder="#FFFFFF"
-                                                    className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
-                                                 />
-                                             </div>
-                                         </div>,
-                                         document.body
-                                     )}
-                                  </div>
-                                  <div className="flex-1">
-                                      <CustomSelect 
-                                         label="字体"
-                                         options={fontOptions} 
-                                         value={font} 
-                                         onChange={setFont} 
-                                      />
-                                  </div>
-                             </div>
-                            {advancedOpen && <div className="space-y-1.5">
-                                <Switch label="启用系统字体 (Windows)" checked={useSystemFonts} onChange={setUseSystemFonts} />
-                                {useSystemFonts && (
-                                    <div className="text-xs text-gray-500">
-                                        {isSystemFontsLoading
-                                            ? '正在读取系统字体...'
-                                            : systemFontsCount > 0
-                                                ? `已读取 ${systemFontsCount} 个字体文件`
-                                                : '未检测到系统字体或读取失败'}
-                                    </div>
-                                )}
-                            </div>}
-                         </div>
-                     ) : (
-                         <button
-                             type="button"
-                             onClick={handleSelectImage}
-                             className="w-full h-28 rounded-xl bg-gray-50 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10 transition-colors animate-enter"
-                         >
-                             <Icon name="Upload" size={20} className="mb-2 opacity-50" />
-                             <span className="text-xs text-gray-500">{imageLabel}</span>
-                        </button>
-                    )}
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">水印内容</label>
+                <textarea
+                    value={style.text}
+                    onChange={(e) => patch({ text: e.target.value })}
+                    rows={2}
+                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none dark:text-white focus:border-[#007AFF] transition-colors resize-none"
+                />
+            </div>
+
+            <CustomSelect
+                label="字体"
+                options={FONT_OPTIONS}
+                value={style.fontName}
+                onChange={(v) => patch({ fontName: v })}
+            />
+
+            <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">尺寸方式</label>
+                <SegmentedControl
+                    options={['按像素', '按宽度%']}
+                    value={style.sizeMode === 'px' ? '按像素' : '按宽度%'}
+                    onChange={(label) => patch({ sizeMode: label === '按像素' ? 'px' : 'percent' })}
+                />
+                <StyledSlider
+                    label={style.sizeMode === 'px' ? '字号' : '字号（占宽）'}
+                    value={style.fontSize}
+                    min={style.sizeMode === 'px' ? 8 : 1}
+                    max={style.sizeMode === 'px' ? 400 : 30}
+                    unit={style.sizeMode === 'px' ? 'px' : '%'}
+                    onChange={(v) => patch({ fontSize: v })}
+                />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+                <ColorField
+                    label="颜色"
+                    value={style.color}
+                    onChange={(hex) => patch({ color: hex })}
+                />
+                <StyledSlider
+                    label="不透明度"
+                    value={style.opacity}
+                    min={5}
+                    max={100}
+                    unit="%"
+                    onChange={(v) => patch({ opacity: v })}
+                />
+            </div>
+
+            <StyledSlider
+                label="旋转角度"
+                value={style.rotation}
+                min={-180}
+                max={180}
+                unit="°"
+                onChange={(v) => patch({ rotation: v })}
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+                <CustomSelect
+                    label="位置"
+                    options={POSITION_OPTIONS.map((p) => p.label)}
+                    value={POSITION_OPTIONS.find((p) => p.value === style.position)?.label ?? '右下'}
+                    onChange={(label) => {
+                        const found = POSITION_OPTIONS.find((p) => p.label === label);
+                        if (found) patch({ position: found.value });
+                    }}
+                />
+                <StyledSlider
+                    label="边距"
+                    value={style.margin}
+                    min={0}
+                    max={400}
+                    unit="px"
+                    onChange={(v) => patch({ margin: v })}
+                />
+            </div>
+
+            <Switch
+                checked={style.tiled}
+                onChange={(checked) => patch({ tiled: checked })}
+                label="平铺整个画面"
+            />
+            {style.tiled && (
+                <div className="grid grid-cols-2 gap-3">
+                    <StyledSlider label="横向间距" value={style.tileGapX} min={10} max={600} unit="px" onChange={(v) => patch({ tileGapX: v })} />
+                    <StyledSlider label="纵向间距" value={style.tileGapY} min={10} max={600} unit="px" onChange={(v) => patch({ tileGapY: v })} />
                 </div>
-                <div className="imageflow-watermark-grid grid gap-4">
-                    <StyledSlider label="不透明度" value={opacity} onChange={setOpacity} unit="%" />
-                    <StyledSlider label="尺寸缩放" value={size} onChange={setSize} unit="%" />
-                    {advancedOpen && <StyledSlider label="旋转角度" value={rotate} min={-180} max={180} onChange={setRotate} unit="°" />}
-                </div>
-                <div className="flex flex-col gap-4 min-w-0 sm:col-span-2">
-                    <div className="space-y-2 w-full">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">锚点位置</label>
-                        <div className="flex justify-center">
-                            <PositionGrid value={position} onChange={setPosition} />
-                        </div>
-                    </div>
-                    {advancedOpen && <CustomSelect label="混合模式" options={['正常', '正片叠底 (Multiply)', '滤色 (Screen)', '叠加 (Overlay)', '柔光 (Soft Light)']} value={blendMode} onChange={setBlendMode} />}
-                </div>
-                {advancedOpen && <div className="imageflow-watermark-grid grid gap-4 min-w-0 animate-enter">
-                    <div className="space-y-2 w-full">
-                        {tiled ? (
-                            <>
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">平铺间距</label>
-                                <StyledSlider
-                                    value={tileGapValue}
-                                    min={0}
-                                    max={240}
-                                    unit="px"
-                                    onChange={(val) => setMargin({ x: val, y: val })}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider block text-left">边距偏移</label>
-                                <div className="grid grid-cols-1 gap-2 justify-items-center">
-                                    <div className="relative w-24">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">X</span>
-                                        <input 
-                                            type="number" 
-                                            value={margin.x} 
-                                            onChange={e => setMargin({...margin, x: Number(e.target.value)})} 
-                                            className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                        />
-                                    </div>
-                                    <div className="relative w-24">
-                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">Y</span>
-                                        <input 
-                                            type="number" 
-                                            value={margin.y} 
-                                            onChange={e => setMargin({...margin, y: Number(e.target.value)})} 
-                                            className="w-full pl-6 pr-2 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm outline-none focus:border-[#007AFF] transition-colors dark:text-white text-right" 
-                                        />
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    <Switch label="添加投影 (Shadow)" checked={shadow} onChange={setShadow} />
-                    <Switch label="全屏水印 (平铺)" checked={tiled} onChange={setTiled} />
-                </div>}
+            )}
+
+            <div className="rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200/80 dark:border-white/10 p-4 space-y-4">
+                <StyledSlider
+                    label="描边宽度"
+                    value={style.strokeWidth}
+                    min={0}
+                    max={10}
+                    onChange={(v) => patch({ strokeWidth: v })}
+                />
+                <ColorField
+                    label="描边色"
+                    value={style.strokeColor}
+                    onChange={(hex) => patch({ strokeColor: hex })}
+                />
+                <Switch
+                    checked={style.shadow}
+                    onChange={(checked) => patch({ shadow: checked })}
+                    label="投影"
+                />
             </div>
         </div>
     );

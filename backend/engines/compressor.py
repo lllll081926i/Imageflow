@@ -53,6 +53,10 @@ except ImportError:
     HAS_OXIPNG = False
     logging.warning("pyoxipng not available, using Pillow only")
 
+from backend.engines._image_formats import ensure_heif_supported
+
+ensure_heif_supported()
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,8 @@ COMPRESSIBLE_EXTENSIONS = {
     ".tif",
     ".tiff",
     ".avif",
+    ".heic",
+    ".heif",
     ".ico",
 }
 UNSUPPORTED_COMPRESSION_EXTENSIONS = {".svg", ".gif", ".apng"}
@@ -213,8 +219,17 @@ class CompressionLevel:
     EXTREME = 5  # 40% quality
 
     @classmethod
-    def get_quality(cls, level):
-        """Get quality percentage for a given level."""
+    def get_quality(cls, level, quality_override=None):
+        """Get quality percentage for a given level.
+
+        quality_override (1-100) bypasses the level map so the frontend can
+        offer a free-form "自定义质量" slider for JPEG/WEBP.
+        """
+        if quality_override is not None:
+            try:
+                return max(1, min(100, int(quality_override)))
+            except (TypeError, ValueError):
+                pass
         quality_map = {
             cls.SMART: 75,
             cls.LOSSLESS: 100,
@@ -369,6 +384,7 @@ class ImageCompressor:
         resize_width=0,
         resize_height=0,
         maintain_aspect=True,
+        quality_override=None,
     ):
         """
         Compress an image.
@@ -377,6 +393,7 @@ class ImageCompressor:
             input_path (str): Path to the input image
             output_path (str): Path to save the compressed image
             level (int): Compression level (1-5)
+            quality_override (int|None): 1-100 free-form quality for JPEG/WEBP
 
         Returns:
             dict: Compression result with success status and metadata
@@ -384,6 +401,7 @@ class ImageCompressor:
         tmp_output_path = None
         img = None
         try:
+            self._quality_override = quality_override
             strip_metadata = bool(strip_metadata)
             # Validate compression level
             if not CompressionLevel.validate(level):
@@ -588,7 +606,7 @@ class ImageCompressor:
         """Compress JPEG using MoZJPEG or Pillow."""
         logger.info(f"Compressing JPEG (level: {level})")
 
-        quality = CompressionLevel.get_quality(level)
+        quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
 
         use_mozjpeg = self.mozjpeg_available and engine in ("", "auto", "mozjpeg")
         force_pillow = engine in ("pillow",)
@@ -731,7 +749,7 @@ class ImageCompressor:
         use_pngquant = self.imagequant_available and engine in ("", "auto", "pngquant", "imagequant")
         force_pillow = engine in ("pillow",)
 
-        quality = CompressionLevel.get_quality(level)
+        quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
 
         def oxipng_level_for(lvl):
             if lvl <= CompressionLevel.LIGHT:
@@ -758,11 +776,16 @@ class ImageCompressor:
         def save_lossy(min_q, max_q, colors_hint=256):
             if use_pngquant and not force_pillow:
                 try:
-                    if img.mode in ("RGBA", "LA"):
+                    if img.mode in ("RGBA", "LA", "RGB"):
+                        converted_img = None
                         quantized_img = None
                         try:
+                            source = img
+                            if img.mode == "RGB":
+                                converted_img = img.convert("RGBA")
+                                source = converted_img
                             quantized_img = imagequant.quantize_pil_image(
-                                img,
+                                source,
                                 min_quality=min_q,
                                 max_quality=max_q,
                                 max_colors=256,
@@ -784,37 +807,8 @@ class ImageCompressor:
                         finally:
                             if quantized_img is not None:
                                 quantized_img.close()
-                        return
-                    if img.mode == "RGB":
-                        rgba_img = None
-                        quantized_img = None
-                        try:
-                            rgba_img = img.convert("RGBA")
-                            quantized_img = imagequant.quantize_pil_image(
-                                rgba_img,
-                                min_quality=min_q,
-                                max_quality=max_q,
-                                max_colors=256,
-                                dithering_level=1.0,
-                            )
-                            save_kwargs = {"format": "PNG"}
-                            quantized_img.save(output_path, **save_kwargs)
-                            if use_oxipng and not force_pillow:
-                                try:
-                                    strip_mode = oxipng.StripChunks.safe()
-                                    oxipng.optimize(
-                                        output_path,
-                                        output_path,
-                                        level=oxipng_level_for(level),
-                                        strip=strip_mode,
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"OxiPNG optimization failed: {e}")
-                        finally:
-                            if quantized_img is not None:
-                                quantized_img.close()
-                            if rgba_img is not None:
-                                rgba_img.close()
+                            if converted_img is not None:
+                                converted_img.close()
                         return
                     if img.mode == "P":
                         save_kwargs = {"format": "PNG", "optimize": True}
@@ -944,7 +938,7 @@ class ImageCompressor:
         """Compress WEBP using Pillow with quality control."""
         logger.info(f"Compressing WEBP (level: {level})")
 
-        quality = CompressionLevel.get_quality(level)
+        quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
 
         def save_once(q):
             if level == CompressionLevel.LOSSLESS:
@@ -1016,7 +1010,7 @@ class ImageCompressor:
         """Fallback compression for unsupported formats."""
         logger.warning(f"Unsupported format, using fallback compression")
 
-        quality = CompressionLevel.get_quality(level)
+        quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
 
         # Try to save with optimization
         try:
@@ -1084,6 +1078,7 @@ def process(input_data):
             resize_width=resize_width,
             resize_height=resize_height,
             maintain_aspect=maintain_aspect,
+            quality_override=input_data.get('quality_override'),
         )
 
         return result

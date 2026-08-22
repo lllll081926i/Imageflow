@@ -5,6 +5,7 @@ const GIF_ERROR_MESSAGES: Record<string, string> = {
     GIF_UNSUPPORTED_IMAGE: '输入文件不是可处理的 GIF',
     GIF_EXPORT_UNSUPPORTED_FORMAT: '导出格式不支持',
     GIF_EXPORT_EMPTY_SELECTION: '没有可导出的帧',
+    GIF_OUTPUT_FORMAT_INVALID: '输出格式不支持，请选择 GIF/APNG/WEBP',
     GIF_SPEED_CHANGE_FAILED: 'GIF 帧率修改失败',
     GIF_REVERSE_FAILED: 'GIF 倒放失败',
     GIF_COMPRESS_FAILED: 'GIF 压缩失败',

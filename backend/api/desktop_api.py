@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import io
+import os
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
@@ -13,11 +17,6 @@ def expand_input_paths(paths: list[str]) -> dict:
 
     return expand_paths(paths)
 
-
-def list_system_fonts() -> list[str]:
-    from backend.domain.paths import list_system_fonts as load_fonts
-
-    return load_fonts()
 
 
 def normalize_optional_user_supplied_path(value: str) -> str:
@@ -154,7 +153,7 @@ def _normalize_payload_paths(payload: Any) -> Any:
         return payload
 
     normalized = dict(payload)
-    for field in ("input_path", "output_path", "output_dir", "watermark_path", "image_path"):
+    for field in ("input_path", "output_path", "output_dir", "image_path"):
         if field in normalized:
             normalized[field] = normalize_optional_user_supplied_path(str(normalized.get(field) or ""))
     for field in ("input_paths", "image_paths"):
@@ -232,7 +231,7 @@ def _probe_animated_path(input_path: str) -> dict[str, Any]:
 
 
 _probe_cache_lock = Lock()
-_probe_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
+_probe_cache: OrderedDict[tuple[str, int, int], dict[str, Any]] = OrderedDict()
 _PROBE_CACHE_MAX = 256
 
 
@@ -250,15 +249,150 @@ def _probe_animated_path_cached(input_path: str) -> dict[str, Any]:
         with _probe_cache_lock:
             cached = _probe_cache.get(key)
             if cached is not None:
+                _probe_cache.move_to_end(key)
                 return dict(cached)
     result = _probe_animated_path(input_path)
     if key is not None and not result.get("error"):
         with _probe_cache_lock:
             _probe_cache[key] = dict(result)
+            _probe_cache.move_to_end(key)
             if len(_probe_cache) > _PROBE_CACHE_MAX:
-                # Drop an arbitrary old entry (FIFO-ish via iterator order).
-                _probe_cache.pop(next(iter(_probe_cache)), None)
+                _probe_cache.popitem(last=False)
     return result
+
+
+_THUMBNAIL_CACHE_LOCK = Lock()
+_THUMBNAIL_CACHE: OrderedDict[tuple[str, int, int, int], dict[str, Any]] = OrderedDict()
+_THUMBNAIL_CACHE_MAX = 256
+_THUMBNAIL_SOURCE_SUFFIXES = {
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp",
+    ".avif", ".heic", ".heif", ".ico", ".tiff", ".tif",
+}
+_HEIF_MAIN_REGISTERED = False
+_DISK_CACHE_WRITE_COUNTER = {"n": 0}
+_DISK_CACHE_KEEP_FILES = 800
+_DISK_CACHE_PRUNE_EVERY = 128
+
+
+def _thumbnail_disk_dir() -> Path | None:
+    base = os.getenv("APPDATA") or str(Path.home() / ".config")
+    directory = Path(base) / "imageflow" / "thumb_cache"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+    except OSError:
+        return None
+
+
+def _prune_thumbnail_disk_cache(directory: Path) -> None:
+    try:
+        entries = [entry for entry in directory.iterdir() if entry.is_file()]
+        if len(entries) <= _DISK_CACHE_KEEP_FILES:
+            return
+        entries.sort(key=lambda entry: entry.stat().st_mtime)
+        for stale in entries[: len(entries) - _DISK_CACHE_KEEP_FILES]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _ensure_main_process_heif() -> None:
+    global _HEIF_MAIN_REGISTERED
+    if _HEIF_MAIN_REGISTERED:
+        return
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+    _HEIF_MAIN_REGISTERED = True
+
+
+def _thumbnail_cache_key(path: str, max_edge: int) -> tuple[str, int, int, int] | None:
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return None
+    mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000)))
+    return (path, mtime_ns, int(st.st_size), max_edge)
+
+
+def _render_thumbnail_bytes(path: str, suffix: str, max_edge: int) -> tuple[bytes, str, int, int]:
+    from PIL import Image
+
+    if suffix == ".svg":
+        import resvg_py
+
+        png_bytes = resvg_py.svg_to_bytes(svg_path=path, width=max_edge)
+        img = Image.open(io.BytesIO(bytes(png_bytes)))
+    else:
+        _ensure_main_process_heif()
+        img = Image.open(path)
+
+    with img:
+        img.load()
+        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        img.thumbnail((max_edge, max_edge))
+        encode = img
+        if has_alpha and img.mode != "RGBA":
+            encode = img.convert("RGBA")
+        elif not has_alpha and img.mode not in ("RGB", "L"):
+            encode = img.convert("RGB")
+        fmt = "PNG" if has_alpha else "JPEG"
+        mime = "image/png" if has_alpha else "image/jpeg"
+        buffer = io.BytesIO()
+        encode.save(buffer, format=fmt, quality=80)
+        return buffer.getvalue(), mime, encode.width, encode.height
+
+
+def _load_or_render_thumbnail(key: tuple[str, int, int, int], suffix: str) -> dict[str, Any]:
+    path, mtime_ns, size, max_edge = key
+    import hashlib
+
+    digest = hashlib.md5(f"{path}|{mtime_ns}|{size}|{max_edge}".encode("utf-8")).hexdigest()
+
+    directory = _thumbnail_disk_dir()
+    disk_file: Path | None = None
+    if directory is not None:
+        disk_file = directory / f"{digest}.bin"
+
+    if disk_file is not None and disk_file.is_file():
+        try:
+            raw = disk_file.read_bytes()
+            if raw.startswith(b"\x89PNG"):
+                mime = "image/png"
+            elif raw.startswith(b"\xff\xd8"):
+                mime = "image/jpeg"
+            else:
+                raise ValueError("unknown thumbnail blob")
+            with _THUMBNAIL_CACHE_LOCK:
+                _DISK_CACHE_WRITE_COUNTER["n"] += 1  # touch counter so pruning stays active
+            data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+            # Dimensions are unknown without decoding; the browser scales anyway.
+            return {"data_url": data_url, "width": 0, "height": 0}
+        except Exception:
+            try:
+                disk_file.unlink()
+            except OSError:
+                pass
+
+    raw, mime, width, height = _render_thumbnail_bytes(path, suffix, max_edge)
+
+    if disk_file is not None:
+        try:
+            disk_file.write_bytes(raw)
+            _DISK_CACHE_WRITE_COUNTER["n"] += 1
+            if _DISK_CACHE_WRITE_COUNTER["n"] % _DISK_CACHE_PRUNE_EVERY == 0 and directory is not None:
+                _prune_thumbnail_disk_cache(directory)
+        except OSError:
+            pass
+
+    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return {"data_url": data_url, "width": width, "height": height}
 
 
 class DesktopAPI:
@@ -397,6 +531,15 @@ class DesktopAPI:
         try:
             base = normalize_user_supplied_path(str(payload.get("base_path") or ""))
             reserved = [str(item) for item in payload.get("reserved") or []]
+            strategy = str(payload.get("strategy") or "rename").strip().lower()
+            if strategy == "overwrite":
+                return {"success": True, "output_path": base, "exists": os.path.exists(base)}
+            if strategy == "skip":
+                return {
+                    "success": True,
+                    "output_path": base,
+                    "exists": os.path.exists(base),
+                }
             output_path = resolve_output_path(base, reserved)
             return {"success": True, "output_path": output_path}
         except Exception as exc:
@@ -408,29 +551,26 @@ class DesktopAPI:
             items = payload.get("items") if isinstance(payload, dict) else None
             if not isinstance(items, list):
                 return {"success": False, "error": "Missing items list", "paths": []}
+            strategy = str(payload.get("strategy") or "rename").strip().lower()
             reserved = [str(item) for item in (payload.get("reserved") or []) if str(item).strip()]
             resolved: list[str] = []
+            exists_flags: list[bool] | None = [] if strategy in ("overwrite", "skip") else None
             for raw in items:
                 base = normalize_user_supplied_path(str(raw or ""))
-                output_path = resolve_output_path(base, reserved)
+                if strategy in ("overwrite", "skip"):
+                    output_path = base
+                else:
+                    output_path = resolve_output_path(base, reserved)
+                    reserved.append(output_path)
                 resolved.append(output_path)
-                reserved.append(output_path)
-            return {"success": True, "paths": resolved}
+                if exists_flags is not None:
+                    exists_flags.append(os.path.exists(output_path))
+            result = {"success": True, "paths": resolved}
+            if exists_flags is not None:
+                result["exists"] = exists_flags
+            return result
         except Exception as exc:
             return {"success": False, "error": str(exc), "paths": []}
-
-    def list_system_fonts(self) -> list[str]:
-        return list_system_fonts()
-
-    def get_image_preview(self, payload: dict) -> dict:
-        from backend.application.preview import build_image_preview_smart
-
-        normalized = _normalize_payload_paths(payload)
-        input_path = normalized.get("input_path")
-        if not input_path:
-            return {"success": False, "error": "Missing input_path in payload"}
-        return build_image_preview_smart(str(input_path))
-
 
     def convert(self, payload: dict) -> dict:
         return self._run_engine_operation("converter", payload)
@@ -450,36 +590,64 @@ class DesktopAPI:
     def split_gif(self, payload: dict) -> dict:
         return self._run_engine_operation("gif_splitter", payload)
 
-    def probe_animated_paths(self, paths: list[str]) -> list[dict]:
-        normalized_paths = [str(path) for path in paths if str(path).strip()]
-        return [_probe_animated_path_cached(path) for path in normalized_paths]
+    def cut_image_grid(self, payload: dict) -> dict:
+        return self._run_engine_operation("grid_cutter", payload)
 
-    def generate_subtitle_long_image(self, payload: dict) -> dict:
-        return self._run_engine_operation("subtitle_stitcher", payload)
+    def split_image(self, payload: dict) -> dict:
+        return self._run_engine_operation("image_splitter", payload)
 
     def add_watermark(self, payload: dict) -> dict:
         return self._run_engine_operation("watermark", payload)
 
-    def add_watermark_batch(self, payloads: list[dict]) -> list[dict]:
-        return self._run_engine_batch("watermark", payloads)
+    def resize_image(self, payload: dict) -> dict:
+        return self._run_engine_operation("resizer", payload)
 
-    def adjust(self, payload: dict) -> dict:
-        return self._run_engine_operation("image_processor", payload)
+    def palette_tool(self, payload: dict) -> dict:
+        return self._run_engine_operation("palette", payload)
 
-    def adjust_batch(self, payloads: list[dict]) -> list[dict]:
-        return self._run_engine_batch("image_processor", payloads)
+    def stitch_images(self, payload: dict) -> dict:
+        return self._run_engine_operation("stitcher", payload)
 
-    def apply_filter(self, payload: dict) -> dict:
-        return self._run_engine_operation("image_processor", payload)
+    def render_rich_text(self, payload: dict) -> dict:
+        return self._run_engine_operation("richtext", payload)
 
-    def apply_filter_batch(self, payloads: list[dict]) -> list[dict]:
-        return self._run_engine_batch("image_processor", payloads)
+    def probe_animated_paths(self, paths: list[str]) -> list[dict]:
+        normalized_paths = [str(path) for path in paths if str(path).strip()]
+        return [_probe_animated_path_cached(path) for path in normalized_paths]
 
-    def process_image(self, payload: dict) -> dict:
-        return self._run_engine_operation("image_processor", payload)
+    def get_thumbnail(self, payload: dict) -> dict:
+        try:
+            data = payload if isinstance(payload, dict) else {}
+            path = normalize_user_supplied_path(str(data.get("path") or ""))
+            try:
+                max_edge = int(data.get("max_edge") or 160)
+            except (TypeError, ValueError):
+                max_edge = 160
+            max_edge = max(32, min(1536, max_edge))
+            suffix = Path(path).suffix.lower()
+            if suffix != ".svg" and suffix not in _THUMBNAIL_SOURCE_SUFFIXES:
+                return {"success": False, "error": "[UNSUPPORTED_FORMAT] unsupported thumbnail format"}
 
-    def process_image_batch(self, payloads: list[dict]) -> list[dict]:
-        return self._run_engine_batch("image_processor", payloads)
+            key = _thumbnail_cache_key(path, max_edge)
+            if key is not None:
+                with _THUMBNAIL_CACHE_LOCK:
+                    cached = _THUMBNAIL_CACHE.get(key)
+                    if cached is not None:
+                        _THUMBNAIL_CACHE.move_to_end(key)
+                        return {"success": True, **cached}
+
+            value = _load_or_render_thumbnail(key or ("", 0, 0, max_edge), suffix)
+            if key is not None and value.get("width"):
+                with _THUMBNAIL_CACHE_LOCK:
+                    _THUMBNAIL_CACHE[key] = value
+                    _THUMBNAIL_CACHE.move_to_end(key)
+                    if len(_THUMBNAIL_CACHE) > _THUMBNAIL_CACHE_MAX:
+                        _THUMBNAIL_CACHE.popitem(last=False)
+            return {"success": True, **value}
+        except FileNotFoundError:
+            return {"success": False, "error": "[NOT_FOUND] file not found"}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
 
 
     def get_app_version(self) -> dict:
@@ -513,7 +681,56 @@ class DesktopAPI:
         return open_directory_dialog(options or {})
 
     def runtime_quit(self) -> None:
-        runtime_quit()
+        from backend.infrastructure.tray import stop_tray
+
+        stop_tray()
+        import webview
+
+        for window in list(webview.windows):
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+    def close_request(self) -> dict:
+        """Close button behavior: hide to tray when background_running is on."""
+        background = False
+        try:
+            from backend.infrastructure.settings_store import load_settings
+
+            settings = load_settings()
+            background = bool(getattr(settings, "background_running", False))
+        except Exception:
+            background = False
+
+        if not background:
+            self.runtime_quit()
+            return {"success": True, "hidden": False}
+
+        try:
+            import webview
+
+            from backend.infrastructure.tray import ensure_tray
+
+            def _show() -> None:
+                if webview.windows:
+                    target = webview.windows[0]
+                    try:
+                        target.restore()
+                    except Exception:
+                        pass
+                    target.show()
+
+            def _quit() -> None:
+                self.runtime_quit()
+
+            ensure_tray(_show, _quit)
+            if webview.windows:
+                webview.windows[0].hide()
+            return {"success": True, "hidden": True}
+        except Exception:
+            self.runtime_quit()
+            return {"success": True, "hidden": False}
 
     def runtime_window_minimise(self) -> None:
         runtime_window_minimise()
@@ -557,28 +774,26 @@ _PASCAL_ALIASES = {
     "ExpandDroppedPaths": "expand_dropped_paths",
     "ResolveOutputPath": "resolve_output_path",
     "ResolveOutputPaths": "resolve_output_paths",
-    "ListSystemFonts": "list_system_fonts",
-    "GetImagePreview": "get_image_preview",
     "Convert": "convert",
     "ConvertBatch": "convert_batch",
     "Compress": "compress",
     "CompressBatch": "compress_batch",
     "GeneratePDF": "generate_pdf",
     "SplitGIF": "split_gif",
-    "ProbeAnimatedPaths": "probe_animated_paths",
-    "GenerateSubtitleLongImage": "generate_subtitle_long_image",
+    "CutImageGrid": "cut_image_grid",
+    "SplitImage": "split_image",
     "AddWatermark": "add_watermark",
-    "AddWatermarkBatch": "add_watermark_batch",
-    "Adjust": "adjust",
-    "AdjustBatch": "adjust_batch",
-    "ApplyFilter": "apply_filter",
-    "ApplyFilterBatch": "apply_filter_batch",
-    "ProcessImage": "process_image",
-    "ProcessImageBatch": "process_image_batch",
+    "ResizeImage": "resize_image",
+    "PaletteTool": "palette_tool",
+    "StitchImages": "stitch_images",
+    "RenderRichText": "render_rich_text",
+    "ProbeAnimatedPaths": "probe_animated_paths",
+    "GetThumbnail": "get_thumbnail",
     "CancelProcessing": "cancel_processing",
     "OpenFileDialog": "open_file_dialog",
     "OpenDirectoryDialog": "open_directory_dialog",
     "Quit": "runtime_quit",
+    "CloseRequest": "close_request",
     "WindowMinimise": "runtime_window_minimise",
     "WindowToggleMaximise": "runtime_window_toggle_maximise",
     "ResolveFilePaths": "resolve_file_paths",

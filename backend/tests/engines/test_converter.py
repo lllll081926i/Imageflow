@@ -46,6 +46,37 @@ class SVGConversionTests(unittest.TestCase):
         with Image.open(output_path) as img:
             self.assertEqual(img.size, (64, 64))
 
+    def test_svg_gradient_fill_is_rendered(self):
+        svg_path = self._path("gradient.svg")
+        with open(svg_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
+                '<defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%">'
+                '<stop offset="0%" stop-color="#000000"/>'
+                '<stop offset="100%" stop-color="#FFFFFF"/>'
+                "</linearGradient></defs>"
+                '<rect x="10" y="10" width="80" height="80" fill="url(#g)"/>'
+                "</svg>"
+            )
+        output_path = self._path("gradient.png")
+
+        result = convert_process(
+            {
+                "input_path": svg_path,
+                "output_path": output_path,
+                "format": "png",
+            }
+        )
+
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path).convert("RGBA") as img:
+            left = img.getpixel((15, 50))
+            right = img.getpixel((85, 50))
+            outside = img.getpixel((2, 2))
+            self.assertLess(sum(left[:3]), 100)
+            self.assertGreater(sum(right[:3]), 600)
+            self.assertEqual(outside[3], 0)
+
     def test_svg_resize_modes_long_edge_and_fixed_are_applied(self):
         svg_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "testdata", "simple.svg")
@@ -81,6 +112,32 @@ class SVGConversionTests(unittest.TestCase):
         self.assertTrue(fixed_result.get("success"))
         with Image.open(fixed_output) as img:
             self.assertEqual(img.size, (320, 320))
+
+    def test_heic_input_converts_to_png(self):
+        try:
+            import pillow_heif
+        except ImportError:
+            self.skipTest("pillow-heif not available")
+
+        heic_path = self._path("input.heic")
+        source = Image.new("RGB", (48, 32), (200, 60, 60))
+        source.save(heic_path, format="HEIF")
+
+        output_path = self._path("out.png")
+        result = convert_process(
+            {
+                "input_path": heic_path,
+                "output_path": output_path,
+                "format": "png",
+            }
+        )
+
+        self.assertTrue(result.get("success"))
+        with Image.open(output_path) as img:
+            self.assertEqual(img.size, (48, 32))
+            pixel = img.convert("RGB").getpixel((24, 16))
+            for got, want in zip(pixel, (200, 60, 60)):
+                self.assertLessEqual(abs(got - want), 2)
 
     def test_svg_with_doctype_is_rejected(self):
         svg_path = self._path("unsafe.svg")

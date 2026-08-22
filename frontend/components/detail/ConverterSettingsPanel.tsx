@@ -97,12 +97,12 @@ export const ConverterSettings = memo(({
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">包含尺寸</label>
                         <div className="flex flex-wrap gap-2 pt-1">
                             {[16, 32, 48, 64, 128, 256].map(s => (
-                                <button 
+                                <button
                                     key={s}
                                     onClick={() => toggleIcoSize(s)}
-                                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
-                                        icoSizes.includes(s) 
-                                        ? 'bg-[#007AFF] border-[#007AFF] text-white' 
+                                    className={`spring-tap-sm px-2 py-1 text-xs rounded-md border transition-all duration-200 ${
+                                        icoSizes.includes(s)
+                                        ? 'bg-[#007AFF] border-[#007AFF] text-white'
                                         : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:border-[#007AFF]/50'
                                     }`}
                                 >

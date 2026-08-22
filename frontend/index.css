@@ -1,7 +1,62 @@
 @import "tailwindcss";
+@import "./styles/motion.css";
 
 /* Force dark mode to work via class strategy in Tailwind v4 */
 @variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ */
+/* Material system (macOS vibrancy).                                   */
+/* Tokens flip per theme; html.material-off degrades to solid fills.   */
+/* ------------------------------------------------------------------ */
+
+:root {
+    --if-blur: 30px;
+    --if-saturate: 160%;
+    --if-panel-fill: rgba(255, 255, 255, 0.42);
+    --if-overlay-fill: rgba(255, 255, 255, 0.82);
+    --if-shell-gradient: linear-gradient(135deg, #e8eef6 0%, #f5f5f7 45%, #e9edf5 100%);
+}
+
+html.dark {
+    --if-panel-fill: rgba(28, 28, 30, 0.45);
+    --if-overlay-fill: rgba(38, 38, 41, 0.86);
+    --if-shell-gradient: linear-gradient(135deg, #17171a 0%, #1e1e1e 45%, #141418 100%);
+}
+
+html.material-off {
+    --if-panel-fill: rgba(255, 255, 255, 0.95);
+    --if-overlay-fill: rgba(255, 255, 255, 0.98);
+    --if-shell-gradient: #f5f5f7;
+}
+
+html.dark.material-off {
+    --if-panel-fill: rgba(30, 30, 32, 0.96);
+    --if-overlay-fill: rgba(36, 36, 39, 0.98);
+    --if-shell-gradient: #1e1e1e;
+}
+
+.material-panel {
+    background: var(--if-panel-fill);
+    backdrop-filter: blur(var(--if-blur)) saturate(var(--if-saturate));
+    -webkit-backdrop-filter: blur(var(--if-blur)) saturate(var(--if-saturate));
+}
+
+html.material-off .material-panel,
+html.material-off .material-overlay,
+html.material-off .glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.material-overlay {
+    background: var(--if-overlay-fill);
+    backdrop-filter: blur(22px) saturate(170%);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+}
+
+html.material-off .material-overlay {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+}
 
 @layer base {
   html,
@@ -14,6 +69,23 @@
     overflow: hidden; 
     background-color: #F5F5F7; 
   }
+
+  /* Kill native number-input spinners; arrow keys still increment. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+}
+
+/* App shell backdrop: subtle macOS-desktop-like gradient the panels blur. */
+.imageflow-app-shell {
+  background: var(--if-shell-gradient);
+  transition: background var(--if-motion-slow, 520ms) ease;
 }
 
 .glass {
@@ -123,12 +195,12 @@
   overscroll-behavior: contain;
   border: 1px solid rgba(229, 231, 235, 0.9);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--if-overlay-fill);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16), 0 3px 10px rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
   transform-origin: top center;
-  animation: imageflow-select-menu-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: imageflow-select-menu-in 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .imageflow-select-menu[data-placement='top'] {
@@ -138,7 +210,6 @@
 
 .dark .imageflow-select-menu {
   border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(35, 35, 38, 0.98);
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42), 0 3px 12px rgba(0, 0, 0, 0.22);
 }
 
@@ -209,32 +280,13 @@
 
 .imageflow-feature-grid,
 .imageflow-settings-grid,
-.imageflow-subtitle-settings-grid,
-.imageflow-watermark-grid,
 .imageflow-converter-top-grid,
-.imageflow-gif-grid,
-.imageflow-adjust-grid {
+.imageflow-gif-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
 }
 
 .imageflow-feature-grid {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.imageflow-dashboard,
-.imageflow-dashboard-grid,
-.imageflow-dashboard-card {
-  min-width: 0;
-}
-
-.imageflow-dashboard {
-  width: 100%;
-}
-
-.imageflow-dashboard-grid {
-  align-content: start;
-  width: 100%;
-  grid-auto-rows: minmax(11rem, auto);
 }
 
 @media (min-width: 900px) {
@@ -247,25 +299,12 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
 }
 
-.imageflow-subtitle-settings-grid {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-}
-
-.imageflow-watermark-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-}
-
 .imageflow-converter-top-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
 }
 
 .imageflow-gif-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
-}
-
-.imageflow-adjust-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
 }
 
 .imageflow-detail-layout {
@@ -281,18 +320,6 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-.imageflow-detail-layout--watermark {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.imageflow-detail-layout--processor {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.imageflow-subtitle-layout {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .imageflow-standard-input,
 .imageflow-settings-panel,
 .imageflow-settings-scroll {
@@ -304,60 +331,14 @@
   min-height: 0;
 }
 
-.imageflow-detail-page,
-.imageflow-subtitle-page {
+.imageflow-detail-page {
   display: flex;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 100%;
   flex-direction: column;
-}
-
-.imageflow-detail-page {
   overflow: hidden;
-}
-
-.imageflow-subtitle-layout {
-  height: 100%;
-  min-height: 0;
-}
-
-.imageflow-subtitle-preview {
-  min-height: clamp(15rem, 38vh, 28rem);
-  flex: 1 1 auto;
-}
-
-.imageflow-subtitle-workspace {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.imageflow-subtitle-settings {
-  flex: 0 0 auto;
-}
-
-.imageflow-processor-workspace,
-.imageflow-processor-preview {
-  min-height: 0;
-}
-
-.imageflow-processor-dropzone {
-  min-height: 0;
-  flex: 1 1 auto;
-}
-
-.imageflow-processor-filter-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
-}
-
-.imageflow-processor-input-card {
-  min-height: 14rem;
-  flex: 0 1 clamp(14rem, 32vh, 21rem);
-}
-
-.imageflow-watermark-drop-slot {
-  height: clamp(8rem, 18vh, 11rem);
 }
 
 /* Desktop: standard tools keep the input area and settings panel side by
@@ -365,59 +346,6 @@
 @media (min-width: 900px) {
   .imageflow-detail-layout--standard {
     grid-template-columns: minmax(0, 1.45fr) minmax(26rem, 0.9fr);
-  }
-
-  .imageflow-subtitle-layout {
-    grid-template-columns: minmax(20rem, 0.72fr) minmax(0, 1.28fr);
-  }
-
-  .imageflow-subtitle-settings-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .imageflow-detail-layout--watermark {
-    grid-template-columns: minmax(0, 1.22fr) minmax(28rem, 0.9fr);
-  }
-
-  .imageflow-detail-layout--processor {
-    grid-template-columns: minmax(0, 1.22fr) minmax(28rem, 0.9fr);
-  }
-}
-
-/* Image beautification has a wider control surface, so it becomes a clean
- * vertical workspace before the other tools do. */
-@media (max-width: 1119px) {
-  .imageflow-view-frame--image_processor {
-    height: auto;
-    min-height: 100%;
-    flex: 0 0 auto;
-  }
-
-  .imageflow-detail-page--processor {
-    height: auto;
-    overflow: visible;
-  }
-
-  .imageflow-detail-layout--processor {
-    height: auto;
-    grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: max-content;
-  }
-
-  .imageflow-processor-input-card {
-    height: auto;
-    min-height: 20rem;
-    overflow: hidden;
-  }
-
-  .imageflow-processor-preview {
-    flex: 0 0 clamp(18rem, 42vh, 30rem);
-    min-height: 18rem;
-  }
-
-  .imageflow-processor-dropzone {
-    flex: 0 0 clamp(10rem, 18vh, 14rem);
-    min-height: 10rem;
   }
 }
 
@@ -435,14 +363,12 @@
     flex: 0 0 auto;
   }
 
-  .imageflow-detail-page,
-  .imageflow-subtitle-page {
+  .imageflow-detail-page {
     height: auto;
     overflow: visible;
   }
 
-  .imageflow-detail-layout,
-  .imageflow-subtitle-layout {
+  .imageflow-detail-layout {
     height: auto;
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: max-content;
@@ -462,31 +388,37 @@
     min-height: auto;
     overflow: visible;
   }
-
-  .imageflow-processor-settings,
-  .imageflow-filter-settings {
-    height: auto;
-  }
-
-  .imageflow-processor-scroll,
-  .imageflow-filter-scroll {
-    flex: none;
-    min-height: auto;
-    overflow: visible;
-  }
-
-  .imageflow-processor-input-card {
-    height: auto;
-    min-height: 20rem;
-    overflow: visible;
-  }
-
-  .imageflow-watermark-drop-slot {
-    height: 16rem;
-  }
 }
 
 @layer utilities {
+  /* macOS-style overlay scrollbars: thin, rounded, quiet until hovered. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  *:hover { scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background-color: transparent;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  *:hover::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.22); }
+  *:hover::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.34); }
+  .dark *::-webkit-scrollbar-thumb,
+  .dark *:hover::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.22); }
+  .dark *:hover::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.34); }
+
+  /* macOS focus halo for keyboard navigation only. */
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.38);
+  }
+
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -518,110 +450,7 @@
   .dark .scrollbar-dark:hover::-webkit-scrollbar-thumb {
     background-color: rgba(255, 255, 255, 0.32);
   }
-
-  .animate-enter {
-    animation: fadeIn 0.4s ease-out forwards;
-    will-change: transform, opacity;
-  }
-
-  .animate-enter-right {
-    animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    will-change: transform, opacity;
-  }
-
-  .animate-enter-left {
-    animation: slideInLeft 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    will-change: transform, opacity;
-  }
-
-  .animate-fade-scale {
-    animation: fadeScale 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-  }
-
-  .animate-page-enter-forward {
-    animation: pageEnterForward 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
-    will-change: transform, opacity;
-  }
-
-  .animate-page-enter-backward {
-    animation: pageEnterBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
-    will-change: transform, opacity;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes slideInRight {
-    from {
-      opacity: 0;
-      transform: translateX(30px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-
-  @keyframes slideInLeft {
-    from {
-      opacity: 0;
-      transform: translateX(-30px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-
-  @keyframes fadeScale {
-    from {
-      opacity: 0;
-      transform: scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-
-  @keyframes pageEnterForward {
-    from {
-      opacity: 0;
-      transform: translate3d(10px, 0, 0);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0);
-    }
-  }
-
-  @keyframes pageEnterBackward {
-    from {
-      opacity: 0;
-      transform: translate3d(-10px, 0, 0);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0);
-    }
-  }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .animate-enter,
-  .animate-enter-right,
-  .animate-enter-left,
-  .animate-fade-scale,
-  .animate-page-enter-forward,
-  .animate-page-enter-backward {
-    animation: none !important;
-  }
-}
+/* All entrance/transition motion lives in styles/motion.css (spring system).
+ * See docs/DESIGN.md §6 for the motion contract. */

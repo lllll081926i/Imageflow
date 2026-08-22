@@ -64,7 +64,7 @@ const GifSettingsPanel = memo(({
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">合成 GIF</label>
                 </div>
-                <div className="space-y-3 animate-enter">
+                <div className="space-y-3 spring-enter">
                     <StyledSlider
                         label="合成帧率 (FPS)"
                         value={buildFps}
@@ -95,7 +95,7 @@ const GifSettingsPanel = memo(({
                                             type="button"
                                             aria-pressed={isActive}
                                             onClick={() => setMode(option)}
-                                            className={`rounded-xl border px-3 py-2 text-sm font-medium transition-all ${
+                                            className={`spring-tap-sm rounded-xl border px-3 py-2 text-sm font-medium transition-all duration-200 ${
                                                 isActive
                                                     ? 'border-[#007AFF]/20 bg-[#007AFF]/10 text-[#007AFF] shadow-sm dark:border-[#0A84FF]/40 dark:bg-[#0A84FF]/15 dark:text-[#5AC8FA]'
                                                     : 'border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:text-gray-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white'
@@ -111,10 +111,10 @@ const GifSettingsPanel = memo(({
                 </div>
 
             {mode === '导出' && (
-                <div className="space-y-3 animate-enter">
+                <div className="space-y-3 spring-enter">
                     <CustomSelect
                         label="导出帧格式"
-                        options={['PNG']}
+                        options={['PNG', 'JPG', 'WEBP', 'BMP', 'TIFF']}
                         value={exportFormat}
                         onChange={setExportFormat}
                     />
@@ -122,7 +122,7 @@ const GifSettingsPanel = memo(({
             )}
 
             {mode === '互转' && (
-                <div className="space-y-3 animate-enter">
+                <div className="space-y-3 spring-enter">
                     <CustomSelect
                         label="目标动图格式"
                         options={['GIF', 'APNG', 'WEBP']}
@@ -132,8 +132,19 @@ const GifSettingsPanel = memo(({
                 </div>
             )}
 
+            {['倒放', '修改帧率', '压缩', '缩放'].includes(mode) && (
+                <div className="space-y-3 spring-enter">
+                    <CustomSelect
+                        label="输出格式"
+                        options={['GIF', 'APNG', 'WEBP']}
+                        value={convertFormat}
+                        onChange={setConvertFormat}
+                    />
+                </div>
+            )}
+
             {mode === '修改帧率' && (
-                <div className="animate-enter space-y-3">
+                <div className="spring-enter space-y-3">
                     <StyledSlider
                         label="播放速度"
                         value={speedPercent}
@@ -148,7 +159,7 @@ const GifSettingsPanel = memo(({
                                 key={value}
                                 type="button"
                                 onClick={() => setSpeedPercent(value)}
-                                className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${speedPercent === value ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]' : 'border-gray-200 dark:border-white/10 text-gray-500 hover:border-[#007AFF]/40'}`}
+                                className={`spring-tap-sm px-2.5 py-1 rounded-lg border text-xs transition-all duration-200 ${speedPercent === value ? 'border-[#007AFF] bg-[#007AFF]/10 text-[#007AFF]' : 'border-gray-200 dark:border-white/10 text-gray-500 hover:border-[#007AFF]/40'}`}
                             >
                                 {value / 100}×
                             </button>
@@ -158,7 +169,7 @@ const GifSettingsPanel = memo(({
             )}
 
             {mode === '压缩' && (
-                <div className="animate-enter space-y-3">
+                <div className="spring-enter space-y-3">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">压缩质量</label>
                     <div className="flex items-center gap-3">
                         <input
@@ -178,7 +189,7 @@ const GifSettingsPanel = memo(({
             )}
 
             {mode === '缩放' && (
-                <div className="animate-enter space-y-3">
+                <div className="spring-enter space-y-3">
                     <div className="text-xs text-gray-500 dark:text-gray-400">
                         原始尺寸：{originalWidth > 0 && originalHeight > 0 ? `${originalWidth} x ${originalHeight} px` : '未读取到 GIF 尺寸'}
                     </div>

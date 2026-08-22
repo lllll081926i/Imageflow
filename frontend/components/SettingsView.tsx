@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Icon from './Icon';
 import { SegmentedControl, Switch } from './Controls';
+import { showToast } from './Toast';
 import type { Theme } from '../types';
 import {
     DEFAULT_APP_SETTINGS,
+    applyAppearance,
     getAppBindings,
     loadAppSettings,
     saveAppSettings,
@@ -11,6 +13,12 @@ import {
 } from '../types/app-api';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const CONFLICT_STRATEGY_LABELS: Record<string, string> = {
+    rename: '自动重命名',
+    overwrite: '直接覆盖',
+    skip: '跳过同名',
+};
 
 type UpdateCheckResult = {
     success?: boolean;
@@ -114,7 +122,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                 return;
             }
             try {
-                const loaded = await loadAppSettings({ throwOnError: true });
+                const loaded = await loadAppSettings({ throwOnError: true, force: true });
                 setSettings(loaded);
                 await loadVersion();
                 if (loaded.auto_check_updates) {
@@ -138,6 +146,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
             const payload = next || { ...settings, max_concurrency: maxConcurrency };
             const saved = await saveAppSettings(payload);
             setSettings(saved);
+            applyAppearance(saved);
+            showToast('已保存', 'success');
             setMessage('');
         } catch (error: any) {
             console.error(error);
@@ -173,9 +183,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
         }
     };
 
-    const recentInputDirs = settings.recent_input_dirs || [];
-    const recentOutputDirs = settings.recent_output_dirs || [];
-
     return (
         <div className="h-full flex flex-col min-h-0">
             <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
@@ -198,7 +205,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                         type="button"
                         disabled={saving || loading}
                         onClick={() => void handleSave({ ...settings, max_concurrency: maxConcurrency })}
-                        className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${(saving || loading) ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
+                        className={`spring-tap-sm px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 ${(saving || loading) ? 'bg-gray-200 dark:bg-white/10 text-gray-500 dark:text-gray-400 cursor-not-allowed' : 'bg-[#007AFF] text-white hover:bg-[#005ED0]'}`}
                     >
                         {saving ? '保存中...' : '保存全部'}
                     </button>
@@ -211,16 +218,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                         <Section
                             title="常用路径"
                             icon="Upload"
-                            action={(
-                                <button
-                                    type="button"
-                                    disabled={saving || loading || (recentInputDirs.length === 0 && recentOutputDirs.length === 0)}
-                                    onClick={() => void handleSave({ ...settings, recent_input_dirs: [], recent_output_dirs: [] })}
-                                    className="px-3 py-2 rounded-xl text-sm border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:text-red-500 hover:border-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    清空最近
-                                </button>
-                            )}
                         >
                             <div className="space-y-5">
                                 <div className="space-y-2">
@@ -239,40 +236,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                                         >
                                             浏览
                                         </button>
-                                    </div>
-                                </div>
-                                <div className="imageflow-settings-grid grid gap-4">
-                                    <div className="rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200/80 dark:border-white/10 p-4">
-                                        <div className="text-sm font-medium text-gray-800 dark:text-gray-100 mb-3">最近输入</div>
-                                        <div className="space-y-2 max-h-40 overflow-y-auto">
-                                            {recentInputDirs.length === 0 ? (
-                                                <div className="text-sm text-gray-400">暂无记录</div>
-                                            ) : recentInputDirs.map((path, index) => (
-                                                <div key={`input-${path}-${index}`} className="rounded-xl bg-white dark:bg-white/5 border border-gray-200/70 dark:border-white/10 px-3 py-2 text-xs text-gray-600 dark:text-gray-300 break-all">
-                                                    {path}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div className="rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200/80 dark:border-white/10 p-4">
-                                        <div className="text-sm font-medium text-gray-800 dark:text-gray-100 mb-3">最近输出</div>
-                                        <div className="space-y-2 max-h-40 overflow-y-auto">
-                                            {recentOutputDirs.length === 0 ? (
-                                                <div className="text-sm text-gray-400">暂无记录</div>
-                                            ) : recentOutputDirs.map((path, index) => (
-                                                <button
-                                                    key={`output-${path}-${index}`}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setSettings((previous) => ({ ...previous, default_output_dir: path }));
-                                                        setMessage('');
-                                                    }}
-                                                    className="w-full text-left rounded-xl bg-white dark:bg-white/5 border border-gray-200/70 dark:border-white/10 px-3 py-2 text-xs text-gray-600 dark:text-gray-300 break-all hover:border-[#007AFF]/40 hover:text-[#007AFF] transition-colors"
-                                                >
-                                                    {path}
-                                                </button>
-                                            ))}
-                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -306,9 +269,18 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                                         onChange={(checked) => setSettings((previous) => ({ ...previous, preserve_folder_structure: checked }))}
                                         label="保持原文件夹结构"
                                     />
-                                    <div className="flex items-center justify-between gap-4 text-sm">
-                                        <span className="text-gray-500 dark:text-gray-400">重名文件</span>
-                                        <span className="px-2.5 py-1 rounded-full bg-[#007AFF]/10 text-[#007AFF] text-xs font-medium">自动重命名</span>
+                                    <div className="space-y-2">
+                                        <div className="text-sm text-gray-500 dark:text-gray-400">重名文件</div>
+                                        <SegmentedControl
+                                            options={['自动重命名', '直接覆盖', '跳过同名']}
+                                            value={CONFLICT_STRATEGY_LABELS[settings.conflict_strategy] ?? '自动重命名'}
+                                            onChange={(label) => {
+                                                const entry = Object.entries(CONFLICT_STRATEGY_LABELS).find(([, text]) => text === label);
+                                                if (entry) {
+                                                    setSettings((previous) => ({ ...previous, conflict_strategy: entry[0] as typeof previous.conflict_strategy }));
+                                                }
+                                            }}
+                                        />
                                     </div>
                                     <Switch
                                         checked={Boolean(settings.open_output_folder_on_complete)}
@@ -316,6 +288,27 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                                         label="处理完成后打开输出目录"
                                     />
                                 </div>
+                            </div>
+                        </Section>
+
+                        <Section title="外观" icon="Sun">
+                            <div className="rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200/80 dark:border-white/10 p-4 space-y-3">
+                                <Switch
+                                    checked={Boolean(settings.ui_transparency)}
+                                    onChange={(checked) => {
+                                        setSettings((previous) => ({ ...previous, ui_transparency: checked }));
+                                        applyAppearance({ ...settings, ui_transparency: checked });
+                                    }}
+                                    label="透明效果"
+                                />
+                                <Switch
+                                    checked={Boolean(settings.ui_reduced_motion)}
+                                    onChange={(checked) => {
+                                        setSettings((previous) => ({ ...previous, ui_reduced_motion: checked }));
+                                        applyAppearance({ ...settings, ui_reduced_motion: checked });
+                                    }}
+                                    label="减弱动态效果"
+                                />
                             </div>
                         </Section>
                     </div>
@@ -421,11 +414,16 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                                         onChange={(value) => onThemeChange(value === '浅色' ? 'light' : value === '深色' ? 'dark' : 'system')}
                                     />
                                 </div>
-                                <Switch
-                                    checked={Boolean(settings.remember_window_state)}
-                                    onChange={(checked) => setSettings((previous) => ({ ...previous, remember_window_state: checked }))}
-                                    label="记住窗口大小与位置"
-                                />
+                                    <Switch
+                                        checked={Boolean(settings.remember_window_state)}
+                                        onChange={(checked) => setSettings((previous) => ({ ...previous, remember_window_state: checked }))}
+                                        label="记住窗口大小与位置"
+                                    />
+                                    <Switch
+                                        checked={Boolean(settings.background_running)}
+                                        onChange={(checked) => setSettings((previous) => ({ ...previous, background_running: checked }))}
+                                        label="后台运行"
+                                    />
                             </div>
                         </Section>
                     </div>

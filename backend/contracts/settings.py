@@ -30,6 +30,9 @@ class AppSettings:
     auto_check_updates: bool = True
     open_output_folder_on_complete: bool = False
     remember_window_state: bool = True
+    ui_transparency: bool = True
+    ui_reduced_motion: bool = False
+    background_running: bool = False
 
 
 def default_app_settings() -> AppSettings:

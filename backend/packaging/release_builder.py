@@ -105,6 +105,12 @@ def build_pyinstaller_command(paths: ReleasePaths, icon_path: Path | None) -> li
         "webview.platforms.edgechromium",
         "--hidden-import",
         "webview.platforms.mshtml",
+        "--hidden-import",
+        "resvg_py",
+        "--hidden-import",
+        "pystray",
+        "--hidden-import",
+        "pystray._win32",
     ]
     for package_name in BACKEND_RUNTIME_PACKAGES:
         command.extend(["--collect-submodules", package_name])
@@ -114,7 +120,7 @@ def build_pyinstaller_command(paths: ReleasePaths, icon_path: Path | None) -> li
         command.extend(["--add-data", _add_data_arg(logo_path, ".")])
     version_file = paths.project_root / "VERSION"
     if not version_file.exists():
-        version_file.write_text("2.1.5\n", encoding="utf-8")
+        version_file.write_text(f"{paths.version}\n", encoding="utf-8")
     command.extend(["--add-data", _add_data_arg(version_file, ".")])
     if icon_path is not None:
         command.extend(["--icon", str(icon_path)])

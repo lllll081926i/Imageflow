@@ -8,14 +8,6 @@ export type AppBindings = {
         format?: string;
         error?: string;
     }>>;
-    AddWatermark: (arg1: models.WatermarkRequest) => Promise<models.WatermarkResult>;
-    AddWatermarkBatch: (arg1: Array<models.WatermarkRequest>) => Promise<Array<models.WatermarkResult>>;
-    Adjust: (arg1: models.AdjustRequest) => Promise<models.AdjustResult>;
-    AdjustBatch: (arg1: Array<models.AdjustRequest>) => Promise<Array<models.AdjustResult>>;
-    ApplyFilter: (arg1: models.FilterRequest) => Promise<models.FilterResult>;
-    ApplyFilterBatch: (arg1: Array<models.FilterRequest>) => Promise<Array<models.FilterResult>>;
-    ProcessImage: (arg1: models.ProcessImageRequest) => Promise<models.ProcessImageResult>;
-    ProcessImageBatch: (arg1: Array<models.ProcessImageRequest>) => Promise<Array<models.ProcessImageResult>>;
     CancelProcessing: () => Promise<boolean> | boolean;
     Compress: (arg1: models.CompressRequest) => Promise<models.CompressResult>;
     CompressBatch: (arg1: Array<models.CompressRequest>) => Promise<Array<models.CompressResult>>;
@@ -23,10 +15,15 @@ export type AppBindings = {
     ConvertBatch: (arg1: Array<models.ConvertRequest>) => Promise<Array<models.ConvertResult>>;
     ExpandDroppedPaths: (arg1: Array<string>) => Promise<models.ExpandDroppedPathsResult>;
     GeneratePDF: (arg1: models.PDFRequest) => Promise<models.PDFResult>;
-    GenerateSubtitleLongImage: (arg1: models.SubtitleStitchRequest) => Promise<models.SubtitleStitchResult>;
-    GetImagePreview: (arg1: models.PreviewRequest) => Promise<models.PreviewResult>;
     GetSettings: () => Promise<models.AppSettings>;
     GetAppVersion?: () => Promise<{ success?: boolean; version?: string }>;
+    GetThumbnail?: (arg1?: { path: string; max_edge?: number }) => Promise<{
+        success: boolean;
+        data_url?: string;
+        width?: number;
+        height?: number;
+        error?: string;
+    }>;
     OpenPath?: (arg1?: { path?: string; dir?: string }) => Promise<{ success?: boolean; path?: string; error?: string }>;
     CheckForUpdates?: (arg1?: { timeout_seconds?: number }) => Promise<{
         success?: boolean;
@@ -38,12 +35,12 @@ export type AppBindings = {
         checked?: boolean;
         error?: string;
     }>;
-    ListSystemFonts: () => Promise<Array<string>>;
     Ping: () => Promise<string> | string;
     ResolveOutputPath: (arg1: models.ResolveOutputPathRequest) => Promise<models.ResolveOutputPathResult>;
-    ResolveOutputPaths?: (arg1: { items: Array<string>; reserved?: Array<string> }) => Promise<{
+    ResolveOutputPaths?: (arg1: { items: Array<string>; reserved?: Array<string>; strategy?: string }) => Promise<{
         success: boolean;
         paths?: Array<string>;
+        exists?: Array<boolean>;
         error?: string;
     }>;
     SaveSettings: (arg1: models.AppSettings) => Promise<models.AppSettings>;
@@ -51,6 +48,126 @@ export type AppBindings = {
     SelectInputFiles: (options?: unknown) => Promise<Array<string>>;
     SelectOutputDirectory: () => Promise<string>;
     SplitGIF: (arg1: models.GIFSplitRequest) => Promise<models.GIFSplitResult>;
+    SplitImage?: (arg1?: {
+        input_path: string;
+        output_dir: string;
+        rows?: number;
+        cols?: number;
+        mode?: 'square' | 'full';
+        output_format?: string;
+        quality?: number;
+    }) => Promise<{
+        success: boolean;
+        rows?: number; cols?: number; tile_count?: number;
+        tile_width?: number; tile_height?: number; uniform_tiles?: boolean;
+        output_paths?: Array<string>;
+        error_code?: string; error?: string;
+    }>;
+    AddWatermark?: (arg1?: {
+        action?: 'apply' | 'preview';
+        input_path: string;
+        output_path?: string;
+        text: string;
+        font_name?: string;
+        size_mode?: 'px' | 'percent';
+        font_size?: number;
+        color?: string;
+        opacity?: number;
+        rotation?: number;
+        position?: string;
+        margin?: number;
+        tiled?: boolean;
+        tile_gap_x?: number;
+        tile_gap_y?: number;
+        stroke_width?: number;
+        stroke_color?: string;
+        shadow?: boolean;
+        output_format?: string;
+        quality?: number;
+    }) => Promise<{
+        success: boolean;
+        data_url?: string;
+        width?: number; height?: number;
+        output_path?: string;
+        error_code?: string; error?: string;
+    }>;
+    ResizeImage?: (arg1?: {
+        input_path: string;
+        output_path: string;
+        mode?: 'percent' | 'long_edge' | 'short_edge';
+        value?: number;
+        output_format?: string;
+        quality?: number;
+    }) => Promise<{
+        success: boolean;
+        original_width?: number; original_height?: number;
+        width?: number; height?: number;
+        error_code?: string; error?: string;
+    }>;
+    PaletteTool?: (arg1?: {
+        action?: 'extract' | 'export_palette' | 'export_combined';
+        input_path: string;
+        output_path?: string;
+        swatch_height?: number;
+        include_hex_text?: boolean;
+        output_format?: string;
+    }) => Promise<{
+        success: boolean;
+        theme_color?: string;
+        colors?: Array<string>;
+        output_path?: string;
+        error_code?: string; error?: string;
+    }>;
+    StitchImages?: (arg1?: {
+        input_paths: Array<string>;
+        output_path: string;
+        direction?: 'vertical' | 'horizontal';
+        target_width?: number;
+        target_height?: number;
+        gap?: number;
+        background?: string;
+        border_mode?: boolean;
+        border?: number;
+        output_format?: string;
+    }) => Promise<{
+        success: boolean;
+        width?: number; height?: number; image_count?: number;
+        error_code?: string; error?: string;
+    }>;
+    RenderRichText?: (arg1?: {
+        blocks: Array<Record<string, any>>;
+        width?: number; padding?: number;
+        background?: string; text_color?: string; heading_color?: string; accent_color?: string;
+        font_size?: number; line_height?: number; font_name?: string;
+        preview?: boolean;
+        output_path?: string;
+    }) => Promise<{
+        success: boolean;
+        width?: number; height?: number;
+        data_url?: string;
+        missing_images?: Array<string>;
+        output_path?: string;
+        error_code?: string; error?: string;
+    }>;
+    CutImageGrid?: (arg1?: {
+        input_path: string;
+        output_dir: string;
+        grid_size?: number;
+        output_format?: string;
+        quality?: number;
+    }) => Promise<{
+        success: boolean;
+        input_path?: string;
+        output_dir?: string;
+        grid_size?: number;
+        tile_count?: number;
+        tile_width?: number;
+        tile_height?: number;
+        output_format?: string;
+        output_paths?: Array<string>;
+        error_code?: string;
+        error?: string;
+    }>;
     UpdateRecentPaths: (arg1: models.RecentPathsUpdateRequest) => Promise<models.AppSettings>;
     OpenFileDialog?: (options?: unknown) => Promise<string | string[] | null | undefined>;
     OpenDirectoryDialog?: (options?: unknown) => Promise<string | null | undefined>;

@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState, useEffect, useRef, memo } from '
 import Icon from './Icon';
 import { FEATURES } from '../constants';
 import { ViewState } from '../types';
-import { Switch, StyledSlider, CustomSelect, SegmentedControl, PositionGrid, FileDropZone, ProgressBar } from './Controls';
+import { Switch, StyledSlider, CustomSelect, SegmentedControl, FileDropZone, ProgressBar } from './Controls';
 import {
     buildGifProcessSuffix,
     detectAnimatedImagePath,
@@ -10,40 +10,61 @@ import {
     planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
-    resolveWatermarkBackendPosition,
     selectAnimatedProbeCandidatePaths,
 } from './gifHelpers';
 import { resolveGifErrorMessage } from './gifErrors';
 import GifSettingsPanel from './GifSettingsPanel';
+import { GridSettings } from './detail/GridSettingsPanel';
+import GridPreviewCard from './detail/GridPreviewCard';
+import { SplitSettings } from './detail/SplitSettingsPanel';
+import { WatermarkSettings } from './detail/WatermarkSettingsPanel';
+import { ResizeSettings } from './detail/ResizeSettingsPanel';
+import { StitchSettings } from './detail/StitchSettingsPanel';
+import { PalettePanel, type PaletteData } from './detail/PalettePanel';
+import { RichTextSettings } from './detail/RichTextPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { useThrottledProgress } from './hooks/useThrottledProgress';
-import { useImagePreview } from './hooks/useImagePreview';
+import { formatBytes } from './batchHelpers';
+import { showToast } from './Toast';
+import { useTweenNumber } from './hooks/useTweenNumber';
 import {
     useConverterParams,
     useCompressorParams,
     usePdfParams,
-    useImageProcessorParams,
     useGifParams,
+    useGridParams,
+    useSplitParams,
     useWatermarkParams,
+    useResizeParams,
+    useStitchParams,
+    useRichTextParams,
+    type WatermarkStyle,
+    type RichTextBlock,
 } from './hooks/useFeatureParams';
 import {
     defaultOutputSettings,
-    loadFeaturePresetStore,
-    saveFeaturePresetStore,
     type DroppedFile,
     type ExpandDroppedPathsResult,
-    type FeaturePreset,
-    type FeaturePresetStore,
     type OutputSettings,
     getBatchChunkSize as sharedGetBatchChunkSize,
-    normalizePath as sharedNormalizePath,
-    dirname as sharedDirname,
-    joinPath as sharedJoinPath,
-    basename as sharedBasename,
-    stripExtension as sharedStripExtension,
-    extname as sharedExtname,
-    clampNumber as sharedClampNumber,
 } from './detail/detailTypes';
+import {
+    dedupeDroppedFiles,
+    joinPath,
+    pathLookupKey,
+    basename,
+    extname,
+    dirname,
+    normalizePath,
+    stripExtension,
+    buildOutputName,
+    getRelPath,
+    getRelDir,
+    buildOutputRelPath,
+    sanitizePdfInputName,
+    normalizePdfFileName,
+    buildSuggestedPdfName,
+} from './detail/outputNaming';
 import {
     isCancellationError,
     normalizeBatchResults,
@@ -58,11 +79,8 @@ import {
 import type { models } from '../types/backend-models';
 import { ConverterSettings } from './detail/ConverterSettingsPanel';
 import { CompressorSettings } from './detail/CompressorSettingsPanel';
-import { WatermarkSettings } from './detail/WatermarkSettingsPanel';
-import { FILTER_PRESETS } from './detail/FilterSettingsPanel';
-import { ImageProcessorPanel } from './detail/ImageProcessorPanel';
 import { PdfSettings } from './detail/PdfSettingsPanel';
-import { runGenericBatch, runConvertBatch, runCompressBatch } from './detail/batchRunners';
+import { runConvertBatch, runCompressBatch, type CompressBatchStats, type RunDoneSummary } from './detail/batchRunners';
 
 const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
     '.jpg',
@@ -72,6 +90,8 @@ const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
     '.gif',
     '.bmp',
     '.avif',
+    '.heic',
+    '.heif',
     '.ico',
     '.tiff',
     '.tif',
@@ -85,6 +105,8 @@ const COMPRESSOR_INPUT_EXTENSIONS = [
     '.webp',
     '.bmp',
     '.avif',
+    '.heic',
+    '.heif',
     '.ico',
     '.tiff',
     '.tif',
@@ -106,7 +128,6 @@ const COMPRESSOR_FILE_DIALOG_FILTERS = [{
 
 interface DetailViewProps {
     id: ViewState;
-    onBack: () => void;
     isActive?: boolean;
     onTaskFailure?: (payload: { taskName: string; imageName: string; reason: string }) => void;
 }
@@ -117,9 +138,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const feature = FEATURES.find(f => f.id === id);
     if (!feature) return null;
 
-    const isImageProcessor = id === 'image_processor';
-    const isWatermark = id === 'watermark';
-    const isPreviewFeature = isImageProcessor || isWatermark;
     const [dropResult, setDropResult] = useState<ExpandDroppedPathsResult | null>(null);
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
@@ -135,12 +153,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
     const [lastMessage, setLastMessage] = useState<string>('');
     const [outputSettings, setOutputSettings] = useState<OutputSettings>(defaultOutputSettings);
-    const [featurePresets, setFeaturePresets] = useState<FeaturePresetStore>(() => loadFeaturePresetStore());
-    const [presetNameDraft, setPresetNameDraft] = useState('');
-    const [selectedPresetId, setSelectedPresetId] = useState('');
-    const [isPresetSectionCollapsed, setIsPresetSectionCollapsed] = useState(true);
     const [failedRecords, setFailedRecords] = useState<DroppedFile[]>([]);
     const [retryFailedOnly, setRetryFailedOnly] = useState(false);
+    const [compressStats, setCompressStats] = useState<CompressBatchStats | null>(null);
+    const [runSummary, setRunSummary] = useState<(RunDoneSummary & { outputDir: string }) | null>(null);
     const currentRunFailedPathsRef = useRef<Set<string> | null>(null);
     const openOutputOnCompleteRef = useRef<{ enabled: boolean; dir: string }>({ enabled: false, dir: '' });
 
@@ -180,23 +196,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         fileName: pdfFileName, setFileName: setPdfFileName,
         title: pdfTitle, setTitle: setPdfTitle,
         author: pdfAuthor, setAuthor: setPdfAuthor,
+        password: pdfPassword, setPassword: setPdfPassword,
     } = usePdfParams();
-    const {
-        exposure: adjustExposure, setExposure: setAdjustExposure,
-        contrast: adjustContrast, setContrast: setAdjustContrast,
-        saturation: adjustSaturation, setSaturation: setAdjustSaturation,
-        sharpness: adjustSharpness, setSharpness: setAdjustSharpness,
-        vibrance: adjustVibrance, setVibrance: setAdjustVibrance,
-        hue: adjustHue, setHue: setAdjustHue,
-        rotate: adjustRotate, setRotate: setAdjustRotate,
-        flipH: adjustFlipH, setFlipH: setAdjustFlipH,
-        flipV: adjustFlipV, setFlipV: setAdjustFlipV,
-        cropRatio: adjustCropRatio, setCropRatio: setAdjustCropRatio,
-        intensity: filterIntensity, setIntensity: setFilterIntensity,
-        grain: filterGrain, setGrain: setFilterGrain,
-        vignette: filterVignette, setVignette: setFilterVignette,
-        filterSelected, setFilterSelected,
-    } = useImageProcessorParams();
     const {
         mode: gifMode, setMode: setGifMode,
         exportFormat: gifExportFormat, setExportFormat: setGifExportFormat,
@@ -205,39 +206,24 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         compressQuality: gifCompressQuality, setCompressQuality: setGifCompressQuality,
         buildFps: gifBuildFps, setBuildFps: setGifBuildFps,
     } = useGifParams();
-    const [previewPath, setPreviewPath] = useState('');
-    const { previewDataUrl, previewLoadError, setPreviewDataUrl, setPreviewLoadError } = useImagePreview({
-        enabled: isPreviewFeature,
-        path: previewPath,
-        debounceMs: 120,
-    });
-    const previewContainerRef = useRef<HTMLDivElement>(null);
-    const [previewContainerSize, setPreviewContainerSize] = useState({ width: 0, height: 0 });
-    const [previewImageSize, setPreviewImageSize] = useState({ width: 0, height: 0 });
-    const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
-    const [isCropDragging, setIsCropDragging] = useState(false);
-    const cropDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
-    const [isComparing, setIsComparing] = useState(false);
     const {
-        type: watermarkType, setType: setWatermarkType,
-        text: watermarkText, setText: setWatermarkText,
-        imagePath: watermarkImagePath, setImagePath: setWatermarkImagePath,
-        position: watermarkPosition, setPosition: setWatermarkPosition,
-        opacity: watermarkOpacity, setOpacity: setWatermarkOpacity,
-        rotate: watermarkRotate, setRotate: setWatermarkRotate,
-        size: watermarkSize, setSize: setWatermarkSize,
-        tiled: watermarkTiled, setTiled: setWatermarkTiled,
-        blendMode: watermarkBlendMode, setBlendMode: setWatermarkBlendMode,
-        shadow: watermarkShadow, setShadow: setWatermarkShadow,
-        margin: watermarkMargin, setMargin: setWatermarkMargin,
-        font: watermarkFont, setFont: setWatermarkFont,
-        color: watermarkColor, setColor: setWatermarkColor,
-        useSystemFonts, setUseSystemFonts,
-        systemFonts, setSystemFonts,
-        isSystemFontsLoading, setIsSystemFontsLoading,
-        imageSize: watermarkImageSize, setImageSize: setWatermarkImageSize,
-    } = useWatermarkParams();
+        gridSize, setGridSize,
+        format: gridFormat, setFormat: setGridFormat,
+    } = useGridParams();
+    const splitParams = useSplitParams();
+    const wmParams = useWatermarkParams();
+    const wmPatch = wmParams.patch;
+    const resizeParams = useResizeParams();
+    const stitchParams = useStitchParams();
+    const rtParams = useRichTextParams();
 
+    const [paletteData, setPaletteData] = useState<PaletteData>(null);
+    const [paletteLoading, setPaletteLoading] = useState(false);
+    const [paletteBusy, setPaletteBusy] = useState(false);
+    const [swatchHeight, setSwatchHeight] = useState(96);
+    const [includeText, setIncludeText] = useState(true);
+    const [wmPreviewUrl, setWmPreviewUrl] = useState('');
+    const [rtPreviewUrl, setRtPreviewUrl] = useState('');
     const normalizeOutputSettings = (raw?: Partial<OutputSettings> | null): OutputSettings => {
         if (!raw) return defaultOutputSettings;
         return {
@@ -250,8 +236,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             preserve_folder_structure: typeof raw.preserve_folder_structure === 'boolean'
                 ? raw.preserve_folder_structure
                 : defaultOutputSettings.preserve_folder_structure,
-            conflict_strategy: typeof raw.conflict_strategy === 'string' && raw.conflict_strategy.trim() === 'rename'
-                ? 'rename'
+            conflict_strategy: typeof raw.conflict_strategy === 'string'
+                && ['rename', 'overwrite', 'skip'].includes(raw.conflict_strategy.trim())
+                ? (raw.conflict_strategy.trim() as OutputSettings['conflict_strategy'])
                 : defaultOutputSettings.conflict_strategy,
         };
     };
@@ -277,8 +264,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         const ext = normalized.slice(idx + 1).toLowerCase();
         return ext === 'gif' || ext === 'apng' || ext === 'webp';
     };
-    const normalizePath = useCallback((p: string) => sharedNormalizePath(p), []);
-    const dirname = useCallback((p: string) => sharedDirname(p), []);
     const rememberRecentDirs = useCallback(async (payload: { inputDir?: string; outputDir?: string }) => {
         try {
             await updateRecentPaths(payload);
@@ -317,504 +302,127 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         isGifPath,
         normalizePath,
     });
-    const currentFeaturePresets = useMemo(() => {
-        return (featurePresets[id] || []).slice().sort((a, b) => b.updated_at - a.updated_at);
-    }, [featurePresets, id]);
-
-    useEffect(() => {
-        if (currentFeaturePresets.length === 0) {
-            setSelectedPresetId('');
-            return;
-        }
-        if (!selectedPresetId || !currentFeaturePresets.some((p) => p.id === selectedPresetId)) {
-            setSelectedPresetId(currentFeaturePresets[0].id);
-        }
-    }, [currentFeaturePresets, selectedPresetId]);
-
-    const previewSrc = useMemo(() => {
-        if (!previewPath) return '';
-        if (previewDataUrl) return previewDataUrl;
-        return toFileUrl(previewPath);
-    }, [previewDataUrl, previewPath]);
-    const watermarkImageSrc = useMemo(() => {
-        if (!watermarkImagePath) return '';
-        return toFileUrl(watermarkImagePath);
-    }, [watermarkImagePath]);
-    const baseFontOptions = useMemo(() => ([
-        'Sans Serif',
-        'Serif',
-        'Mono',
-        'Handwriting',
-    ]), []);
-    const systemFontOptions = useMemo(() => systemFonts.map((fontPath) => ({
-        label: fontPath.replace(/\\/g, '/').split('/').pop() || fontPath,
-        value: fontPath,
-    })), [systemFonts]);
-    const fontOptions = useMemo(() => (
-        useSystemFonts ? [...baseFontOptions, ...systemFontOptions] : baseFontOptions
-    ), [useSystemFonts, baseFontOptions, systemFontOptions]);
-
-    useEffect(() => {
-        setPreviewImageSize({ width: 0, height: 0 });
-    }, [previewSrc]);
-
-    useEffect(() => {
-        if (useSystemFonts) return;
-        if (baseFontOptions.includes(watermarkFont)) return;
-        setWatermarkFont('Sans Serif');
-    }, [useSystemFonts, watermarkFont, baseFontOptions]);
-
-    useEffect(() => {
-        if (!useSystemFonts) return;
-        if (systemFonts.length > 0) return;
-        const appAny = getAppBindings();
-        if (!appAny?.ListSystemFonts) return;
-        let active = true;
-        setIsSystemFontsLoading(true);
-        (async () => {
-            try {
-                const res = await appAny.ListSystemFonts?.();
-                if (!active) return;
-                if (Array.isArray(res)) {
-                    setSystemFonts(res);
-                } else {
-                    setSystemFonts([]);
-                }
-            } catch (err) {
-                if (active) {
-                    console.error(err);
-                    setSystemFonts([]);
-                }
-            } finally {
-                if (active) {
-                    setIsSystemFontsLoading(false);
-                }
-            }
-        })();
-        return () => {
-            active = false;
-        };
-    }, [useSystemFonts, systemFonts.length]);
-
-    useEffect(() => {
-        if (!watermarkImageSrc) {
-            setWatermarkImageSize({ width: 0, height: 0 });
-            return;
-        }
-        let active = true;
-        const img = new Image();
-        img.onload = () => {
-            if (!active) return;
-            setWatermarkImageSize({
-                width: img.naturalWidth,
-                height: img.naturalHeight,
-            });
-        };
-        img.onerror = () => {
-            if (active) {
-                setWatermarkImageSize({ width: 0, height: 0 });
-            }
-        };
-        img.src = watermarkImageSrc;
-        return () => {
-            active = false;
-        };
-    }, [watermarkImageSrc]);
-    const previewFilter = useMemo(() => {
-        if (!isImageProcessor) return '';
-        const adjustPart = buildAdjustPreviewFilter(
-            adjustExposure,
-            adjustContrast,
-            adjustSaturation,
-            adjustVibrance,
-            adjustHue,
-            adjustSharpness,
-        );
-        const filterPart = buildFilterPreviewFilter(filterSelected, filterIntensity);
-        return [adjustPart, filterPart].filter(Boolean).join(' ');
-    }, [
-        adjustExposure,
-        adjustContrast,
-        adjustSaturation,
-        adjustVibrance,
-        adjustHue,
-        adjustSharpness,
-        filterSelected,
-        filterIntensity,
-        isImageProcessor,
-    ]);
-    const previewTransform = useMemo(() => {
-        if (!isImageProcessor) return '';
-        const rotate = ((adjustRotate % 360) + 360) % 360;
-        const scaleX = adjustFlipH ? -1 : 1;
-        const scaleY = adjustFlipV ? -1 : 1;
-        return `rotate(${rotate}deg) scale(${scaleX}, ${scaleY})`;
-    }, [adjustFlipH, adjustFlipV, adjustRotate, isImageProcessor]);
-    const previewCropRatio = useMemo(() => {
-        if (!isImageProcessor) return null;
-        return parseCropRatio(adjustCropRatio);
-    }, [adjustCropRatio, isImageProcessor]);
-    const previewFrame = useMemo(() => {
-        const containerWidth = previewContainerSize.width;
-        const containerHeight = previewContainerSize.height;
-        if (!containerWidth || !containerHeight) {
-            return { width: 0, height: 0, left: 0, top: 0 };
-        }
-        if (!previewCropRatio) {
-            return { width: containerWidth, height: containerHeight, left: 0, top: 0 };
-        }
-        const containerRatio = containerWidth / containerHeight;
-        const targetRatio = previewCropRatio.w / previewCropRatio.h;
-        if (!Number.isFinite(containerRatio) || !Number.isFinite(targetRatio)) {
-            return { width: containerWidth, height: containerHeight, left: 0, top: 0 };
-        }
-        let frameWidth = containerWidth;
-        let frameHeight = containerHeight;
-        if (containerRatio > targetRatio) {
-            frameHeight = containerHeight;
-            frameWidth = frameHeight * targetRatio;
-        } else {
-            frameWidth = containerWidth;
-            frameHeight = frameWidth / targetRatio;
-        }
-        const left = (containerWidth - frameWidth) / 2;
-        const top = (containerHeight - frameHeight) / 2;
-        return {
-            width: Math.max(0, frameWidth),
-            height: Math.max(0, frameHeight),
-            left: Math.max(0, left),
-            top: Math.max(0, top),
-        };
-    }, [previewContainerSize, previewCropRatio]);
-    const showCropFrame = Boolean(previewCropRatio);
-    const isCropInteractive = showCropFrame && isImageProcessor && Boolean(previewSrc);
-    const cropImageMetrics = useMemo(() => {
-        if (!showCropFrame) return null;
-        if (!previewImageSize.width || !previewImageSize.height) return null;
-        if (!previewFrame.width || !previewFrame.height) return null;
-        const rotation = ((adjustRotate % 360) + 360) % 360;
-        const rotated = rotation === 90 || rotation === 270;
-        const rotatedWidth = rotated ? previewImageSize.height : previewImageSize.width;
-        const rotatedHeight = rotated ? previewImageSize.width : previewImageSize.height;
-        const scale = Math.max(
-            previewFrame.width / rotatedWidth,
-            previewFrame.height / rotatedHeight,
-        );
-        const drawnWidth = previewImageSize.width * scale;
-        const drawnHeight = previewImageSize.height * scale;
-        const rotatedDrawnWidth = rotated ? drawnHeight : drawnWidth;
-        const rotatedDrawnHeight = rotated ? drawnWidth : drawnHeight;
-        const maxOffsetX = Math.max(0, (rotatedDrawnWidth - previewFrame.width) / 2);
-        const maxOffsetY = Math.max(0, (rotatedDrawnHeight - previewFrame.height) / 2);
-        return {
-            drawnWidth,
-            drawnHeight,
-            rotatedDrawnWidth,
-            rotatedDrawnHeight,
-            maxOffsetX,
-            maxOffsetY,
-        };
-    }, [showCropFrame, previewImageSize, previewFrame, adjustRotate]);
-    const cropFocus = useMemo(() => {
-        if (!cropImageMetrics) {
-            return { x: 0.5, y: 0.5 };
-        }
-        const x = clampNumber(0.5 - cropOffset.x / cropImageMetrics.rotatedDrawnWidth, 0, 1);
-        const y = clampNumber(0.5 - cropOffset.y / cropImageMetrics.rotatedDrawnHeight, 0, 1);
-        return { x, y };
-    }, [cropImageMetrics, cropOffset]);
-    const watermarkFontFace = useMemo(() => {
-        if (!useSystemFonts) return null;
-        const text = watermarkFont || '';
-        const isPath = /[\\/]/.test(text) || /\.(ttf|otf|ttc)$/i.test(text);
-        if (!isPath) return null;
-        const safe = text.replace(/[^a-zA-Z0-9]/g, '_');
-        const name = `wm_font_${safe.slice(-24)}`;
-        return {
-            name,
-            css: `@font-face { font-family: '${name}'; src: url('${toFileUrl(text)}'); }`,
-        };
-    }, [useSystemFonts, watermarkFont]);
-    const watermarkFontFamily = useMemo(() => {
-        if (watermarkFontFace?.name) return watermarkFontFace.name;
-        const fallbackMap: Record<string, string> = {
-            'Sans Serif': 'Arial, "Helvetica Neue", sans-serif',
-            'Serif': '"Times New Roman", serif',
-            'Mono': '"Courier New", monospace',
-            'Handwriting': '"Comic Sans MS", cursive',
-        };
-        return fallbackMap[watermarkFont] || watermarkFont || 'Arial, sans-serif';
-    }, [watermarkFont, watermarkFontFace]);
-    const previewBaseMetrics = useMemo(() => {
-        if (!previewContainerSize.width || !previewContainerSize.height) return null;
-        if (!previewImageSize.width || !previewImageSize.height) return null;
-        const scale = Math.min(
-            previewContainerSize.width / previewImageSize.width,
-            previewContainerSize.height / previewImageSize.height,
-        );
-        const width = previewImageSize.width * scale;
-        const height = previewImageSize.height * scale;
-        const left = (previewContainerSize.width - width) / 2;
-        const top = (previewContainerSize.height - height) / 2;
-        return {
-            width,
-            height,
-            left,
-            top,
-            scale,
-        };
-    }, [previewContainerSize, previewImageSize]);
-    const watermarkPreviewConfig = useMemo(() => {
-        if (!isWatermark || !previewBaseMetrics) return null;
-        const textValue = watermarkText.trim() || '© ImageFlow';
-        const opacity = clampNumber(watermarkOpacity / 100, 0, 1);
-        const scale = clampNumber(watermarkSize / 100, 0.02, 1);
-        const fontSize = Math.max(8, Math.round(36 * (watermarkSize / 40)));
-        const previewFontSize = Math.max(8, Math.round(fontSize * previewBaseMetrics.scale));
-        const offsetX = Math.max(0, Number(watermarkMargin.x) || 0) * previewBaseMetrics.scale;
-        const offsetY = Math.max(0, Number(watermarkMargin.y) || 0) * previewBaseMetrics.scale;
-        const blendMap: Record<string, string> = {
-            '正常': 'normal',
-            '正片叠底 (Multiply)': 'multiply',
-            '滤色 (Screen)': 'screen',
-            '叠加 (Overlay)': 'overlay',
-            '柔光 (Soft Light)': 'soft-light',
-        };
-        return {
-            textValue,
-            opacity,
-            scale,
-            fontSize,
-            previewFontSize,
-            offsetX,
-            offsetY,
-            blendMode: blendMap[watermarkBlendMode] || 'normal',
-        };
-    }, [
-        isWatermark,
-        previewBaseMetrics,
-        watermarkText,
-        watermarkOpacity,
-        watermarkSize,
-        watermarkMargin,
-        watermarkBlendMode,
-    ]);
-    const watermarkTextMetrics = useMemo(() => {
-        if (!watermarkPreviewConfig) return null;
-        if (typeof document === 'undefined') return null;
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return null;
-        ctx.font = `${watermarkPreviewConfig.fontSize}px ${watermarkFontFamily}`;
-        const metrics = ctx.measureText(watermarkPreviewConfig.textValue);
-        const width = Math.max(1, Math.ceil(metrics.width));
-        const height = Math.max(1, Math.ceil(watermarkPreviewConfig.fontSize * 1.2));
-        return { width, height };
-    }, [watermarkPreviewConfig, watermarkFontFamily]);
-    const watermarkImagePreviewSize = useMemo(() => {
-        if (!previewBaseMetrics || !watermarkPreviewConfig) return null;
-        if (!watermarkImageSize.width || !watermarkImageSize.height) return null;
-        const width = previewBaseMetrics.width * watermarkPreviewConfig.scale;
-        const height = width * (watermarkImageSize.height / watermarkImageSize.width);
-        return { width, height };
-    }, [previewBaseMetrics, watermarkPreviewConfig, watermarkImageSize]);
-    const watermarkTileMetrics = useMemo(() => {
-        if (!previewBaseMetrics || !watermarkPreviewConfig) return null;
-        if (watermarkType === '图片') {
-            return watermarkImagePreviewSize;
-        }
-        if (!watermarkTextMetrics) return null;
-        return {
-            width: watermarkTextMetrics.width * previewBaseMetrics.scale,
-            height: watermarkTextMetrics.height * previewBaseMetrics.scale,
-        };
-    }, [previewBaseMetrics, watermarkPreviewConfig, watermarkType, watermarkImagePreviewSize, watermarkTextMetrics]);
-    const watermarkPositionStyle = useMemo(() => {
-        if (!watermarkPreviewConfig) return {};
-        const offsetX = watermarkPreviewConfig.offsetX;
-        const offsetY = watermarkPreviewConfig.offsetY;
-        const style: React.CSSProperties = {};
-        switch (watermarkPosition) {
-            case 'tl':
-                style.left = offsetX;
-                style.top = offsetY;
-                break;
-            case 'tc':
-                style.left = '50%';
-                style.top = offsetY;
-                style.transform = 'translateX(-50%)';
-                break;
-            case 'tr':
-                style.right = offsetX;
-                style.top = offsetY;
-                break;
-            case 'ml':
-                style.left = offsetX;
-                style.top = '50%';
-                style.transform = 'translateY(-50%)';
-                break;
-            case 'mc':
-                style.left = '50%';
-                style.top = '50%';
-                style.transform = 'translate(-50%, -50%)';
-                break;
-            case 'mr':
-                style.right = offsetX;
-                style.top = '50%';
-                style.transform = 'translateY(-50%)';
-                break;
-            case 'bl':
-                style.left = offsetX;
-                style.bottom = offsetY;
-                break;
-            case 'bc':
-                style.left = '50%';
-                style.bottom = offsetY;
-                style.transform = 'translateX(-50%)';
-                break;
-            case 'br':
-            default:
-                style.right = offsetX;
-                style.bottom = offsetY;
-                break;
-        }
-        const baseTransform = style.transform ? `${style.transform} ` : '';
-        style.transform = `${baseTransform}rotate(${watermarkRotate}deg)`;
-        style.transformOrigin = 'center';
-        return style;
-    }, [watermarkPreviewConfig, watermarkPosition, watermarkRotate]);
-    const watermarkTileGrid = useMemo(() => {
-        if (!watermarkTiled || !previewBaseMetrics || !watermarkPreviewConfig || !watermarkTileMetrics) return null;
-        const gapX = watermarkPreviewConfig.offsetX;
-        const gapY = watermarkPreviewConfig.offsetY;
-        const stepX = Math.max(1, watermarkTileMetrics.width + gapX);
-        const stepY = Math.max(1, watermarkTileMetrics.height + gapY);
-        const coverWidth = previewBaseMetrics.width * 2;
-        const coverHeight = previewBaseMetrics.height * 2;
-        let cols = Math.ceil(coverWidth / stepX);
-        let rows = Math.ceil(coverHeight / stepY);
-        const total = cols * rows;
-        if (total > 400) {
-            const ratio = Math.sqrt(400 / total);
-            cols = Math.max(1, Math.floor(cols * ratio));
-            rows = Math.max(1, Math.floor(rows * ratio));
-        }
-        return {
-            cols,
-            rows,
-            coverWidth,
-            coverHeight,
-        };
-    }, [watermarkTiled, previewBaseMetrics, watermarkPreviewConfig, watermarkTileMetrics]);
-    const watermarkTilePositions = useMemo(() => {
-        if (!watermarkTileGrid || !watermarkTileMetrics || !watermarkPreviewConfig) return null;
-        const gapX = watermarkPreviewConfig.offsetX;
-        const gapY = watermarkPreviewConfig.offsetY;
-        const stepX = Math.max(1, watermarkTileMetrics.width + gapX);
-        const stepY = Math.max(1, watermarkTileMetrics.height + gapY);
-        const startX = -watermarkTileMetrics.width;
-        const startY = -watermarkTileMetrics.height;
-        const positions: Array<{ x: number; y: number }> = [];
-        for (let row = 0; row < watermarkTileGrid.rows; row += 1) {
-            const y = startY + row * stepY;
-            for (let col = 0; col < watermarkTileGrid.cols; col += 1) {
-                const x = startX + col * stepX;
-                positions.push({ x, y });
-            }
-        }
-        return positions;
-    }, [watermarkTileGrid, watermarkTileMetrics, watermarkPreviewConfig]);
-    const previewGrainOpacity = isImageProcessor
-        ? clampNumber(filterGrain / 100 * 0.35, 0, 0.35)
-        : 0;
-    const previewVignetteOpacity = isImageProcessor
-        ? clampNumber(filterVignette / 100 * 0.6, 0, 0.6)
-        : 0;
-    const isCompareActive = isComparing && Boolean(previewSrc);
-    const effectivePreviewFilter = isCompareActive ? '' : previewFilter;
-    const effectivePreviewTransform = isCompareActive ? '' : previewTransform;
-    const effectiveGrainOpacity = isCompareActive ? 0 : previewGrainOpacity;
-    const effectiveVignetteOpacity = isCompareActive ? 0 : previewVignetteOpacity;
-
-    useEffect(() => {
-        if (!showCropFrame) {
-            setCropOffset({ x: 0, y: 0 });
-            return;
-        }
-        setCropOffset({ x: 0, y: 0 });
-    }, [adjustCropRatio, previewPath, showCropFrame]);
-
-    useEffect(() => {
-        if (!cropImageMetrics) return;
-        setCropOffset((prev) => {
-            const nextX = clampNumber(prev.x, -cropImageMetrics.maxOffsetX, cropImageMetrics.maxOffsetX);
-            const nextY = clampNumber(prev.y, -cropImageMetrics.maxOffsetY, cropImageMetrics.maxOffsetY);
-            if (nextX === prev.x && nextY === prev.y) return prev;
-            return { x: nextX, y: nextY };
-        });
-    }, [cropImageMetrics]);
-
-    useEffect(() => {
-        const el = previewContainerRef.current;
-        if (!el || typeof ResizeObserver === 'undefined') return;
-        const observer = new ResizeObserver((entries) => {
-            if (!entries.length) return;
-            const { width, height } = entries[0].contentRect;
-            setPreviewContainerSize((prev) => (
-                prev.width === width && prev.height === height ? prev : { width, height }
-            ));
-        });
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, []);
-
-    const handleCropPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-        if (!isCropInteractive || !cropImageMetrics) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setIsCropDragging(true);
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        cropDragRef.current = {
-            startX: e.clientX,
-            startY: e.clientY,
-            offsetX: cropOffset.x,
-            offsetY: cropOffset.y,
-        };
-    }, [cropOffset, cropImageMetrics, isCropInteractive]);
-
-    const handleCropPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-        if (!cropDragRef.current || !cropImageMetrics) return;
-        const dx = e.clientX - cropDragRef.current.startX;
-        const dy = e.clientY - cropDragRef.current.startY;
-        const nextX = clampNumber(
-            cropDragRef.current.offsetX + dx,
-            -cropImageMetrics.maxOffsetX,
-            cropImageMetrics.maxOffsetX,
-        );
-        const nextY = clampNumber(
-            cropDragRef.current.offsetY + dy,
-            -cropImageMetrics.maxOffsetY,
-            cropImageMetrics.maxOffsetY,
-        );
-        setCropOffset((prev) => (
-            prev.x === nextX && prev.y === nextY ? prev : { x: nextX, y: nextY }
-        ));
-    }, [cropImageMetrics]);
-
-    const handleCropPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-        if (!cropDragRef.current) return;
-        try {
-            (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-        } catch {
-            // ignore
-        }
-        cropDragRef.current = null;
-        setIsCropDragging(false);
-    }, []);
 
     useEffect(() => {
         loadOutputSettings();
     }, [id]);
+
+    // Watermark live preview (debounced; keyed on serialized style so unrelated
+    // re-renders such as progress ticks never reset the timer)
+    const wmStyleKey = JSON.stringify(wmParams);
+    useEffect(() => {
+        if (id !== 'watermark') {
+            setWmPreviewUrl('');
+            return;
+        }
+        const file = dropResult?.files?.[0];
+        if (!file) {
+            setWmPreviewUrl('');
+            return;
+        }
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            try {
+                const style = JSON.parse(wmStyleKey) as WatermarkStyle;
+                const app = getAppBindings();
+                const res = await app?.AddWatermark?.({
+                    action: 'preview',
+                    input_path: normalizePath(file.input_path),
+                    text: style.text,
+                    font_name: style.fontName,
+                    size_mode: style.sizeMode,
+                    font_size: style.fontSize,
+                    color: style.color,
+                    opacity: style.opacity,
+                    rotation: style.rotation,
+                    position: style.position,
+                    margin: style.margin,
+                    tiled: style.tiled,
+                    tile_gap_x: style.tileGapX,
+                    tile_gap_y: style.tileGapY,
+                    stroke_width: style.strokeWidth,
+                    stroke_color: style.strokeColor,
+                    shadow: style.shadow,
+                });
+                if (!cancelled) setWmPreviewUrl(res?.success && res.data_url ? res.data_url : '');
+            } catch {
+                if (!cancelled) setWmPreviewUrl('');
+            }
+        }, 350);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [id, wmStyleKey, dropResult?.files]);
+
+    // Palette auto-extract
+    useEffect(() => {
+        if (id !== 'palette') {
+            setPaletteData(null);
+            return;
+        }
+        const file = dropResult?.files?.[0];
+        if (!file) {
+            setPaletteData(null);
+            return;
+        }
+        let cancelled = false;
+        setPaletteLoading(true);
+        void (async () => {
+            try {
+                const app = getAppBindings();
+                const res = await app?.PaletteTool?.({ action: 'extract', input_path: normalizePath(file.input_path) });
+                if (!cancelled) {
+                    setPaletteData(res?.success && res.theme_color && Array.isArray(res.colors)
+                        ? { theme_color: res.theme_color, colors: res.colors }
+                        : null);
+                }
+            } catch {
+                if (!cancelled) setPaletteData(null);
+            } finally {
+                if (!cancelled) setPaletteLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [id, dropResult?.files]);
+
+    // Rich text live preview (debounced, serialized key)
+    const rtKey = JSON.stringify(rtParams);
+    useEffect(() => {
+        if (id !== 'richtext') {
+            setRtPreviewUrl('');
+            return;
+        }
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            try {
+                const style = JSON.parse(rtKey) as typeof rtParams;
+                const app = getAppBindings();
+                const res = await app?.RenderRichText?.({
+                    blocks: style.blocks as unknown as Array<Record<string, any>>,
+                    width: style.width,
+                    padding: style.padding,
+                    background: style.background,
+                    text_color: style.textColor,
+                    heading_color: style.headingColor,
+                    accent_color: style.accentColor,
+                    font_size: style.fontSize,
+                    line_height: style.lineHeight,
+                    font_name: style.fontName,
+                    preview: true,
+                });
+                if (!cancelled) setRtPreviewUrl(res?.success && res.data_url ? res.data_url : '');
+            } catch {
+                if (!cancelled) setRtPreviewUrl('');
+            }
+        }, 450);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [id, rtKey]);
 
     useEffect(() => {
         if (gifInputType === 'images' && gifMode !== '导出') {
@@ -885,77 +493,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         setMaintainAspect={setCompMaintainAspect}
                     />
                 );
-            case 'watermark':
-                return (
-                    <WatermarkSettings
-                        type={watermarkType}
-                        setType={setWatermarkType}
-                        text={watermarkText}
-                        setText={setWatermarkText}
-                        imagePath={watermarkImagePath}
-                        setImagePath={setWatermarkImagePath}
-                        position={watermarkPosition}
-                        setPosition={setWatermarkPosition}
-                        opacity={watermarkOpacity}
-                        setOpacity={setWatermarkOpacity}
-                        rotate={watermarkRotate}
-                        setRotate={setWatermarkRotate}
-                        size={watermarkSize}
-                        setSize={setWatermarkSize}
-                        tiled={watermarkTiled}
-                        setTiled={setWatermarkTiled}
-                        blendMode={watermarkBlendMode}
-                        setBlendMode={setWatermarkBlendMode}
-                        shadow={watermarkShadow}
-                        setShadow={setWatermarkShadow}
-                        margin={watermarkMargin}
-                        setMargin={setWatermarkMargin}
-                        font={watermarkFont}
-                        setFont={setWatermarkFont}
-                        color={watermarkColor}
-                        setColor={setWatermarkColor}
-                        useSystemFonts={useSystemFonts}
-                        setUseSystemFonts={setUseSystemFonts}
-                        isSystemFontsLoading={isSystemFontsLoading}
-                        fontOptions={fontOptions}
-                        systemFontsCount={systemFonts.length}
-                    />
-                );
-            case 'image_processor':
-                return (
-                    <ImageProcessorPanel
-                        exposure={adjustExposure}
-                        setExposure={setAdjustExposure}
-                        contrast={adjustContrast}
-                        setContrast={setAdjustContrast}
-                        saturation={adjustSaturation}
-                        setSaturation={setAdjustSaturation}
-                        sharpness={adjustSharpness}
-                        setSharpness={setAdjustSharpness}
-                        vibrance={adjustVibrance}
-                        setVibrance={setAdjustVibrance}
-                        hue={adjustHue}
-                        setHue={setAdjustHue}
-                        rotate={adjustRotate}
-                        setRotate={setAdjustRotate}
-                        flipH={adjustFlipH}
-                        setFlipH={setAdjustFlipH}
-                        flipV={adjustFlipV}
-                        setFlipV={setAdjustFlipV}
-                        cropRatio={adjustCropRatio}
-                        setCropRatio={setAdjustCropRatio}
-                        intensity={filterIntensity}
-                        setIntensity={setFilterIntensity}
-                        grain={filterGrain}
-                        setGrain={setFilterGrain}
-                        vignette={filterVignette}
-                        setVignette={setFilterVignette}
-                        filterSelected={filterSelected}
-                        setFilterSelected={setFilterSelected}
-                        previewSrc={previewSrc}
-                        getPreviewFilter={(index) => buildFilterPreviewFilter(index, filterIntensity)}
-                    />
-                );
             case 'pdf':
                 return (
                     <PdfSettings
@@ -975,6 +512,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         setTitle={setPdfTitle}
                         author={pdfAuthor}
                         setAuthor={setPdfAuthor}
+                        password={pdfPassword}
+                        setPassword={setPdfPassword}
                     />
                 );
             case 'gif':
@@ -1003,11 +542,78 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         originalHeight={gifOriginalSize.height}
                     />
                 );
+            case 'grid':
+                return (
+                    <GridSettings
+                        gridSize={gridSize}
+                        setGridSize={setGridSize}
+                        format={gridFormat}
+                        setFormat={setGridFormat}
+                    />
+                );
+            case 'split':
+                return (
+                    <SplitSettings
+                        rows={splitParams.rows} setRows={splitParams.setRows}
+                        cols={splitParams.cols} setCols={splitParams.setCols}
+                        mode={splitParams.mode} setMode={splitParams.setMode}
+                        format={splitParams.format} setFormat={splitParams.setFormat}
+                    />
+                );
+            case 'watermark':
+                return <WatermarkSettings style={wmParams} patch={wmPatch} />;
+            case 'resize':
+                return (
+                    <ResizeSettings
+                        mode={resizeParams.mode} setMode={resizeParams.setMode}
+                        value={resizeParams.value} setValue={resizeParams.setValue}
+                        format={resizeParams.format as 'auto' | 'PNG' | 'JPG'}
+                        setFormat={resizeParams.setFormat as (v: 'auto' | 'PNG' | 'JPG') => void}
+                    />
+                );
+            case 'stitch':
+                return (
+                    <StitchSettings
+                        direction={stitchParams.direction} setDirection={stitchParams.setDirection}
+                        gap={stitchParams.gap} setGap={stitchParams.setGap}
+                        background={stitchParams.background} setBackground={stitchParams.setBackground}
+                        targetLength={stitchParams.targetLength} setTargetLength={stitchParams.setTargetLength}
+                        border={stitchParams.border} setBorder={stitchParams.setBorder}
+                        outputFormat={stitchParams.outputFormat} setOutputFormat={stitchParams.setOutputFormat}
+                    />
+                );
+            case 'palette':
+                return (
+                    <PalettePanel
+                        data={paletteData}
+                        loading={paletteLoading}
+                        swatchHeight={swatchHeight}
+                        setSwatchHeight={setSwatchHeight}
+                        includeText={includeText}
+                        setIncludeText={setIncludeText}
+                        onExport={(kind) => void handlePaletteExport(kind)}
+                        busy={paletteBusy}
+                    />
+                );
+            case 'richtext':
+                return (
+                    <RichTextSettings
+                        blocks={rtParams.blocks} setBlocks={rtParams.setBlocks}
+                        width={rtParams.width} setWidth={rtParams.setWidth}
+                        padding={rtParams.padding} setPadding={rtParams.setPadding}
+                        background={rtParams.background} setBackground={rtParams.setBackground}
+                        textColor={rtParams.textColor} setTextColor={rtParams.setTextColor}
+                        headingColor={rtParams.headingColor} setHeadingColor={rtParams.setHeadingColor}
+                        accentColor={rtParams.accentColor} setAccentColor={rtParams.setAccentColor}
+                        fontSize={rtParams.fontSize} setFontSize={rtParams.setFontSize}
+                        lineHeight={rtParams.lineHeight} setLineHeight={rtParams.setLineHeight}
+                        fontName={rtParams.fontName} setFontName={rtParams.setFontName}
+                        fileName={rtParams.fileName} setFileName={rtParams.setFileName}
+                    />
+                );
             default: return <div className="text-gray-400 text-sm text-center py-10">暂无特殊设置</div>;
         }
     };
-
-    const handleFilesSelected = (_files: File[]) => {};
 
     const inputCount = dropResult?.files?.length ?? 0;
     const effectiveOutputDir = useMemo(() => {
@@ -1043,438 +649,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     };
 
-    const dedupeDroppedFiles = (files: DroppedFile[]) => {
-        const seen = new Set<string>();
-        const next: DroppedFile[] = [];
-        files.forEach((file) => {
-            const normalizedInput = normalizePath(file.input_path || '');
-            if (!normalizedInput) return;
-            const key = normalizePath(normalizedInput).toLowerCase();
-            if (seen.has(key)) return;
-            seen.add(key);
-            next.push({
-                ...file,
-                input_path: normalizedInput,
-                source_root: normalizePath(file.source_root || ''),
-                relative_path: (file.relative_path || '').replace(/\\/g, '/'),
-            });
-        });
-        return next;
-    };
-    const joinPath = (base: string, rel: string) => `${normalizePath(base)}/${rel.replace(/^\/+/, '')}`;
-    const pathLookupKey = (path: string) => normalizePath(path).toLowerCase();
-    const basename = (p: string) => p.replace(/\\/g, '/').split('/').pop() || p;
-    const extname = (p: string) => {
-        const normalized = p.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('.');
-        if (idx === -1) return '';
-        return normalized.slice(idx + 1).toLowerCase();
-    };
-    const sanitizeFileName = (name: string) => (name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
-    const stripExtension = (name: string) => {
-        const idx = name.lastIndexOf('.');
-        if (idx <= 0) return name;
-        return name.slice(0, idx);
-    };
-    const sanitizeOutputName = (name: string) => {
-        const cleaned = sanitizeFileName(name).replace(/[. ]+$/g, '').trim();
-        if (!cleaned) return '';
-        const upper = cleaned.toUpperCase();
-        const reserved = new Set([
-            'CON', 'PRN', 'AUX', 'NUL',
-            'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-            'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
-        ]);
-        if (reserved.has(upper)) {
-            return `_${cleaned}`;
-        }
-        return cleaned;
-    };
-    const formatDatePart = (date: Date, pattern: string) => {
-        const yyyy = `${date.getFullYear()}`;
-        const MM = `${date.getMonth() + 1}`.padStart(2, '0');
-        const dd = `${date.getDate()}`.padStart(2, '0');
-        const HH = `${date.getHours()}`.padStart(2, '0');
-        const mm = `${date.getMinutes()}`.padStart(2, '0');
-        const ss = `${date.getSeconds()}`.padStart(2, '0');
-        return pattern
-            .replace(/YYYY/g, yyyy)
-            .replace(/MM/g, MM)
-            .replace(/DD/g, dd)
-            .replace(/HH/g, HH)
-            .replace(/mm/g, mm)
-            .replace(/ss/g, ss);
-    };
-    const applyOutputTemplate = (
-        template: string,
-        vars: {
-            basename: string;
-            prefix: string;
-            seq: number;
-            op: string;
-            date: Date;
-        },
-    ) => template.replace(/\{([a-z_]+)(?::([^}]+))?\}/gi, (_match, keyRaw, fmtRaw) => {
-        const key = String(keyRaw).toLowerCase();
-        const fmt = typeof fmtRaw === 'string' ? fmtRaw : '';
-        if (key === 'basename') return vars.basename;
-        if (key === 'prefix') return vars.prefix;
-        if (key === 'op') return vars.op;
-        if (key === 'date') {
-            const pattern = fmt || 'YYYYMMDD';
-            return formatDatePart(vars.date, pattern);
-        }
-        if (key === 'time') {
-            const pattern = fmt || 'HHmmss';
-            return formatDatePart(vars.date, pattern);
-        }
-        if (key === 'seq') {
-            const width = /^\d+$/.test(fmt) ? Number(fmt) : 0;
-            const text = String(vars.seq);
-            return width > 0 ? text.padStart(width, '0') : text;
-        }
-        return '';
-    });
-    const buildOutputName = (
-        baseName: string,
-        options: {
-            template: string;
-            prefix: string;
-            seq: number;
-            op: string;
-            date: Date;
-        },
-    ) => {
-        const template = (options.template || defaultOutputSettings.output_template).trim() || defaultOutputSettings.output_template;
-        const prefixClean = sanitizeFileName(options.prefix || '');
-        const prefixValue = prefixClean ? `${prefixClean}_` : '';
-        const templateHasPrefix = /\{prefix(?:[:}])/i.test(template);
-        const rendered = applyOutputTemplate(template, {
-            basename: baseName,
-            prefix: prefixValue,
-            seq: options.seq,
-            op: options.op,
-            date: options.date,
-        }).trim();
-        let name = rendered || baseName;
-        if (!templateHasPrefix && prefixValue) {
-            name = `${prefixValue}${name}`;
-        }
-        name = sanitizeOutputName(name);
-        if (!name) {
-            name = sanitizeOutputName(baseName) || 'output';
-        }
-        if (name.length > 200) {
-            name = name.slice(0, 200);
-        }
-        return name;
-    };
-    const getRelPath = (file: DroppedFile, preserveStructure: boolean) => {
-        if (preserveStructure && file.is_from_dir_drop) {
-            return file.relative_path || basename(file.input_path);
-        }
-        return basename(file.input_path);
-    };
-    const getRelDir = (relPath: string) => {
-        const normalized = relPath.replace(/\\/g, '/');
-        const idx = normalized.lastIndexOf('/');
-        if (idx === -1) return '';
-        return normalized.slice(0, idx);
-    };
-    const buildOutputRelPath = (
-        file: DroppedFile,
-        options: {
-            ext?: string;
-            suffix?: string;
-            seq: number;
-            op: string;
-            template: string;
-            prefix: string;
-            preserveStructure: boolean;
-            date: Date;
-        },
-    ) => {
-        const rel = getRelPath(file, options.preserveStructure).replace(/\\/g, '/');
-        const relDir = getRelDir(rel);
-        const fileName = basename(rel);
-        let baseName = stripExtension(fileName);
-        const suffix = sanitizeFileName(options.suffix || '');
-        if (suffix.startsWith('_ico')) {
-            baseName = baseName.replace(/_ico\d+(?:-\d+)*$/i, '');
-        }
-        const ext = (options.ext || extname(fileName)).toLowerCase();
-        let name = buildOutputName(baseName, {
-            template: options.template,
-            prefix: options.prefix,
-            seq: options.seq,
-            op: options.op,
-            date: options.date,
-        });
-        if (suffix && !name.endsWith(suffix)) {
-            const maxBaseLen = Math.max(1, 200 - suffix.length);
-            if (name.length > maxBaseLen) {
-                name = name.slice(0, maxBaseLen);
-            }
-            name = sanitizeOutputName(`${name}${suffix}`) || `${name}${suffix}`;
-        }
-        const fullName = ext ? `${name}.${ext}` : name;
-        return relDir ? `${relDir}/${fullName}` : fullName;
-    };
-    const sanitizePdfInputName = (name: string) => sanitizeFileName(stripExtension(name || ''));
-    const normalizePdfFileName = (name: string) => {
-        const cleaned = sanitizeFileName(stripExtension(name || ''));
-        return cleaned || 'document';
-    };
-    const buildSuggestedPdfName = (list: DroppedFile[], hasDirectory?: boolean) => {
-        if (!list.length) return 'document';
-        const baseFromPath = (p: string) => stripExtension(basename(p));
-        let name = '';
-        if (hasDirectory && list[0]?.source_root) {
-            name = baseFromPath(list[0].source_root);
-        }
-        const baseNames = list.map((f) => baseFromPath(f.input_path)).filter(Boolean);
-        if (!name && baseNames.length > 0) {
-            if (baseNames.length === 1) {
-                name = baseNames[0];
-            } else {
-                let prefix = baseNames[0];
-                for (const item of baseNames.slice(1)) {
-                    while (prefix && !item.startsWith(prefix)) {
-                        prefix = prefix.slice(0, -1);
-                    }
-                    if (!prefix) break;
-                }
-                const trimmed = prefix.replace(/[_\-\s.]+$/g, '').trim();
-                name = trimmed.length >= 3 ? trimmed : baseNames[0];
-                if (!hasDirectory) {
-                    name = `${name}_merged`;
-                }
-            }
-        }
-        return normalizePdfFileName(name);
-    };
-    const buildCurrentPresetPayload = (): Record<string, any> => {
-        const shared = {
-            output_settings: outputSettings,
-            output_dir: outputDir,
-        };
-        if (id === 'converter') {
-            return {
-                ...shared,
-                convFormat,
-                convQuality,
-                convCompressLevel,
-                convIcoSizes,
-                convResizeMode,
-                convScalePercent,
-                convFixedWidth,
-                convFixedHeight,
-                convLongEdge,
-                convKeepMetadata,
-                convMaintainAR,
-                convOverwriteSource,
-            };
-        }
-        if (id === 'compressor') {
-            return {
-                ...shared,
-                compMode,
-                compTargetSize,
-                compTargetSizeKB,
-                compEngine,
-                compOverwriteSource,
-            };
-        }
-        if (id === 'pdf') {
-            return {
-                ...shared,
-                pdfSize,
-                pdfLayout,
-                pdfFit,
-                pdfMarginMm,
-                pdfCompression,
-                pdfFileName,
-                pdfTitle,
-                pdfAuthor,
-            };
-        }
-        if (id === 'gif') {
-            return {
-                ...shared,
-                gifMode,
-                gifExportFormat,
-                gifConvertFormat,
-                gifSpeedPercent,
-                gifCompressQuality,
-                gifBuildFps,
-                gifResizeWidth,
-                gifResizeHeight,
-                gifResizeMaintainAR,
-            };
-        }
-        if (id === 'watermark') {
-            return {
-                ...shared,
-                watermarkType,
-                watermarkText,
-                watermarkImagePath,
-                watermarkPosition,
-                watermarkOpacity,
-                watermarkRotate,
-                watermarkSize,
-                watermarkTiled,
-                watermarkBlendMode,
-                watermarkShadow,
-                watermarkMargin,
-                watermarkFont,
-                watermarkColor,
-            };
-        }
-        if (id === 'image_processor') {
-            return {
-                ...shared,
-                adjustExposure,
-                adjustContrast,
-                adjustSaturation,
-                adjustSharpness,
-                adjustVibrance,
-                adjustHue,
-                adjustRotate,
-                adjustFlipH,
-                adjustFlipV,
-                adjustCropRatio,
-                filterIntensity,
-                filterGrain,
-                filterVignette,
-                filterSelected,
-            };
-        }
-        return shared;
-    };
-    const applyPresetPayload = (payload: Record<string, any>) => {
-        if (!payload || typeof payload !== 'object') return;
-        if (payload.output_settings && typeof payload.output_settings === 'object') {
-            setOutputSettings(normalizeOutputSettings(payload.output_settings));
-        }
-        if (typeof payload.output_dir === 'string') {
-            setOutputDir(payload.output_dir);
-        }
-        if (id === 'converter') {
-            if (typeof payload.convFormat === 'string') setConvFormat(payload.convFormat);
-            if (typeof payload.convQuality === 'number') setConvQuality(payload.convQuality);
-            if (typeof payload.convCompressLevel === 'number') setConvCompressLevel(payload.convCompressLevel);
-            if (Array.isArray(payload.convIcoSizes)) setConvIcoSizes(payload.convIcoSizes.filter((n: unknown) => typeof n === 'number'));
-            if (typeof payload.convResizeMode === 'string') setConvResizeMode(payload.convResizeMode);
-            if (typeof payload.convScalePercent === 'number') setConvScalePercent(payload.convScalePercent);
-            if (typeof payload.convFixedWidth === 'number') setConvFixedWidth(payload.convFixedWidth);
-            if (typeof payload.convFixedHeight === 'number') setConvFixedHeight(payload.convFixedHeight);
-            if (typeof payload.convLongEdge === 'number') setConvLongEdge(payload.convLongEdge);
-            if (typeof payload.convKeepMetadata === 'boolean') setConvKeepMetadata(payload.convKeepMetadata);
-            if (typeof payload.convMaintainAR === 'boolean') setConvMaintainAR(payload.convMaintainAR);
-            if (typeof payload.convOverwriteSource === 'boolean') setConvOverwriteSource(payload.convOverwriteSource);
-        } else if (id === 'compressor') {
-            if (typeof payload.compMode === 'string') setCompMode(payload.compMode);
-            if (typeof payload.compTargetSize === 'boolean') setCompTargetSize(payload.compTargetSize);
-            if (typeof payload.compTargetSizeKB === 'number') setCompTargetSizeKB(payload.compTargetSizeKB);
-            if (typeof payload.compEngine === 'string') setCompEngine(payload.compEngine);
-            if (typeof payload.compOverwriteSource === 'boolean') setCompOverwriteSource(payload.compOverwriteSource);
-        } else if (id === 'pdf') {
-            if (typeof payload.pdfSize === 'string') setPdfSize(payload.pdfSize);
-            if (typeof payload.pdfLayout === 'string') setPdfLayout(payload.pdfLayout);
-            if (typeof payload.pdfFit === 'string') setPdfFit(payload.pdfFit);
-            if (typeof payload.pdfMarginMm === 'number') setPdfMarginMm(payload.pdfMarginMm);
-            if (typeof payload.pdfCompression === 'string') setPdfCompression(payload.pdfCompression);
-            if (typeof payload.pdfFileName === 'string') setPdfFileName(payload.pdfFileName);
-            if (typeof payload.pdfTitle === 'string') setPdfTitle(payload.pdfTitle);
-            if (typeof payload.pdfAuthor === 'string') setPdfAuthor(payload.pdfAuthor);
-        } else if (id === 'gif') {
-            if (typeof payload.gifMode === 'string') setGifMode(payload.gifMode);
-            if (typeof payload.gifExportFormat === 'string') setGifExportFormat(payload.gifExportFormat);
-            if (typeof payload.gifConvertFormat === 'string') setGifConvertFormat(payload.gifConvertFormat);
-            if (typeof payload.gifSpeedPercent === 'number') {
-                setGifSpeedPercent(normalizeGifSpeedPercent(payload.gifSpeedPercent));
-            }
-            if (typeof payload.gifCompressQuality === 'number') setGifCompressQuality(payload.gifCompressQuality);
-            if (typeof payload.gifBuildFps === 'number') setGifBuildFps(payload.gifBuildFps);
-            if (typeof payload.gifResizeWidth === 'number') handleGifResizeWidthChange(payload.gifResizeWidth);
-            if (typeof payload.gifResizeHeight === 'number') handleGifResizeHeightChange(payload.gifResizeHeight);
-            if (typeof payload.gifResizeMaintainAR === 'boolean') setGifResizeMaintainAR(payload.gifResizeMaintainAR);
-        } else if (id === 'watermark') {
-            if (typeof payload.watermarkType === 'string') setWatermarkType(payload.watermarkType);
-            if (typeof payload.watermarkText === 'string') setWatermarkText(payload.watermarkText);
-            if (typeof payload.watermarkImagePath === 'string') setWatermarkImagePath(payload.watermarkImagePath);
-            if (typeof payload.watermarkPosition === 'string') setWatermarkPosition(payload.watermarkPosition);
-            if (typeof payload.watermarkOpacity === 'number') setWatermarkOpacity(payload.watermarkOpacity);
-            if (typeof payload.watermarkRotate === 'number') setWatermarkRotate(payload.watermarkRotate);
-            if (typeof payload.watermarkSize === 'number') setWatermarkSize(payload.watermarkSize);
-            if (typeof payload.watermarkTiled === 'boolean') setWatermarkTiled(payload.watermarkTiled);
-            if (typeof payload.watermarkBlendMode === 'string') setWatermarkBlendMode(payload.watermarkBlendMode);
-            if (typeof payload.watermarkShadow === 'boolean') setWatermarkShadow(payload.watermarkShadow);
-            if (payload.watermarkMargin && typeof payload.watermarkMargin === 'object') {
-                setWatermarkMargin({
-                    x: Number(payload.watermarkMargin.x) || 0,
-                    y: Number(payload.watermarkMargin.y) || 0,
-                });
-            }
-            if (typeof payload.watermarkFont === 'string') setWatermarkFont(payload.watermarkFont);
-            if (typeof payload.watermarkColor === 'string') setWatermarkColor(payload.watermarkColor);
-        } else if (id === 'image_processor') {
-            if (typeof payload.adjustExposure === 'number') setAdjustExposure(payload.adjustExposure);
-            if (typeof payload.adjustContrast === 'number') setAdjustContrast(payload.adjustContrast);
-            if (typeof payload.adjustSaturation === 'number') setAdjustSaturation(payload.adjustSaturation);
-            if (typeof payload.adjustSharpness === 'number') setAdjustSharpness(payload.adjustSharpness);
-            if (typeof payload.adjustVibrance === 'number') setAdjustVibrance(payload.adjustVibrance);
-            if (typeof payload.adjustHue === 'number') setAdjustHue(payload.adjustHue);
-            if (typeof payload.adjustRotate === 'number') setAdjustRotate(payload.adjustRotate);
-            if (typeof payload.adjustFlipH === 'boolean') setAdjustFlipH(payload.adjustFlipH);
-            if (typeof payload.adjustFlipV === 'boolean') setAdjustFlipV(payload.adjustFlipV);
-            if (typeof payload.adjustCropRatio === 'string') setAdjustCropRatio(payload.adjustCropRatio);
-            if (typeof payload.filterIntensity === 'number') setFilterIntensity(payload.filterIntensity);
-            if (typeof payload.filterGrain === 'number') setFilterGrain(payload.filterGrain);
-            if (typeof payload.filterVignette === 'number') setFilterVignette(payload.filterVignette);
-            if (typeof payload.filterSelected === 'number') setFilterSelected(payload.filterSelected);
-        }
-    };
-    const saveCurrentPreset = () => {
-        const name = presetNameDraft.trim() || `${feature.title}预设 ${new Date().toLocaleString()}`;
-        const now = Date.now();
-        const preset: FeaturePreset = {
-            id: `${id}-${now}`,
-            name,
-            feature_id: id,
-            created_at: now,
-            updated_at: now,
-            payload: buildCurrentPresetPayload(),
-        };
-        setFeaturePresets((prev) => {
-            const next: FeaturePresetStore = {
-                ...prev,
-                [id]: [preset, ...(prev[id] || [])],
-            };
-            saveFeaturePresetStore(next);
-            return next;
-        });
-        setSelectedPresetId(preset.id);
-        setPresetNameDraft('');
-    };
-    const applySelectedPreset = () => {
-        const target = currentFeaturePresets.find((p) => p.id === selectedPresetId);
-        if (!target) return;
-        applyPresetPayload(target.payload || {});
-    };
-    const deleteSelectedPreset = () => {
-        if (!selectedPresetId) return;
-        setFeaturePresets((prev) => {
-            const nextList = (prev[id] || []).filter((p) => p.id !== selectedPresetId);
-            const next: FeaturePresetStore = {
-                ...prev,
-                [id]: nextList,
-            };
-            saveFeaturePresetStore(next);
-            return next;
-        });
-        setSelectedPresetId('');
-    };
     const updateFailedRecordsByPath = (filePath: string) => {
         const normalized = normalizePath(filePath);
         if (!normalized) return;
@@ -1544,142 +718,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         maxHeight: '5rem',
         overflowY: 'auto',
     };
-    function toFileUrl(p: string) {
-        if (!p) return '';
-        const normalized = p.replace(/\\/g, '/');
-        if (/^[a-zA-Z]:/.test(normalized)) {
-            return `file:///${encodeURI(normalized)}`;
-        }
-        if (normalized.startsWith('/')) {
-            return `file://${encodeURI(normalized)}`;
-        }
-        return `file:///${encodeURI(normalized)}`;
-    }
     function clampNumber(value: number, min: number, max: number) {
         return Math.min(max, Math.max(min, value));
     }
-    function parseCropRatio(value: string) {
-        const text = (value || '').trim().toLowerCase();
-        if (!text || text === '自由' || text === 'free' || text === 'original') {
-            return null;
-        }
-        if (!text.includes(':')) return null;
-        const parts = text.split(':');
-        if (parts.length !== 2) return null;
-        const w = Number(parts[0]);
-        const h = Number(parts[1]);
-        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
-            return null;
-        }
-        return { w, h };
-    }
-    function buildAdjustPreviewFilter(
-        exposure: number,
-        contrast: number,
-        saturation: number,
-        vibrance: number,
-        hue: number,
-        sharpness: number,
-    ) {
-        const brightness = clampNumber(1 + exposure / 100, 0, 2);
-        const baseContrast = clampNumber(1 + contrast / 100, 0, 2);
-        const satCombined = saturation + vibrance * 0.6;
-        const saturate = clampNumber(1 + satCombined / 100, 0, 3);
-        const blurPx = sharpness < 0 ? clampNumber(Math.abs(sharpness) / 35, 0, 6) : 0;
-        const sharpnessBoost = sharpness > 0 ? clampNumber(1 + sharpness / 200, 1, 1.8) : 1;
-        const hueDeg = clampNumber(hue, -180, 180);
-
-        const parts = [
-            `brightness(${brightness})`,
-            `contrast(${(baseContrast * sharpnessBoost).toFixed(3)})`,
-            `saturate(${saturate})`,
-            `hue-rotate(${hueDeg}deg)`,
-        ];
-        if (blurPx > 0) {
-            parts.push(`blur(${blurPx.toFixed(2)}px)`);
-        }
-        return parts.join(' ');
-    }
-    function buildFilterPreviewFilter(index: number, intensity: number) {
-        const t = clampNumber(intensity / 100, 0, 1);
-        const mix = (base: number, target: number) => base + (target - base) * t;
-
-        switch (index) {
-            case 1: // 鲜艳
-                return `saturate(${mix(1, 1.8)}) contrast(${mix(1, 1.25)})`;
-            case 2: // 黑白
-                return `grayscale(${t})`;
-            case 3: // 复古
-                return `sepia(${mix(0, 0.8)}) contrast(${mix(1, 1.15)})`;
-            case 4: // 冷调
-                return `saturate(${mix(1, 1.2)}) hue-rotate(${mix(0, -18)}deg)`;
-            case 5: // 暖阳
-                return `sepia(${mix(0, 0.35)}) hue-rotate(${mix(0, 12)}deg) saturate(${mix(1, 1.2)})`;
-            case 6: // 胶片
-                return `sepia(${mix(0, 1)}) contrast(${mix(1, 1.2)}) brightness(${mix(1, 1.05)})`;
-            case 7: // 赛博
-                return `hue-rotate(${mix(0, 90)}deg) saturate(${mix(1, 1.5)}) contrast(${mix(1, 1.2)})`;
-            case 8: // 清新
-                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 1.25)})`;
-            case 9: // 日系
-                return `brightness(${mix(1, 1.12)}) contrast(${mix(1, 0.88)}) saturate(${mix(1, 1.1)})`;
-            case 10: // Lomo
-                return `contrast(${mix(1, 1.3)}) saturate(${mix(1, 1.35)})`;
-            case 11: // HDR
-                return `contrast(${mix(1, 1.45)}) saturate(${mix(1, 1.2)})`;
-            case 12: // 褪色
-                return `saturate(${mix(1, 0.65)}) brightness(${mix(1, 1.08)}) contrast(${mix(1, 0.9)})`;
-            case 13: // 磨砂
-                return `blur(${mix(0, 2)}px)`;
-            case 14: // 电影
-                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 0.9)})`;
-            case 15: // 拍立得
-                return `sepia(${mix(0, 1)}) contrast(${mix(1, 1.1)}) brightness(${mix(1, 1.08)})`;
-            case 16: // 夕阳
-                return `sepia(${mix(0, 0.35)}) saturate(${mix(1, 1.3)}) hue-rotate(${mix(0, -10)}deg) brightness(${mix(1, 1.05)})`;
-            case 17: // 海蓝
-                return `hue-rotate(${mix(0, -25)}deg) saturate(${mix(1, 1.2)}) brightness(${mix(1, 1.02)})`;
-            case 18: // 森系
-                return `hue-rotate(${mix(0, 18)}deg) saturate(${mix(1, 1.15)}) contrast(${mix(1, 1.05)})`;
-            case 19: // 紫雾
-                return `hue-rotate(${mix(0, 35)}deg) saturate(${mix(1, 1.2)})`;
-            case 20: // 琥珀
-                return `sepia(${mix(0, 0.5)}) saturate(${mix(1, 1.1)}) contrast(${mix(1, 1.08)})`;
-            case 21: // 北欧
-                return `brightness(${mix(1, 1.08)}) saturate(${mix(1, 0.9)}) contrast(${mix(1, 0.92)})`;
-            case 22: // 旧照片
-                return `sepia(${mix(0, 0.7)}) contrast(${mix(1, 0.9)}) brightness(${mix(1, 1.05)}) saturate(${mix(1, 0.8)})`;
-            case 23: // 黑金
-                return `grayscale(${mix(0, 1)}) contrast(${mix(1, 1.35)})`;
-            case 24: // 高调
-                return `brightness(${mix(1, 1.2)}) contrast(${mix(1, 0.9)})`;
-            case 25: // 低调
-                return `brightness(${mix(1, 0.75)}) contrast(${mix(1, 1.2)})`;
-            case 26: // 雾霭
-                return `contrast(${mix(1, 0.85)}) brightness(${mix(1, 1.05)})`;
-            case 27: // 霓虹
-                return `saturate(${mix(1, 1.6)}) contrast(${mix(1, 1.15)}) hue-rotate(${mix(0, 15)}deg)`;
-            case 28: // 哑光
-                return `contrast(${mix(1, 0.85)}) saturate(${mix(1, 0.9)}) brightness(${mix(1, 1.03)})`;
-            case 29: // 冰感
-                return `hue-rotate(${mix(0, -10)}deg) saturate(${mix(1, 0.85)}) brightness(${mix(1, 1.1)})`;
-            case 30: // 咖啡
-                return `sepia(${mix(0, 0.5)}) brightness(${mix(1, 0.98)}) contrast(${mix(1, 1.05)})`;
-            case 31: // 焦糖
-                return `sepia(${mix(0, 0.4)}) saturate(${mix(1, 1.2)}) contrast(${mix(1, 1.1)})`;
-            case 32: // 青橙
-                return `hue-rotate(${mix(0, 12)}deg) saturate(${mix(1, 1.25)}) contrast(${mix(1, 1.1)})`;
-            case 33: // 银盐
-                return `grayscale(${mix(0, 0.4)}) contrast(${mix(1, 1.15)}) brightness(${mix(1, 1.02)})`;
-            case 34: // 清锐
-                return `contrast(${mix(1, 1.25)}) saturate(${mix(1, 1.1)})`;
-            case 35: // 低对比
-                return `contrast(${mix(1, 0.8)}) saturate(${mix(1, 0.95)})`;
-            default:
-                return '';
-        }
-    }
-
     useEffect(() => {
         if (!dropResult || dropResult.files.length === 0) {
             setPdfFileName('');
@@ -1688,20 +729,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         const suggested = buildSuggestedPdfName(dropResult.files, dropResult.has_directory);
         setPdfFileName(suggested);
     }, [dropResult]);
-
-    useEffect(() => {
-        if (!isPreviewFeature) {
-            setPreviewPath('');
-            setPreviewLoadError('');
-            return;
-        }
-        const first = dropResult?.files?.[0];
-        if (first?.input_path) {
-            setPreviewPath(normalizePath(first.input_path));
-        } else {
-            setPreviewPath('');
-        }
-    }, [dropResult, isPreviewFeature]);
 
 
     const handlePathsExpanded = useCallback((result: ExpandDroppedPathsResult) => {
@@ -1732,6 +759,40 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     }, [isProcessing]);
 
+    const handlePaletteExport = async (kind: 'palette' | 'combined') => {
+        const file = dropResult?.files?.[0];
+        if (!file) {
+            showToast('请先拖入图片', 'error');
+            return;
+        }
+        setPaletteBusy(true);
+        try {
+            const stem = basename(file.input_path).replace(/\.[^.]+$/, '');
+            const dir = effectiveOutputDir || dirname(file.input_path);
+            const outPath = joinPath(dir, `${stem}_palette_${kind === 'palette' ? 'strip' : 'combined'}.png`);
+            const app = getAppBindings();
+            const res = await app?.PaletteTool?.({
+                action: kind === 'palette' ? 'export_palette' : 'export_combined',
+                input_path: normalizePath(file.input_path),
+                output_path: outPath,
+                swatch_height: swatchHeight,
+                include_hex_text: includeText,
+            });
+            if (res?.success) {
+                showToast('已导出', 'success');
+                const openPath = (getAppBindings() as any)?.OpenPath;
+                if (typeof openPath === 'function') void openPath({ path: dir });
+            } else {
+                showToast(res?.error || '导出失败', 'error');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('导出失败', 'error');
+        } finally {
+            setPaletteBusy(false);
+        }
+    };
+
     const handleStartProcessing = async (overrideFiles?: DroppedFile[]) => {
         if (isProcessing) return;
         cancelRequestedRef.current = false;
@@ -1740,7 +801,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         resetProgress(0);
         const useOverrideFiles = Array.isArray(overrideFiles);
         const normalizedOverrideFiles = useOverrideFiles ? dedupeDroppedFiles(overrideFiles || []) : [];
-        if (!useOverrideFiles && (!dropResult || dropResult.files.length === 0)) {
+        if (!useOverrideFiles && id !== 'richtext' && (!dropResult || dropResult.files.length === 0)) {
             setLastMessage('请先拖入文件或文件夹');
             return;
         }
@@ -1781,9 +842,24 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
         let currentRunFiles: DroppedFile[] = [];
         const activeHasDirectory = useOverrideFiles ? true : Boolean(dropResult?.has_directory);
+        // Returns '' when conflictStrategy==='skip' and the target already exists (caller must skip the item).
         const resolveUniquePath = async (candidate: string) => {
             const normalized = normalizePath(candidate);
-            if (conflictStrategy !== 'rename') {
+            if (conflictStrategy === 'overwrite') {
+                reservedPaths.add(normalized);
+                return normalized;
+            }
+            if (conflictStrategy === 'skip') {
+                try {
+                    const res = await appAny?.ResolveOutputPath?.({
+                        base_path: normalized,
+                        strategy: 'skip',
+                        reserved: [],
+                    });
+                    if (res?.success && res.exists) return '';
+                } catch (err) {
+                    console.error(err);
+                }
                 reservedPaths.add(normalized);
                 return normalized;
             }
@@ -1810,7 +886,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         const resolveUniquePathsBatch = async (candidates: string[]) => {
             const normalized = candidates.map((item) => normalizePath(item));
             if (!normalized.length) return [] as string[];
-            if (conflictStrategy !== 'rename' || !appAny?.ResolveOutputPaths) {
+            if (conflictStrategy === 'overwrite' || !appAny?.ResolveOutputPaths) {
+                const out: string[] = [];
+                for (const item of normalized) {
+                    out.push(await resolveUniquePath(item));
+                }
+                return out;
+            }
+            if (conflictStrategy === 'skip') {
+                try {
+                    const res = await appAny.ResolveOutputPaths({
+                        items: normalized,
+                        strategy: 'skip',
+                        reserved: Array.from(reservedPaths),
+                    });
+                    if (
+                        res?.success
+                        && Array.isArray(res.paths)
+                        && res.paths.length === normalized.length
+                        && Array.isArray(res.exists)
+                    ) {
+                        const existsFlags = res.exists;
+                        return normalized.map((item, idx) => {
+                            if (existsFlags[idx]) return '';
+                            reservedPaths.add(item);
+                            return item;
+                        });
+                    }
+                } catch (err) {
+                    console.error(err);
+                }
                 const out: string[] = [];
                 for (const item of normalized) {
                     out.push(await resolveUniquePath(item));
@@ -1838,6 +943,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         };
 
         currentRunFailedPathsRef.current = new Set<string>();
+        setCompressStats(null);
+        setRunSummary(null);
         setIsProcessing(true);
         try {
             const files = useOverrideFiles
@@ -1851,7 +958,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             void rememberRecentDirs({ inputDir: inputDirForHistory, outputDir: outDir });
             const total = files.length;
             let completed = 0;
-            const getBatchChunkSize = sharedGetBatchChunkSize;
+            const getBatchChunkSize = (itemCount: number, requestsPerItem?: number) =>
+                sharedGetBatchChunkSize(itemCount, requestsPerItem, appSettingsSnapshot.max_concurrency);
 
             if (id === 'converter') {
                 if (!appAny.Convert || !appAny.ConvertBatch) {
@@ -1906,6 +1014,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     joinPath,
                     basename,
                     stripExtension,
+                    onDone: (summary) => setRunSummary({ ...summary, outputDir: outDir }),
                 });
                 return;
             }
@@ -1972,181 +1081,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     buildOutputRelPath,
                     resolveUniquePath,
                     joinPath,
-                });
-                return;
-            }
-
-            if (id === 'watermark') {
-                if (!appAny.AddWatermark) {
-                    setLastMessage('后端未接入水印接口');
-                    return;
-                }
-                const isText = watermarkType === '文字';
-                if (!isText && !watermarkImagePath) {
-                    setLastMessage('请先选择水印图片');
-                    return;
-                }
-                const fontMap: Record<string, string> = {
-                    'Sans Serif': 'arial',
-                    'Serif': 'times',
-                    'Mono': 'cour',
-                    'Handwriting': 'comic sans ms',
-                };
-                const blendMap: Record<string, string> = {
-                    '正常': 'normal',
-                    '正片叠底 (Multiply)': 'multiply',
-                    '滤色 (Screen)': 'screen',
-                    '叠加 (Overlay)': 'overlay',
-                    '柔光 (Soft Light)': 'soft_light',
-                };
-                const textValue = watermarkText.trim() || '© ImageFlow';
-                const opacity = clampNumber(watermarkOpacity / 100, 0, 1);
-                const scale = clampNumber(watermarkSize / 100, 0.02, 1);
-                const fontSize = Math.max(8, Math.round(36 * (watermarkSize / 40)));
-                const fontName = fontMap[watermarkFont] || watermarkFont;
-                const blendMode = blendMap[watermarkBlendMode] || 'normal';
-                const resolvedPosition = resolveWatermarkBackendPosition(watermarkPosition);
-
-                await runGenericBatch({
-                    ctx: {
-                        app: appAny,
-                        files,
-                        total,
-                        cancelRequestedRef,
-                        setCancelRequested,
-                        setProgressThrottled,
-                        flushProgress,
-                        setLastMessage,
-                        reportTaskFailure,
-                        reportBatchTaskFailure,
-                        getBatchChunkSize,
-                        normalizePath,
-                    },
-                    taskName: '图片水印',
-                    label: '水印',
-                    fallbackError: '水印失败',
-                    canBatch: Boolean(appAny.AddWatermarkBatch),
-                    runSingle: (item) => appAny.AddWatermark!(item),
-                    runBatch: appAny.AddWatermarkBatch ? (items) => appAny.AddWatermarkBatch!(items) : undefined,
-                    buildChunk: async (group, seqStart) => {
-                        let seq = seqStart;
-                        const chunk: models.WatermarkRequest[] = [];
-                        for (const f of group) {
-                            if (cancelRequestedRef.current) break;
-                            const outRel = buildOutputRelPath(f, {
-                                suffix: '_watermark',
-                                seq,
-                                op: 'watermark',
-                                template: outputTemplate,
-                                prefix: outputPrefix,
-                                preserveStructure,
-                                date: batchTime,
-                            });
-                            chunk.push({
-                                input_path: normalizePath(f.input_path),
-                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                                watermark_type: isText ? 'text' : 'image',
-                                text: textValue,
-                                image_path: watermarkImagePath ? normalizePath(watermarkImagePath) : '',
-                                position: resolvedPosition,
-                                opacity,
-                                scale,
-                                font_size: fontSize,
-                                font_color: watermarkColor,
-                                rotation: watermarkRotate,
-                                font_name: fontName,
-                                blend_mode: blendMode,
-                                tiled: watermarkTiled,
-                                shadow: watermarkShadow,
-                                offset_x: Math.max(0, Number(watermarkMargin.x) || 0),
-                                offset_y: Math.max(0, Number(watermarkMargin.y) || 0),
-                            });
-                            seq += 1;
-                        }
-                        return { chunk, nextSeq: seq };
-                    },
-                });
-                return;
-            }
-
-            if (id === 'image_processor') {
-                if (!appAny.ProcessImage && !appAny.Adjust) {
-                    setLastMessage('后端未接入图片美化接口');
-                    return;
-                }
-                const filterPreset = FILTER_PRESETS[filterSelected] || 'none';
-                const intensity = clampNumber(filterIntensity / 100, 0, 1);
-                const grain = clampNumber(filterGrain / 100, 0, 1);
-                const vignette = clampNumber(filterVignette / 100, 0, 1);
-                await runGenericBatch({
-                    ctx: {
-                        app: appAny,
-                        files,
-                        total,
-                        cancelRequestedRef,
-                        setCancelRequested,
-                        setProgressThrottled,
-                        flushProgress,
-                        setLastMessage,
-                        reportTaskFailure,
-                        reportBatchTaskFailure,
-                        getBatchChunkSize,
-                        normalizePath,
-                    },
-                    taskName: '图片美化',
-                    label: '美化',
-                    fallbackError: '美化失败',
-                    canBatch: Boolean(appAny.ProcessImageBatch || appAny.AdjustBatch),
-                    runSingle: (item) => (appAny.ProcessImage ? appAny.ProcessImage(item as any) : appAny.Adjust!(item as any)),
-                    runBatch: appAny.ProcessImageBatch
-                        ? (items) => appAny.ProcessImageBatch!(items as any)
-                        : (appAny.AdjustBatch ? (items) => appAny.AdjustBatch!(items as any) : undefined),
-                    buildChunk: async (group, seqStart) => {
-                        let seq = seqStart;
-                        const cropRatio = adjustCropRatio === '自由' ? '' : adjustCropRatio;
-                        const cropMode = cropRatio ? `focus:${cropFocus.x.toFixed(4)},${cropFocus.y.toFixed(4)}` : '';
-                        const chunk: models.ProcessImageRequest[] = [];
-                        for (const f of group) {
-                            if (cancelRequestedRef.current) break;
-                            const outRel = buildOutputRelPath(f, {
-                                suffix: '_beauty',
-                                seq,
-                                op: 'beauty',
-                                template: outputTemplate,
-                                prefix: outputPrefix,
-                                preserveStructure,
-                                date: batchTime,
-                            });
-                            chunk.push({
-                                input_path: normalizePath(f.input_path),
-                                output_path: await resolveUniquePath(joinPath(outDir, outRel)),
-                                rotate: adjustRotate,
-                                flip_h: adjustFlipH,
-                                flip_v: adjustFlipV,
-                                brightness: 0,
-                                exposure: adjustExposure,
-                                contrast: adjustContrast,
-                                saturation: adjustSaturation,
-                                vibrance: adjustVibrance,
-                                hue: adjustHue,
-                                sharpness: adjustSharpness,
-                                crop_ratio: cropRatio,
-                                crop_mode: cropMode,
-                                filter: filterPreset,
-                                intensity,
-                                grain,
-                                vignette,
-                                blur_radius: 2,
-                                sharpen_factor: 2,
-                                noise_level: 0.1,
-                                vignette_strength: 0.5,
-                                color_offset_x: 5,
-                                color_offset_y: 5,
-                            } as models.ProcessImageRequest);
-                            seq += 1;
-                        }
-                        return { chunk, nextSeq: seq };
-                    },
+                    onStats: setCompressStats,
+                    onDone: (summary) => setRunSummary({ ...summary, outputDir: outDir }),
                 });
                 return;
             }
@@ -2192,9 +1128,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     op: 'pdf',
                     date: batchTime,
                 });
+                const pdfOutputPath = await resolveUniquePath(joinPath(outDir, `${pdfName}.pdf`));
+                if (!pdfOutputPath) {
+                    setLastMessage('输出文件已存在，已跳过（冲突策略：跳过同名）');
+                    setProgress(100);
+                    return;
+                }
                 const req: models.PDFRequest = {
                     image_paths: files.map(f => normalizePath(f.input_path)),
-                    output_path: await resolveUniquePath(joinPath(outDir, `${pdfName}.pdf`)),
+                    output_path: pdfOutputPath,
                     page_size: sizeMap[pdfSize] ?? 'A4',
                     layout: pdfLayout === '横向' ? 'landscape' : 'portrait',
                     margin: marginPoints,
@@ -2202,19 +1144,22 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     fit_mode: fitMap[pdfFit] ?? 'contain',
                     title: pdfTitle.trim(),
                     author: pdfAuthor.trim(),
+                    user_password: pdfPassword.trim() || undefined,
                 };
                 const res = await appAny.GeneratePDF(req);
                 setProgress(100);
-                if (res?.success) {
-                } else {
+                if (!res?.success) {
                     if (isCancellationError(res?.error)) {
                         cancelRequestedRef.current = true;
                         setCancelRequested(true);
                         setLastMessage('PDF 处理已取消');
                         return;
                     }
+                    setRunSummary({ total: 1, failed: 1, skipped: 0, outputDir: outDir });
                     reportTaskFailure('转 PDF', files[0]?.input_path || '', res?.error, 'PDF 生成失败');
                     setLastMessage(res?.error || 'PDF 生成失败');
+                } else {
+                    setRunSummary({ total: 1, failed: 0, skipped: 0, outputDir: outDir });
                 }
                 return;
             }
@@ -2283,6 +1228,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     if (animatedFiles.length > 0) {
                         const outputFormat = gifExportFormat.toLowerCase();
                         let failed = 0;
+                        let skipped = 0;
                         let seq = 1;
                         for (const f of animatedFiles) {
                             if (cancelRequestedRef.current) break;
@@ -2298,6 +1244,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             });
                             const rawOutputDir = relDir ? joinPath(outDir, `${relDir}/${folderName}`) : joinPath(outDir, folderName);
                             const outputDir = await resolveUniquePath(rawOutputDir);
+                            if (!outputDir) {
+                                skipped++;
+                                completed++;
+                                seq += 1;
+                                setProgress((completed / animatedFiles.length) * 100);
+                                continue;
+                            }
                             const req: models.GIFSplitRequest = {
                                 action: 'export_frames',
                                 input_path: normalizePath(f.input_path),
@@ -2332,9 +1285,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             setProgress((completed / animatedFiles.length) * 100);
                         }
                         const cancelled = cancelRequestedRef.current;
-                        const success = Math.max(0, completed - failed);
-                        const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                        if (cancelled || failed > 0) {
+                        setRunSummary({ total: animatedFiles.length, failed, skipped, outputDir: outDir });
+                        const success = Math.max(0, completed - failed - skipped);
+                        const extraParts = [
+                            failed > 0 ? `失败 ${failed}` : '',
+                            skipped > 0 ? `跳过 ${skipped}` : '',
+                        ].filter(Boolean);
+                        const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
+                        if (cancelled || failed > 0 || skipped > 0) {
                             setLastMessage(cancelled
                                 ? `导出已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
                                 : `导出失败：成功 ${success}/${animatedFiles.length} 项${extra}`);
@@ -2355,6 +1313,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         date: batchTime,
                     });
                     const outputPath = await resolveUniquePath(joinPath(outDir, `${combinedName}.gif`));
+                    if (!outputPath) {
+                        setLastMessage('输出文件已存在，已跳过（冲突策略：跳过同名）');
+                        setProgress(100);
+                        return;
+                    }
+                    let buildFailed = false;
                         try {
                             const req: models.GIFSplitRequest = {
                                 action: 'build_gif',
@@ -2364,8 +1328,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                                 maintain_aspect: true,
                             };
                             const res = await appAny.SplitGIF(req);
-                            if (res?.success) {
-                            } else {
+                            if (!res?.success) {
                                 const normalizedError = resolveGifErrorMessage(res?.error_code, res?.error);
                                 if (isCancellationError(res?.error)) {
                                     cancelRequestedRef.current = true;
@@ -2373,6 +1336,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                                     setLastMessage('GIF 合成已取消');
                                     return;
                                 }
+                                buildFailed = true;
                                 reportTaskFailure('GIF 合成', files[0]?.input_path || '', normalizedError, '合成失败');
                                 setLastMessage(normalizedError);
                             }
@@ -2383,12 +1347,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                                 setLastMessage('GIF 合成已取消');
                                 return;
                             }
+                            buildFailed = true;
                             console.error('Failed to build GIF:', err);
                             reportTaskFailure('GIF 合成', files[0]?.input_path || '', err, '合成失败');
                             setLastMessage('合成失败');
                     } finally {
                         setProgress(100);
                     }
+                    setRunSummary({ total: 1, failed: buildFailed ? 1 : 0, skipped: 0, outputDir: outDir });
                     return;
                 }
 
@@ -2410,6 +1376,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     const targetLabel = (gifConvertFormat || 'WEBP').toUpperCase();
                     const targetExt = targetExtMap[targetLabel] || 'webp';
                     let failed = 0;
+                    let skipped = 0;
                     let seq = 1;
                     for (const f of animatedFiles) {
                         if (cancelRequestedRef.current) break;
@@ -2432,6 +1399,13 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             date: batchTime,
                         });
                         const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
+                        if (!outputPath) {
+                            skipped++;
+                            completed++;
+                            seq += 1;
+                            setProgress((completed / animatedFiles.length) * 100);
+                            continue;
+                        }
                         try {
                             const req: models.GIFSplitRequest = {
                                 action: 'convert_animation',
@@ -2466,9 +1440,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         setProgress((completed / animatedFiles.length) * 100);
                     }
                     const cancelled = cancelRequestedRef.current;
-                    const success = Math.max(0, completed - failed);
-                    const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                    if (cancelled || failed > 0) {
+                    setRunSummary({ total: animatedFiles.length, failed, skipped, outputDir: outDir });
+                    const success = Math.max(0, completed - failed - skipped);
+                    const extraParts = [
+                        failed > 0 ? `失败 ${failed}` : '',
+                        skipped > 0 ? `跳过 ${skipped}` : '',
+                    ].filter(Boolean);
+                    const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
+                    if (cancelled || failed > 0 || skipped > 0) {
                         setLastMessage(cancelled
                             ? `互转已停止：成功 ${success}/${animatedFiles.length} 项${extra}`
                             : `互转失败：成功 ${success}/${animatedFiles.length} 项${extra}`);
@@ -2494,6 +1473,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 let failed = 0;
+                let skipped = 0;
                 let seq = 1;
                 for (const f of pureGifFiles) {
                     if (cancelRequestedRef.current) break;
@@ -2504,22 +1484,36 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         resizeWidth,
                         resizeHeight,
                     );
+                    const processTargetMap: Record<string, string> = { GIF: 'gif', APNG: 'apng', WEBP: 'webp' };
+                    const processTargetLabel = (gifConvertFormat || 'GIF').toUpperCase();
+                    const processTargetExt = processTargetMap[processTargetLabel] || 'gif';
                     const outRel = buildOutputRelPath(f, {
                         suffix,
                         seq,
                         op: 'gif',
+                        ext: processTargetExt,
                         template: outputTemplate,
                         prefix: outputPrefix,
                         preserveStructure,
                         date: batchTime,
                     });
                     const outputPath = await resolveUniquePath(joinPath(outDir, outRel));
+                    if (!outputPath) {
+                        skipped++;
+                        completed++;
+                        seq += 1;
+                        setProgress((completed / pureGifFiles.length) * 100);
+                        continue;
+                    }
                     const req: models.GIFSplitRequest = {
                         action,
                         input_path: normalizePath(f.input_path),
                         output_path: outputPath,
                         maintain_aspect: gifResizeMaintainAR,
                     };
+                    if (processTargetExt !== 'gif') {
+                        req.output_format = processTargetExt;
+                    }
                     if (action === 'change_speed') {
                         req.speed_factor = speedFactor;
                     } else if (action === 'compress') {
@@ -2556,12 +1550,347 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     setProgress((completed / pureGifFiles.length) * 100);
                 }
                 const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, completed - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                if (cancelled || failed > 0) {
+                setRunSummary({ total: pureGifFiles.length, failed, skipped, outputDir: outDir });
+                const success = Math.max(0, completed - failed - skipped);
+                const extraParts = [
+                    failed > 0 ? `失败 ${failed}` : '',
+                    skipped > 0 ? `跳过 ${skipped}` : '',
+                ].filter(Boolean);
+                const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
+                if (cancelled || failed > 0 || skipped > 0) {
                     setLastMessage(cancelled
                         ? `${gifMode}已停止：成功 ${success}/${pureGifFiles.length} 项${extra}`
                         : `${gifMode}失败：成功 ${success}/${pureGifFiles.length} 项${extra}`);
+                }
+                return;
+            }
+
+            if (id === 'grid') {
+                if (!appAny.CutImageGrid) {
+                    setLastMessage('后端未接入切图接口');
+                    return;
+                }
+                const gridSizeMap: Record<string, number> = { '四宫格': 2, '九宫格': 3, '十六宫格': 4 };
+                const sizeN = gridSizeMap[gridSize] ?? 3;
+                const fmt = (gridFormat || 'PNG').toLowerCase();
+                let failed = 0;
+                for (const f of files) {
+                    if (cancelRequestedRef.current) break;
+                    try {
+                        const res = await appAny.CutImageGrid({
+                            input_path: normalizePath(f.input_path),
+                            output_dir: outDir,
+                            grid_size: sizeN,
+                            output_format: fmt,
+                        });
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
+                            failed++;
+                            reportTaskFailure('宫格切图', f.input_path, res?.error || res?.error_code, '切图失败');
+                        }
+                    } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
+                        console.error(`Failed to cut grid ${f.input_path}:`, err);
+                        failed++;
+                        reportTaskFailure('宫格切图', f.input_path, err, '切图失败');
+                    }
+                    completed++;
+                    setProgress((completed / files.length) * 100);
+                }
+                setProgress(100);
+                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                const cancelled = cancelRequestedRef.current;
+                const success = Math.max(0, files.length - failed);
+                const extra = failed > 0 ? `（失败 ${failed}）` : '';
+                if (cancelled || failed > 0) {
+                    setLastMessage(cancelled
+                        ? `切图已停止：成功 ${success}/${files.length} 项${extra}`
+                        : `切图失败：成功 ${success}/${files.length} 项${extra}`);
+                } else {
+                    const tilesPerImage = sizeN * sizeN;
+                    setLastMessage(`切图完成：${files.length} 张 → ${success * tilesPerImage} 块`);
+                }
+                return;
+            }
+
+            if (id === 'split') {
+                if (!appAny.SplitImage) {
+                    setLastMessage('后端未接入分割接口');
+                    return;
+                }
+                const fmtLc = (splitParams.format || 'PNG').toLowerCase();
+                let failed = 0;
+                let tiles = 0;
+                for (const f of files) {
+                    if (cancelRequestedRef.current) break;
+                    const stem = basename(f.input_path).replace(/\.[^.]+$/, '') || 'output';
+                    try {
+                        const res = await appAny.SplitImage({
+                            input_path: normalizePath(f.input_path),
+                            output_dir: joinPath(outDir, `${stem}_split`),
+                            rows: splitParams.rows,
+                            cols: splitParams.cols,
+                            mode: splitParams.mode,
+                            output_format: fmtLc,
+                        });
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
+                            failed++;
+                            reportTaskFailure('图片布局', f.input_path, res?.error || res?.error_code, '分割失败');
+                        } else {
+                            tiles += Number(res.tile_count) || 0;
+                        }
+                    } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
+                        console.error(`Failed to split ${f.input_path}:`, err);
+                        failed++;
+                        reportTaskFailure('图片布局', f.input_path, err, '分割失败');
+                    }
+                    completed++;
+                    setProgress((completed / files.length) * 100);
+                }
+                setProgress(100);
+                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                const cancelled = cancelRequestedRef.current;
+                const success = Math.max(0, files.length - failed);
+                if (!cancelled && failed === 0) setLastMessage(`分割完成：${files.length} 张 → ${tiles} 块`);
+                else if (failed > 0 || cancelled) {
+                    setLastMessage(cancelled
+                        ? `分割已停止：成功 ${success}/${files.length}`
+                        : `分割失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                }
+                return;
+            }
+
+            if (id === 'watermark') {
+                if (!appAny.AddWatermark) {
+                    setLastMessage('后端未接入水印接口');
+                    return;
+                }
+                const style: WatermarkStyle = wmParams;
+                let failed = 0;
+                for (const f of files) {
+                    if (cancelRequestedRef.current) break;
+                    const stem = basename(f.input_path).replace(/\.[^.]+$/, '') || 'output';
+                    try {
+                        const res = await appAny.AddWatermark({
+                            action: 'apply',
+                            input_path: normalizePath(f.input_path),
+                            output_path: joinPath(outDir, `${stem}_wm.png`),
+                            text: style.text,
+                            font_name: style.fontName,
+                            size_mode: style.sizeMode,
+                            font_size: style.fontSize,
+                            color: style.color,
+                            opacity: style.opacity,
+                            rotation: style.rotation,
+                            position: style.position,
+                            margin: style.margin,
+                            tiled: style.tiled,
+                            tile_gap_x: style.tileGapX,
+                            tile_gap_y: style.tileGapY,
+                            stroke_width: style.strokeWidth,
+                            stroke_color: style.strokeColor,
+                            shadow: style.shadow,
+                        });
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
+                            failed++;
+                            reportTaskFailure('批量水印', f.input_path, res?.error || res?.error_code, '水印失败');
+                        }
+                    } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
+                        console.error(`Watermark failed ${f.input_path}:`, err);
+                        failed++;
+                        reportTaskFailure('批量水印', f.input_path, err, '水印失败');
+                    }
+                    completed++;
+                    setProgress((completed / files.length) * 100);
+                }
+                setProgress(100);
+                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                const cancelled = cancelRequestedRef.current;
+                const success = Math.max(0, files.length - failed);
+                if (!(cancelled || failed > 0)) setLastMessage(`水印完成：成功 ${success}/${files.length}`);
+                else setLastMessage(cancelled
+                    ? `水印已停止：成功 ${success}/${files.length}`
+                    : `水印失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                return;
+            }
+
+            if (id === 'resize') {
+                if (!appAny.ResizeImage) {
+                    setLastMessage('后端未接入尺寸调整接口');
+                    return;
+                }
+                let failed = 0;
+                const SAFE_OUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff']);
+                for (const f of files) {
+                    if (cancelRequestedRef.current) break;
+                    const stem = basename(f.input_path);
+                    const origExt = extname(f.input_path) || 'png';
+                    let outExt: string;
+                    if (resizeParams.format === 'auto') {
+                        outExt = SAFE_OUT_EXTS.has(origExt.toLowerCase()) ? origExt : 'png';
+                    } else {
+                        outExt = resizeParams.format.toLowerCase();
+                    }
+                    try {
+                        const res = await appAny.ResizeImage({
+                            input_path: normalizePath(f.input_path),
+                            output_path: joinPath(outDir, `${stem}_resized.${outExt}`),
+                            mode: resizeParams.mode,
+                            value: resizeParams.value,
+                            output_format: resizeParams.format === 'auto' ? undefined : resizeParams.format.toLowerCase(),
+                        });
+                        if (!res?.success) {
+                            if (isCancellationError(res?.error)) {
+                                cancelRequestedRef.current = true;
+                                setCancelRequested(true);
+                                break;
+                            }
+                            failed++;
+                            reportTaskFailure('尺寸调整', f.input_path, res?.error || res?.error_code, '调整失败');
+                        }
+                    } catch (err) {
+                        if (isCancellationError(err) || cancelRequestedRef.current) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            break;
+                        }
+                        console.error(`Resize failed ${f.input_path}:`, err);
+                        failed++;
+                        reportTaskFailure('尺寸调整', f.input_path, err, '调整失败');
+                    }
+                    completed++;
+                    setProgress((completed / files.length) * 100);
+                }
+                setProgress(100);
+                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                const cancelled = cancelRequestedRef.current;
+                const success = Math.max(0, files.length - failed);
+                if (!(cancelled || failed > 0)) setLastMessage(`尺寸调整完成：成功 ${success}/${files.length}`);
+                else setLastMessage(cancelled
+                    ? `已停止：成功 ${success}/${files.length}`
+                    : `失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                return;
+            }
+
+            if (id === 'stitch') {
+                if (!appAny.StitchImages) {
+                    setLastMessage('后端未接入拼接接口');
+                    return;
+                }
+                if (files.length < 1) {
+                    setLastMessage('请先拖入图片');
+                    return;
+                }
+                try {
+                    const firstStem = basename(files[0].input_path).replace(/\.[^.]+$/, '') || 'output';
+                    const lengthKey = stitchParams.direction === 'vertical' ? 'target_width' : 'target_height';
+                    const payload: Record<string, unknown> = {
+                        input_paths: files.map((f) => normalizePath(f.input_path)),
+                        output_path: joinPath(outDir, `${firstStem}_stitched.${stitchParams.outputFormat.toLowerCase()}`),
+                        direction: stitchParams.direction,
+                        gap: stitchParams.gap,
+                        background: stitchParams.background,
+                        border_mode: stitchParams.border > 0 && files.length === 1,
+                        border: stitchParams.border,
+                        output_format: stitchParams.outputFormat.toLowerCase(),
+                    };
+                    if (stitchParams.targetLength > 0) payload[lengthKey] = stitchParams.targetLength;
+                    const res = await appAny.StitchImages(payload as any);
+                    setProgress(100);
+                    if (!res?.success) {
+                        if (isCancellationError(res?.error)) {
+                            cancelRequestedRef.current = true;
+                            setCancelRequested(true);
+                            setLastMessage('拼接已取消');
+                            return;
+                        }
+                        setRunSummary({ total: 1, failed: 1, skipped: 0, outputDir: outDir });
+                        reportTaskFailure('长图拼接', files[0]?.input_path || '', res?.error || res?.error_code, '拼接失败');
+                        setLastMessage(res?.error || '拼接失败');
+                    } else {
+                        setRunSummary({ total: 1, failed: 0, skipped: 0, outputDir: outDir });
+                        setLastMessage(`拼接完成：${res.width}×${res.height}`);
+                    }
+                } catch (err) {
+                    if (isCancellationError(err) || cancelRequestedRef.current) {
+                        cancelRequestedRef.current = true;
+                        setCancelRequested(true);
+                        setLastMessage('拼接已取消');
+                    } else {
+                        console.error('Stitch error:', err);
+                        setRunSummary({ total: 1, failed: 1, skipped: 0, outputDir: outDir });
+                        reportBatchTaskFailure('长图拼接', files, err, '拼接失败');
+                        setLastMessage('拼接失败');
+                    }
+                }
+                return;
+            }
+
+            if (id === 'richtext') {
+                if (!appAny.RenderRichText) {
+                    setLastMessage('后端未接入富文本渲染');
+                    return;
+                }
+                try {
+                    const name = (rtParams.fileName.trim() || 'richtext').replace(/[\\/:*?"<>|]/g, '_');
+                    const res = await appAny.RenderRichText({
+                        blocks: rtParams.blocks as unknown as Array<Record<string, any>>,
+                        width: rtParams.width,
+                        padding: rtParams.padding,
+                        background: rtParams.background,
+                        text_color: rtParams.textColor,
+                        heading_color: rtParams.headingColor,
+                        accent_color: rtParams.accentColor,
+                        font_size: rtParams.fontSize,
+                        line_height: rtParams.lineHeight,
+                        font_name: rtParams.fontName,
+                        output_path: joinPath(outDir, `${name}.png`),
+                    });
+                    setProgress(100);
+                    if (!res?.success) {
+                        setRunSummary({ total: 1, failed: 1, skipped: 0, outputDir: outDir });
+                        reportTaskFailure('富文本制图', '', res?.error || res?.error_code, '渲染失败');
+                        setLastMessage(res?.error || '渲染失败');
+                    } else {
+                        setRunSummary({ total: 1, failed: 0, skipped: 0, outputDir: outDir });
+                        setLastMessage(`制图完成：${res.width}×${res.height}`);
+                        if (Array.isArray(res.missing_images) && res.missing_images.length > 0) {
+                            showToast('部分图片路径无效，已跳过', 'error');
+                        }
+                    }
+                } catch (err) {
+                    setProgress(100);
+                    setRunSummary({ total: 1, failed: 1, skipped: 0, outputDir: outDir });
+                    reportTaskFailure('富文本制图', '', err, '渲染失败');
+                    setLastMessage('渲染失败');
                 }
                 return;
             }
@@ -2605,7 +1934,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     };
 
-    const selectedDropPath = isPreviewFeature ? previewPath : undefined;
     const acceptedInputFormats = id === 'compressor'
         ? COMPRESSOR_ACCEPTED_FORMATS
         : DEFAULT_IMAGE_ACCEPTED_FORMATS;
@@ -2613,26 +1941,15 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         ? COMPRESSOR_FILE_DIALOG_FILTERS
         : DEFAULT_IMAGE_FILE_DIALOG_FILTERS;
     const dropZone = (
-        <FileDropZone 
+        <FileDropZone
             isActive={isActive}
-            onFilesSelected={handleFilesSelected}
             onPathsExpanded={handlePathsExpanded}
-            onItemSelect={(file) => {
-                if (!file?.input_path) return;
-                if (isPreviewFeature) {
-                    setPreviewPath(normalizePath(file.input_path));
-                }
-            }}
-            selectedPath={selectedDropPath}
             acceptedFormats={acceptedInputFormats}
             fileDialogFilters={inputFileDialogFilters}
             allowMultiple={true}
             subTitle=""
         />
     );
-
-    const showInputInSettings = id !== 'image_processor';
-    const showActionInSettings = id !== 'image_processor';
 
     const renderInputSection = (compact = false) => (
         <div className={`${compact ? 'space-y-1 pb-2' : 'space-y-2 pb-3'} border-b border-gray-100 dark:border-white/5 ${compact ? 'mb-2' : 'mb-3'}`}>
@@ -2656,71 +1973,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     {effectiveOutputDir}
                 </div>
             )}
-            {(
-                <div className="space-y-2">
-                    <button
-                        type="button"
-                        onClick={() => setIsPresetSectionCollapsed((previous) => !previous)}
-                        className="w-full flex items-center justify-between gap-3 text-left rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 px-3 py-2 hover:bg-white dark:hover:bg-white/10 transition-colors"
-                    >
-                        <div className="min-w-0">
-                            <div className="text-xs text-gray-600 dark:text-gray-300 font-medium">批处理预设</div>
-                            <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                                {currentFeaturePresets.length > 0 ? `已保存 ${currentFeaturePresets.length} 个预设` : '暂无已保存预设'}
-                            </div>
-                        </div>
-                        <Icon
-                            name="ChevronDown"
-                            size={16}
-                            className={`shrink-0 text-gray-400 transition-transform ${isPresetSectionCollapsed ? '-rotate-90' : 'rotate-0'}`}
-                        />
-                    </button>
-                    {!isPresetSectionCollapsed && (
-                        <div className="space-y-2 animate-enter">
-                            <div className="flex gap-2">
-                                <input
-                                    value={presetNameDraft}
-                                    onChange={(e) => setPresetNameDraft(e.target.value)}
-                                    placeholder="输入预设名称"
-                                    className="flex-1 px-3 py-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-xs outline-none dark:text-white"
-                                />
-                                <button
-                                    onClick={saveCurrentPreset}
-                                    className="px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5"
-                                >
-                                    保存
-                                </button>
-                            </div>
-                            <div className="flex gap-2">
-                                <div className="flex-1 min-w-0">
-                                    <CustomSelect
-                                        options={[
-                                            { label: '选择预设', value: '' },
-                                            ...currentFeaturePresets.map((preset) => ({ label: preset.name, value: preset.id })),
-                                        ]}
-                                        value={selectedPresetId}
-                                        onChange={setSelectedPresetId}
-                                    />
-                                </div>
-                                <button
-                                    onClick={applySelectedPreset}
-                                    disabled={!selectedPresetId}
-                                    className="px-3 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    应用
-                                </button>
-                                <button
-                                    onClick={deleteSelectedPreset}
-                                    disabled={!selectedPresetId}
-                                    className="px-3 py-2 rounded-xl border border-red-200 dark:border-red-500/30 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    删除
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
             {lastMessage && (
                 <div
                     className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
@@ -2732,18 +1984,77 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         </div>
     );
 
+    const handleOpenOutputDir = async () => {
+        const dir = runSummary?.outputDir || effectiveOutputDir;
+        if (!dir) {
+            showToast('未选择输出目录', 'error');
+            return;
+        }
+        try {
+            const openPath = (getAppBindings() as any)?.OpenPath;
+            if (typeof openPath === 'function') {
+                await openPath({ path: dir });
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('打开目录失败', 'error');
+        }
+    };
+
+    const tweenOriginalBytes = useTweenNumber(compressStats?.totalOriginalBytes ?? 0);
+    const tweenCompressedBytes = useTweenNumber(compressStats?.totalCompressedBytes ?? 0);
+
     const renderActionContent = (compact = false) => (
         <>
+            {!isProcessing && runSummary && runSummary.total > 0 && (
+                <div className="text-xs rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 space-y-1.5 spring-enter">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-gray-700 dark:text-gray-200">处理完成</span>
+                        <span className="text-gray-500 dark:text-gray-400">
+                            成功 {runSummary.total - runSummary.failed - runSummary.skipped} / {runSummary.total}
+                            {runSummary.failed > 0 ? ` · 失败 ${runSummary.failed}` : ''}
+                            {runSummary.skipped > 0 ? ` · 跳过 ${runSummary.skipped}` : ''}
+                        </span>
+                    </div>
+                    {compressStats && compressStats.totalOriginalBytes > 0 && (
+                        <div className="flex items-center justify-between gap-2 font-mono">
+                            <span className="text-gray-500 dark:text-gray-400">
+                                {formatBytes(tweenOriginalBytes)} → {formatBytes(tweenCompressedBytes)}
+                            </span>
+                            <span className={tweenCompressedBytes < tweenOriginalBytes ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}>
+                                节省 {formatBytes(Math.max(0, tweenOriginalBytes - tweenCompressedBytes))}
+                                {' '}({Math.round((1 - tweenCompressedBytes / tweenOriginalBytes) * 100)}%)
+                            </span>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-2 pt-0.5">
+                        <button
+                            onClick={() => void handleOpenOutputDir()}
+                            className="spring-tap-sm flex-1 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-[11px] font-medium text-gray-700 dark:text-gray-200 hover:bg-white dark:hover:bg-white/10 transition-colors"
+                        >
+                            打开目录
+                        </button>
+                        <button
+                            onClick={() => { void handleStartProcessing(); }}
+                            className="spring-tap-sm flex-1 py-1.5 rounded-lg bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD] text-[11px] font-medium text-white shadow-sm shadow-blue-500/25 transition-colors"
+                        >
+                            再处理一批
+                        </button>
+                    </div>
+                </div>
+            )}
             {(isProcessing || progress > 0) && (
                 <ProgressBar progress={progress} label={isProcessing ? "正在处理..." : "已完成"} />
             )}
-            <button 
-                onClick={isProcessing ? requestCancelProcessing : () => { void handleStartProcessing(); }}
-                disabled={isProcessing && cancelRequested}
-                className={`w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-white ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
-            >
-                <Icon name={isProcessing ? 'Close' : 'ArrowRight'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
-            </button>
+            {id !== 'palette' && (
+                <button
+                    onClick={isProcessing ? requestCancelProcessing : () => { void handleStartProcessing(); }}
+                    disabled={isProcessing && cancelRequested}
+                    className={`spring-tap-sm w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 text-white transition-all duration-300 ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                >
+                    <Icon name={isProcessing ? 'Close' : 'ArrowRight'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
+                </button>
+            )}
         </>
     );
 
@@ -2755,7 +2066,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setRetryFailedOnly((v) => !v)}
-                            className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium ${retryFailedOnly ? 'border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-100/60 dark:bg-amber-500/20' : 'border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-300'}`}
+                            className={`spring-tap-sm px-2.5 py-1.5 rounded-lg border text-xs font-medium ${retryFailedOnly ? 'border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-100/60 dark:bg-amber-500/20' : 'border-amber-200 dark:border-amber-500/20 text-amber-700 dark:text-amber-300'}`}
                         >
                             {retryFailedOnly ? '仅重试失败项：开启' : '仅重试失败项：关闭'}
                         </button>
@@ -2764,7 +2075,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                                 setFailedRecords([]);
                                 setRetryFailedOnly(false);
                             }}
-                            className="px-2.5 py-1.5 rounded-lg border border-amber-200 dark:border-amber-500/20 text-xs font-medium text-amber-700 dark:text-amber-300"
+                            className="spring-tap-sm px-2.5 py-1.5 rounded-lg border border-amber-200 dark:border-amber-500/20 text-xs font-medium text-amber-700 dark:text-amber-300"
                         >
                             清空失败列表
                         </button>
@@ -2779,348 +2090,101 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         <div
             className={`imageflow-settings-panel bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col overflow-hidden h-full min-h-0`}
         >
-            {showInputInSettings && renderInputSection()}
+            {renderInputSection()}
             <div className="imageflow-settings-scroll flex-1 min-h-0 overflow-y-auto no-scrollbar px-1 pb-2">
                 {renderSettings()}
             </div>
 
-            {showActionInSettings && renderActionSection()}
+            {renderActionSection()}
         </div>
     );
-
-    const watermarkPreviewOverlay = isWatermark && !isCompareActive && previewSrc && previewBaseMetrics && watermarkPreviewConfig ? (
-        <div className="absolute inset-0 pointer-events-none">
-            {watermarkFontFace?.css && (
-                <style>{watermarkFontFace.css}</style>
-            )}
-            <div
-                className="absolute"
-                style={{
-                    left: previewBaseMetrics.left,
-                    top: previewBaseMetrics.top,
-                    width: previewBaseMetrics.width,
-                    height: previewBaseMetrics.height,
-                    overflow: 'hidden',
-                }}
-            >
-                {watermarkTiled && watermarkTilePositions && watermarkTileMetrics ? (
-                    watermarkTilePositions.map((pos, idx) => (
-                        watermarkType === '图片' ? (
-                            watermarkImageSrc ? (
-                                <img
-                                    key={`wm-img-${idx}`}
-                                    src={watermarkImageSrc}
-                                    className="absolute"
-                                    style={{
-                                        left: pos.x,
-                                        top: pos.y,
-                                        width: watermarkTileMetrics.width,
-                                        height: watermarkTileMetrics.height,
-                                        opacity: watermarkPreviewConfig.opacity,
-                                        mixBlendMode: watermarkPreviewConfig.blendMode as any,
-                                        transform: `rotate(${watermarkRotate}deg)`,
-                                        transformOrigin: 'center',
-                                        filter: watermarkShadow ? 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))' : undefined,
-                                    }}
-                                    alt="watermark-tile"
-                                />
-                            ) : null
-                        ) : (
-                            <div
-                                key={`wm-text-${idx}`}
-                                className="absolute"
-                                style={{
-                                    left: pos.x,
-                                    top: pos.y,
-                                    fontFamily: watermarkFontFamily,
-                                    fontSize: watermarkPreviewConfig.previewFontSize,
-                                    lineHeight: 1.2,
-                                    color: watermarkColor,
-                                    opacity: watermarkPreviewConfig.opacity,
-                                    mixBlendMode: watermarkPreviewConfig.blendMode as any,
-                                    transform: `rotate(${watermarkRotate}deg)`,
-                                    transformOrigin: 'center',
-                                    whiteSpace: 'pre-line',
-                                    textShadow: watermarkShadow ? '0 2px 6px rgba(0,0,0,0.35)' : undefined,
-                                }}
-                            >
-                                {watermarkPreviewConfig.textValue}
-                            </div>
-                        )
-                    ))
-                ) : (
-                    watermarkType === '图片' ? (
-                        watermarkImageSrc && watermarkImagePreviewSize ? (
-                            <img
-                                src={watermarkImageSrc}
-                                className="absolute"
-                                style={{
-                                    ...watermarkPositionStyle,
-                                    width: watermarkImagePreviewSize.width,
-                                    height: watermarkImagePreviewSize.height,
-                                    opacity: watermarkPreviewConfig.opacity,
-                                    mixBlendMode: watermarkPreviewConfig.blendMode as any,
-                                    filter: watermarkShadow ? 'drop-shadow(0 2px 6px rgba(0,0,0,0.35))' : undefined,
-                                }}
-                                alt="watermark"
-                            />
-                        ) : null
-                    ) : (
-                        <div
-                            className="absolute"
-                            style={{
-                                ...watermarkPositionStyle,
-                                fontFamily: watermarkFontFamily,
-                                fontSize: watermarkPreviewConfig.previewFontSize,
-                                lineHeight: 1.2,
-                                color: watermarkColor,
-                                opacity: watermarkPreviewConfig.opacity,
-                                mixBlendMode: watermarkPreviewConfig.blendMode as any,
-                                whiteSpace: 'pre-line',
-                                textShadow: watermarkShadow ? '0 2px 6px rgba(0,0,0,0.35)' : undefined,
-                            }}
-                        >
-                            {watermarkPreviewConfig.textValue}
-                        </div>
-                    )
-                )}
-            </div>
-        </div>
-    ) : null;
-
-    const previewPanel = (
-        <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col h-full min-h-0 overflow-hidden">
-            <div className="flex items-center justify-between mb-4 gap-3">
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
-                <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        disabled={!previewSrc}
-                        aria-pressed={isCompareActive}
-                        onPointerDown={() => setIsComparing(true)}
-                        onPointerUp={() => setIsComparing(false)}
-                        onPointerLeave={() => setIsComparing(false)}
-                        onPointerCancel={() => setIsComparing(false)}
-                        onBlur={() => setIsComparing(false)}
-                        className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full border transition ${
-                            previewSrc
-                                ? 'text-gray-600 dark:text-gray-300 border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 hover:text-gray-900 dark:hover:text-white'
-                                : 'text-gray-300 dark:text-gray-600 border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-white/5 cursor-not-allowed'
-                        }`}
-                    >
-                        <Icon name="Layers" size={12} />
-                        {isCompareActive ? '原图' : '按住对比'}
-                    </button>
-                </div>
-            </div>
-            <div
-                ref={previewContainerRef}
-                className="relative w-full flex-1 min-h-[220px] rounded-2xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 overflow-hidden flex items-center justify-center"
-            >
-                {previewSrc ? (
-                    showCropFrame && cropImageMetrics ? (
-                        <div className="w-full h-full relative">
-                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-                                <div
-                                    className="relative"
-                                    style={{
-                                        width: cropImageMetrics.drawnWidth,
-                                        height: cropImageMetrics.drawnHeight,
-                                        transform: `translate(${cropOffset.x}px, ${cropOffset.y}px)`,
-                                    }}
-                                >
-                                    <div
-                                        className="relative w-full h-full"
-                                        style={{
-                                            transform: effectivePreviewTransform || 'none',
-                                            transformOrigin: 'center',
-                                        }}
-                                    >
-                                        <img
-                                            src={previewSrc}
-                                            className="w-full h-full object-cover transition-all duration-150 pointer-events-none"
-                                            style={{
-                                                filter: effectivePreviewFilter || 'none',
-                                            }}
-                                            onLoad={(e) => {
-                                                const img = e.currentTarget;
-                                                if (img.naturalWidth && img.naturalHeight) {
-                                                    setPreviewImageSize({
-                                                        width: img.naturalWidth,
-                                                        height: img.naturalHeight,
-                                                    });
-                                                }
-                                            }}
-                                            alt="preview"
-                                        />
-                                        <div
-                                            className="pointer-events-none absolute inset-0 transition-opacity duration-150"
-                                            style={{
-                                                opacity: effectiveVignetteOpacity,
-                                                background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
-                                            }}
-                                        />
-                                        <div
-                                            className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
-                                            style={{
-                                                opacity: effectiveGrainOpacity,
-                                                backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                            <div
-                                className={`absolute border-2 border-dashed border-gray-300/80 dark:border-white/40 ${isCropInteractive ? (isCropDragging ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
-                                style={{
-                                    width: previewFrame.width,
-                                    height: previewFrame.height,
-                                    left: previewFrame.left,
-                                    top: previewFrame.top,
-                                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
-                                    touchAction: 'none',
-                                }}
-                                onPointerDown={handleCropPointerDown}
-                                onPointerMove={handleCropPointerMove}
-                                onPointerUp={handleCropPointerUp}
-                                onPointerCancel={handleCropPointerUp}
-                            />
-                        </div>
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center pointer-events-none select-none">
-                            <div
-                                className="relative w-full h-full"
-                                style={{
-                                    transform: effectivePreviewTransform || 'none',
-                                    transformOrigin: 'center',
-                                }}
-                            >
-                                <img
-                                    src={previewSrc}
-                                    className="w-full h-full object-contain transition-all duration-150 pointer-events-none"
-                                    style={{
-                                        filter: effectivePreviewFilter || 'none',
-                                    }}
-                                    onLoad={(e) => {
-                                        const img = e.currentTarget;
-                                        if (img.naturalWidth && img.naturalHeight) {
-                                            setPreviewImageSize({
-                                                width: img.naturalWidth,
-                                                height: img.naturalHeight,
-                                            });
-                                        }
-                                    }}
-                                    alt="preview"
-                                />
-                                <div
-                                    className="pointer-events-none absolute inset-0 transition-opacity duration-150"
-                                    style={{
-                                        opacity: effectiveVignetteOpacity,
-                                        background: 'radial-gradient(circle at center, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
-                                    }}
-                                />
-                                <div
-                                    className="pointer-events-none absolute inset-0 mix-blend-soft-light transition-opacity duration-150"
-                                    style={{
-                                        opacity: effectiveGrainOpacity,
-                                        backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0, rgba(0,0,0,0.2) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px), repeating-linear-gradient(90deg, rgba(0,0,0,0.15) 0, rgba(0,0,0,0.15) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 4px)',
-                                    }}
-                                />
-                            </div>
-                        </div>
-                    )
-                ) : (
-                    <div className={`text-xs ${previewLoadError ? 'text-red-500' : 'text-gray-400'} px-4 text-center break-all`}>
-                        {previewLoadError || '拖入图片后显示预览'}
-                    </div>
-                )}
-                {watermarkPreviewOverlay}
-            </div>
-        </div>
-    );
-
-    if (isWatermark) {
-        return (
-            <div className="imageflow-detail-page imageflow-detail-page--watermark min-h-full flex flex-col p-1">
-                <div className="imageflow-detail-layout imageflow-detail-layout--watermark flex-1 min-h-0 gap-4">
-                    <div className="min-h-0 flex flex-col gap-4">
-                        <div className="flex-1 min-h-0">
-                            {previewPanel}
-                        </div>
-                        <div className="imageflow-watermark-drop-slot shrink-0">
-                            {dropZone}
-                        </div>
-                    </div>
-                    <div className="min-h-0">
-                        {settingsPanel}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (isImageProcessor) {
-        return (
-            <div className="imageflow-detail-page imageflow-detail-page--processor min-h-full flex flex-col p-1">
-                <div className="imageflow-detail-layout imageflow-detail-layout--processor flex-1 min-h-0 gap-4">
-                    <div className="imageflow-processor-workspace min-h-0 flex flex-col gap-4">
-                        <div className="imageflow-processor-preview flex-1 min-h-0">
-                            {previewPanel}
-                        </div>
-                        <div className="imageflow-processor-input-card shrink-0 bg-white dark:bg-[#2C2C2E] rounded-3xl p-3 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-2 min-h-0 overflow-hidden">
-                            <div className="imageflow-processor-dropzone min-h-0">
-                                {dropZone}
-                            </div>
-                            <div className="shrink-0">
-                                {renderInputSection(true)}
-                            </div>
-                            {renderActionSection(true)}
-                        </div>
-                    </div>
-                    <div className="min-h-0">
-                        {settingsPanel}
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="imageflow-detail-page imageflow-detail-page--standard min-h-full flex flex-col p-1">
             <div className="imageflow-detail-layout imageflow-detail-layout--standard flex-1 gap-6 min-h-0">
-                {/* Left Side: Upload Area (Shared) - Replaced with FileDropZone */}
-                <div className="imageflow-standard-input h-full min-h-0">
-                    {isImageProcessor ? (
-                        <div className="h-full flex flex-col gap-4 min-h-0">
-                            <div className="flex-1 min-h-0">
-                                {dropZone}
+                {id === 'grid' ? (
+                    <div className="h-full min-h-0 flex flex-col gap-3 min-w-0">
+                        <GridPreviewCard
+                            file={dropResult?.files?.[0] || null}
+                            rows={gridSize === '四宫格' ? 2 : gridSize === '十六宫格' ? 4 : 3}
+                            cols={gridSize === '四宫格' ? 2 : gridSize === '十六宫格' ? 4 : 3}
+                            totalCount={inputCount}
+                        />
+                        <div className="shrink-0 h-[190px]">
+                            {dropZone}
+                        </div>
+                    </div>
+                ) : id === 'split' ? (
+                    <div className="h-full min-h-0 flex flex-col gap-3 min-w-0">
+                        <GridPreviewCard
+                            file={dropResult?.files?.[0] || null}
+                            rows={splitParams.rows}
+                            cols={splitParams.cols}
+                            totalCount={inputCount}
+                        />
+                        <div className="shrink-0 h-[190px]">
+                            {dropZone}
+                        </div>
+                    </div>
+                ) : id === 'palette' ? (
+                    <div className="h-full min-h-0 flex flex-col gap-3 min-w-0">
+                        <GridPreviewCard
+                            file={dropResult?.files?.[0] || null}
+                            rows={1}
+                            cols={1}
+                            totalCount={inputCount}
+                        />
+                        <div className="shrink-0 h-[190px]">
+                            {dropZone}
+                        </div>
+                    </div>
+                ) : id === 'watermark' ? (
+                    <div className="h-full min-h-0 flex flex-col gap-3 min-w-0">
+                        <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-100 dark:border-white/5 shadow-sm p-4 overflow-hidden">
+                            <div className="flex items-center justify-between gap-3 pb-2 shrink-0">
+                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate min-w-0">
+                                    {dropResult?.files?.[0]
+                                        ? (dropResult.files[0].relative_path.split('/').pop() || '')
+                                        : ''}
+                                </span>
+                                <span className="shrink-0 text-xs text-gray-400 font-mono">{inputCount > 1 ? `1/${inputCount}` : ''}</span>
                             </div>
-                            <div className="bg-white dark:bg-[#2C2C2E] rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4 min-h-0 overflow-hidden">
-                                <div className="flex-1 overflow-y-auto no-scrollbar">
-                                    {renderInputSection(true)}
-                                </div>
-                                {renderActionSection(true)}
+                            <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden rounded-xl bg-gray-50 dark:bg-black/20">
+                                {!dropResult?.files?.[0] ? (
+                                    <div className="text-sm text-gray-300 dark:text-gray-600">拖入图片</div>
+                                ) : !wmPreviewUrl ? (
+                                    <div className="text-xs text-gray-400">加载中...</div>
+                                ) : (
+                                    <img src={wmPreviewUrl} alt="" draggable={false} className="max-w-full max-h-full object-contain spring-pop" />
+                                )}
                             </div>
                         </div>
-                    ) : (
-                        dropZone
-                    )}
-                </div>
+                        <div className="shrink-0 h-[190px]">
+                            {dropZone}
+                        </div>
+                    </div>
+                ) : id === 'richtext' ? (
+                    <div className="h-full min-h-0 flex flex-col bg-white dark:bg-[#2C2C2E] rounded-3xl border border-gray-100 dark:border-white/5 shadow-sm p-4 overflow-hidden">
+                        <div className="flex items-center justify-between gap-3 pb-2 shrink-0">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">实时预览</span>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-auto rounded-xl bg-gray-50 dark:bg-black/20 imageflow-page-scroll">
+                            {!rtPreviewUrl ? (
+                                <div className="h-full min-h-[200px] flex items-center justify-center text-xs text-gray-400">输入内容</div>
+                            ) : (
+                                <img src={rtPreviewUrl} alt="" draggable={false} className="w-full h-auto block" />
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="imageflow-standard-input h-full min-h-0">
+                        {dropZone}
+                    </div>
+                )}
 
                 {/* Right Side: Specific Settings Panel (Secondary Menu) */}
                 <div className="h-full min-h-0">
-                    {isImageProcessor ? (
-                        <div className="h-full flex flex-col gap-4 min-h-0 overflow-hidden">
-                            <div className="flex-[1.15] min-h-0">
-                                {previewPanel}
-                            </div>
-                            <div className="flex-[0.85] min-h-0">
-                                {settingsPanel}
-                            </div>
-                        </div>
-                    ) : (
-                        settingsPanel
-                    )}
+                    {settingsPanel}
                 </div>
             </div>
         </div>

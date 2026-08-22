@@ -15,7 +15,7 @@ def main() -> None:
     except Exception:
         Image.MAX_IMAGE_PIXELS = 64_000_000
 
-    width, height = 1366, 900
+    width, height = 2000, 1300
     x = y = None
     try:
         from backend.infrastructure.settings_store import load_settings
@@ -51,6 +51,9 @@ def main() -> None:
     configure_window(window)
 
     def _warm_runtime() -> None:
+        # Let the window paint first: heavy warmup (process-pool spin-up +
+        # converter engine import) competes with GUI init for CPU/disk.
+        threading.Event().wait(1.5)
         try:
             from backend.application.image_ops import warm_process_pool
             warm_process_pool()

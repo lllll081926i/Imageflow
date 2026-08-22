@@ -9,11 +9,11 @@ SUPPORTED_EXTENSIONS = {
     ".gif",
     ".bmp",
     ".avif",
+    ".heic",
+    ".heif",
     ".ico",
     ".tiff",
     ".tif",
-    ".heic",
-    ".heif",
     ".svg",
 }
 
@@ -87,11 +87,18 @@ def _iter_supported_files(root: Path):
             continue
 
 
+MAX_EXPANDED_FILES = 10000
+
+
 def expand_input_paths(paths: list[str]) -> dict:
     files: list[dict] = []
     has_directory = False
+    truncated = False
 
     for raw_path in paths:
+        if len(files) >= MAX_EXPANDED_FILES:
+            truncated = True
+            break
         if not str(raw_path).strip():
             continue
         normalized = Path(normalize_user_supplied_path(str(raw_path)))
@@ -115,6 +122,9 @@ def expand_input_paths(paths: list[str]) -> dict:
 
         has_directory = True
         for current_path, current_info in _iter_supported_files(normalized):
+            if len(files) >= MAX_EXPANDED_FILES:
+                truncated = True
+                break
             current = Path(current_path)
             files.append(
                 {
@@ -128,7 +138,11 @@ def expand_input_paths(paths: list[str]) -> dict:
             )
 
     files.sort(key=lambda item: str(item["input_path"]).lower())
-    return {"files": files, "has_directory": has_directory}
+    result: dict = {"files": files, "has_directory": has_directory}
+    if truncated:
+        result["truncated"] = True
+        result["max_files"] = MAX_EXPANDED_FILES
+    return result
 
 
 def resolve_output_path(base_path: str, reserved: list[str] | None = None) -> str:
@@ -152,17 +166,3 @@ def resolve_output_path(base_path: str, reserved: list[str] | None = None) -> st
         if not candidate.exists() and _path_conflict_key(candidate) not in reserved_set:
             return str(candidate)
     raise RuntimeError("failed to resolve unique output path")
-
-
-def list_system_fonts() -> list[str]:
-    if os.name != "nt":
-        return []
-
-    fonts_dir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-    if not fonts_dir.exists():
-        return []
-
-    allowed = {".ttf", ".otf", ".ttc"}
-    fonts = [str(path) for path in fonts_dir.iterdir() if path.is_file() and path.suffix.lower() in allowed]
-    fonts.sort(key=lambda item: item.lower())
-    return fonts

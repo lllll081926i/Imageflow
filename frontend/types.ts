@@ -13,11 +13,15 @@ export type Theme = 'light' | 'dark' | 'system';
 export type FeatureId =
     | 'converter'
     | 'compressor'
+    | 'resize'
+    | 'grid'
+    | 'split'
+    | 'stitch'
+    | 'watermark'
+    | 'palette'
     | 'pdf'
     | 'gif'
-    | 'subtitle_stitch'
-    | 'watermark'
-    | 'image_processor'
+    | 'richtext'
     | 'settings';
 
-export type ViewState = 'dashboard' | FeatureId;
+export type ViewState = FeatureId;

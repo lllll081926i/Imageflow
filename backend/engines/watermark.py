@@ -1,666 +1,323 @@
 #!/usr/bin/env python3
 """
-Watermark Script
+Watermark Engine — text watermark with rich styling.
 
-This script applies text or image watermarks to images using the Pillow library.
-It supports flexible positioning, styling, and batch processing.
+Actions:
+- "apply": stamp the watermark onto input_path and write output_path
+- "preview": render a small watermarked preview and return it as a data URL
 
-Usage:
-    python watermark.py
-    (Input is provided via JSON on stdin)
-    (Output is provided via JSON on stdout)
+Style options:
+    text            watermark content (multi-line supported via \n)
+    font_name       微软雅黑 | 黑体 | 宋体 | 等线 | Arial  (system font lookup)
+    size_mode       "px" (absolute) | "percent" (of image width)
+    font_size       int, meaning depends on size_mode
+    color           "#RRGGBB"
+    opacity         0..100
+    rotation        -180..180 degrees
+    position        tl tc tr cl c cr bl bc br   (+ margin)
+    tiled           bool — repeat across the whole image
+    tile_gap_x/y    spacing for tiled mode
+    stroke_width / stroke_color
+    shadow          bool (soft dark shadow behind glyphs)
 """
 
-import sys
 import json
-import os
-from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageChops
 import logging
+import math
+import os
+import sys
+from pathlib import Path
 
-from converter import open_image_with_svg_support
+from PIL import Image, ImageDraw, ImageFont
 
-# Configure logging
+from backend.engines._image_formats import ensure_heif_supported
+
+ensure_heif_supported()
+
 logger = logging.getLogger(__name__)
 
+POSITIONS = {"tl", "tc", "tr", "cl", "c", "cr", "bl", "bc", "br"}
 
-def _resolve_request_payload(input_data):
-    return {
-        "watermark_type": input_data.get("type") or input_data.get("watermark_type"),
-        "input_path": input_data.get("input_path"),
-        "output_path": input_data.get("output_path"),
-        "text": input_data.get("text", ""),
-        "font": input_data.get("font") or input_data.get("font_name") or "arial",
-        "font_size": input_data.get("font_size", 36),
-        "font_color": input_data.get("font_color", "#FFFFFF"),
-        "watermark_path": input_data.get("watermark_path") or input_data.get("image_path", ""),
-        "watermark_scale": input_data.get("watermark_scale", input_data.get("scale", 0.2)),
-        "opacity": input_data.get("opacity", 1.0),
-        "position": input_data.get("position", "center"),
-        "rotation": input_data.get("rotation", 0),
-        "offset_x": input_data.get("offset_x", 0),
-        "offset_y": input_data.get("offset_y", 0),
-        "blend_mode": input_data.get("blend_mode", "normal"),
-        "tiled": input_data.get("tiled", False),
-        "shadow": input_data.get("shadow", False),
-    }
+_FONT_CANDIDATES = {
+    "微软雅黑": ["msyh.ttc", "msyh.ttf", "msyhbd.ttc"],
+    "黑体": ["simhei.ttf"],
+    "宋体": ["simsun.ttc", "simsun.ttf"],
+    "等线": ["Deng.ttf", "Dengb.ttf"],
+    "Arial": ["arial.ttf", "arialbd.ttf"],
+}
+_FALLBACK_FONTS = ["msyhbd.ttc", "msyh.ttc", "simhei.ttf", "segoeui.ttf", "arial.ttf"]
 
 
-class WatermarkApplier:
-    """Handles watermark application to images."""
-    
-    def __init__(self):
-        """Initialize the watermark applier."""
-        logger.info("WatermarkApplier initialized")
-    
-    def apply(self, watermark_type, input_path, output_path,
-              text='', font='arial', font_size=36, font_color='#FFFFFF',
-              watermark_path='', watermark_scale=0.2,
-              opacity=1.0, position='center', rotation=0,
-              offset_x=0, offset_y=0, blend_mode='normal',
-              tiled=False, shadow=False):
-        """
-        Apply a watermark to an image.
-        
-        Args:
-            watermark_type (str): Type of watermark ('text' or 'image')
-            input_path (str): Path to the input image
-            output_path (str): Path to save the watermarked image
-            text (str): Text content for text watermark
-            font (str): Font family name
-            font_size (int): Font size in pixels
-            font_color (str): Font color in hex format
-            watermark_path (str): Path to watermark image
-            watermark_scale (float): Scale factor for watermark image
-            opacity (float): Opacity (0.0-1.0)
-            position (str): Position of the watermark
-            rotation (float): Rotation angle in degrees
-            offset_x (int): Horizontal offset in pixels
-            offset_y (int): Vertical offset in pixels
-            blend_mode (str): Blend mode (normal, multiply, screen, overlay, soft_light)
-            tiled (bool): Tile watermark across the image
-            shadow (bool): Add a soft shadow behind the watermark
-        
-        Returns:
-            dict: Watermark application result
-        """
-        img = None
-        overlay = None
-        watermarked = None
+def _error(code, message):
+    return {"success": False, "error": message, "error_code": code}
+
+
+def _load_font(font_name: str, size: int):
+    candidates = _FONT_CANDIDATES.get(str(font_name), []) + [f"{font_name}.ttf"]
+    for name in candidates + _FALLBACK_FONTS:
         try:
-            if watermark_type == 'image':
-                watermark_path = str(watermark_path or '').strip()
-                if not watermark_path:
-                    return {
-                        'success': False,
-                        'error': 'Missing required parameter: watermark_path'
-                    }
-                if not os.path.exists(watermark_path):
-                    return {
-                        'success': False,
-                        'error': f'File not found: {watermark_path}'
-                    }
-
-            # Open input image
-            logger.info(f"Opening image: {input_path}")
-            base_img = open_image_with_svg_support(
-                input_path,
-                format_type=Path(output_path).suffix.lstrip(".") or "png",
-            )
-            try:
-                original_mode = base_img.mode
-                img = base_img.convert('RGBA') if base_img.mode != 'RGBA' else base_img.copy()
-            finally:
-                try:
-                    base_img.close()
-                except Exception:
-                    pass
-            
-            # Create transparent overlay
-            overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
-            blend_mode = str(blend_mode or 'normal').strip().lower()
-            tiled = bool(tiled)
-            shadow = bool(shadow)
-            
-            try:
-                watermark_scale = float(watermark_scale)
-            except (TypeError, ValueError):
-                watermark_scale = 0.2
-            if watermark_scale <= 0:
-                watermark_scale = 0.2
-
-            # Apply watermark based on type
-            if watermark_type == 'text':
-                if tiled:
-                    tile_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
-                    try:
-                        if rotation != 0:
-                            rotated = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                            tile_img.close()
-                            tile_img = rotated
-                        self._tile_overlay(overlay, tile_img, offset_x, offset_y)
-                    finally:
-                        tile_img.close()
-                else:
-                    self._apply_text_watermark(overlay, img.size, text, font,
-                                             font_size, font_color, opacity,
-                                             position, rotation, offset_x, offset_y, shadow)
-            elif watermark_type == 'image':
-                if tiled:
-                    tile_img = self._build_image_watermark(watermark_path, img.size, watermark_scale, opacity)
-                    try:
-                        if rotation != 0:
-                            rotated = tile_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                            tile_img.close()
-                            tile_img = rotated
-                        self._tile_overlay(overlay, tile_img, offset_x, offset_y)
-                    finally:
-                        tile_img.close()
-                else:
-                    self._apply_image_watermark(overlay, img.size, watermark_path,
-                                              watermark_scale, opacity, position,
-                                              rotation, offset_x, offset_y, shadow)
-            else:
-                return {
-                    'success': False,
-                    'error': f'Invalid watermark type: {watermark_type}'
-                }
-            
-            # Composite watermark onto original image
-            watermarked = self._blend_overlay(img, overlay, blend_mode)
-            overlay.close()
-            overlay = None
-
-            # Convert back to original mode if necessary
-            if original_mode != 'RGBA':
-                prev = watermarked
-                watermarked = watermarked.convert(original_mode)
-                prev.close()
-            
-            # Create output directory if it doesn't exist
-            output_dir = os.path.dirname(output_path)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-            
-            # Save the watermarked image
-            logger.info(f"Saving watermarked image: {output_path}")
-            img_format = self._resolve_output_format(output_path, watermarked)
-            self._save_image(watermarked, output_path, img_format)
-            
-            # Get file size
-            file_size = os.path.getsize(output_path)
-            
-            return {
-                'success': True,
-                'input_path': input_path,
-                'output_path': output_path,
-                'file_size': file_size
-            }
-            
-        except FileNotFoundError as e:
-            logger.error(f"File not found: {e}")
-            return {
-                'success': False,
-                'error': f'File not found: {input_path}'
-            }
-        except Exception as e:
-            logger.error(f"Watermark application failed: {e}", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e)
-            }
-        finally:
-            for image in (watermarked, overlay, img):
-                if image is not None:
-                    try:
-                        image.close()
-                    except Exception:
-                        pass
-
-    def _resolve_output_format(self, output_path, image):
-        ext = Path(output_path).suffix.lower()
-        format_map = {
-            '.jpg': 'JPEG',
-            '.jpeg': 'JPEG',
-            '.png': 'PNG',
-            '.webp': 'WEBP',
-            '.bmp': 'BMP',
-            '.tif': 'TIFF',
-            '.tiff': 'TIFF',
-            '.gif': 'GIF',
-            '.ico': 'ICO',
-            '.avif': 'AVIF',
-        }
-        fallback = getattr(image, "format", None) or 'PNG'
-        return format_map.get(ext, fallback)
-
-    def _save_image(self, img, output_path, img_format):
-        save_img = img
-        if img_format == 'JPEG':
-            if img.mode in ('RGBA', 'LA'):
-                rgba = img.convert('RGBA')
-                background = Image.new('RGB', rgba.size, (255, 255, 255))
-                alpha = rgba.split()[-1]
-                try:
-                    background.paste(rgba, mask=alpha)
-                    save_img = background
-                finally:
-                    alpha.close()
-                    rgba.close()
-            elif img.mode == 'P' and 'transparency' in img.info:
-                rgba = img.convert('RGBA')
-                background = Image.new('RGB', rgba.size, (255, 255, 255))
-                alpha = rgba.split()[-1]
-                try:
-                    background.paste(rgba, mask=alpha)
-                    save_img = background
-                finally:
-                    alpha.close()
-                    rgba.close()
-            elif img.mode not in ('RGB', 'L'):
-                save_img = img.convert('RGB')
-        save_img.save(output_path, format=img_format)
-        if save_img is not img:
-            try:
-                save_img.close()
-            except Exception:
-                pass
-    
-    def _apply_text_watermark(self, overlay, img_size, text, font,
-                             font_size, font_color, opacity, position,
-                             rotation, offset_x, offset_y, shadow=False):
-        """Apply a text watermark to the overlay."""
-        text_img = None
-        try:
-            text_img = self._build_text_watermark(text, font, font_size, font_color, opacity, shadow)
-            if rotation != 0:
-                rotated = text_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                text_img.close()
-                text_img = rotated
-
-            wm_width, wm_height = text_img.size
-            x, y = self._calculate_position(
-                img_size, (wm_width, wm_height), position, offset_x, offset_y
-            )
-            overlay.paste(text_img, (x, y), text_img)
-            logger.debug(f"Applied text watermark at ({x}, {y})")
-        except Exception as e:
-            logger.error(f"Failed to apply text watermark: {e}")
-            raise
-        finally:
-            if text_img is not None:
-                text_img.close()
-
-    def _build_text_watermark(self, text, font, font_size, font_color, opacity, shadow):
-        try:
-            safe_font_size = max(8, min(int(font_size or 36), 512))
-            try:
-                pil_font = ImageFont.truetype(font, safe_font_size)
-            except Exception:
-                logger.warning(f"Font '{font}' not found, using default font")
-                pil_font = ImageFont.load_default()
-
-            tmp = Image.new('RGBA', (10, 10), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(tmp)
-            bbox = draw.textbbox((0, 0), text, font=pil_font)
-            text_width = max(1, bbox[2] - bbox[0])
-            text_height = max(1, bbox[3] - bbox[1])
-            tmp.close()
-
-            # Cap text canvas so extreme font_size/text length cannot OOM the worker.
-            max_text_edge = 4096
-            if text_width > max_text_edge or text_height > max_text_edge:
-                scale = min(max_text_edge / float(text_width), max_text_edge / float(text_height))
-                safe_font_size = max(8, int(safe_font_size * scale))
-                try:
-                    pil_font = ImageFont.truetype(font, safe_font_size)
-                except Exception:
-                    pil_font = ImageFont.load_default()
-                tmp = Image.new('RGBA', (10, 10), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(tmp)
-                bbox = draw.textbbox((0, 0), text, font=pil_font)
-                text_width = max(1, min(max_text_edge, bbox[2] - bbox[0]))
-                text_height = max(1, min(max_text_edge, bbox[3] - bbox[1]))
-                tmp.close()
-
-            color = self._parse_color(font_color, opacity)
-            text_img = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
-            text_draw = ImageDraw.Draw(text_img)
-            text_draw.text((0, 0), text, font=pil_font, fill=color)
-
-            if not shadow:
-                return text_img
-
-            shadow_offset = max(2, int(safe_font_size * 0.08))
-            shadow_radius = max(1, int(safe_font_size * 0.06))
-            shadow_color = (0, 0, 0, int(255 * opacity * 0.5))
-            shadow_canvas = Image.new(
-                'RGBA',
-                (text_width + shadow_offset * 2, text_height + shadow_offset * 2),
-                (0, 0, 0, 0)
-            )
-            shadow_draw = ImageDraw.Draw(shadow_canvas)
-            shadow_draw.text((shadow_offset, shadow_offset), text, font=pil_font, fill=shadow_color)
-            shadow_canvas = shadow_canvas.filter(ImageFilter.GaussianBlur(radius=shadow_radius))
-            shadow_canvas.paste(text_img, (shadow_offset, shadow_offset), text_img)
-            text_img.close()
-            return shadow_canvas
-        except Exception as e:
-            logger.error(f"Failed to build text watermark: {e}")
-            raise
-
-    def _apply_image_watermark(self, overlay, img_size, watermark_path,
-                              watermark_scale, opacity, position,
-                              rotation, offset_x, offset_y, shadow=False):
-        """Apply an image watermark to the overlay."""
-        watermark = self._build_image_watermark(watermark_path, img_size, watermark_scale, opacity)
-        try:
-            if rotation != 0:
-                rotated = watermark.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
-                watermark.close()
-                watermark = rotated
-
-            wm_width, wm_height = watermark.size
-            x, y = self._calculate_position(
-                img_size, (wm_width, wm_height), position, offset_x, offset_y
-            )
-
-            if shadow:
-                shadow_img, shadow_offset = self._create_shadow_image(watermark, opacity)
-                try:
-                    overlay.paste(shadow_img, (x + shadow_offset, y + shadow_offset), shadow_img)
-                finally:
-                    shadow_img.close()
-
-            overlay.paste(watermark, (x, y), watermark)
-            logger.debug(f"Applied image watermark at ({x}, {y})")
-        finally:
-            watermark.close()
-
-    def _build_image_watermark(self, watermark_path, img_size, watermark_scale, opacity):
-        with Image.open(watermark_path) as base_wm:
-            watermark = base_wm.convert('RGBA') if base_wm.mode != 'RGBA' else base_wm.copy()
-
-        orig_width, orig_height = watermark.size
-        try:
-            scale = float(watermark_scale)
-        except (TypeError, ValueError):
-            scale = 0.2
-        scale = max(0.01, scale)
-        new_width = max(1, int(img_size[0] * scale))
-        new_height = max(1, int(orig_height * new_width / max(1, orig_width)))
-        resized = watermark.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        watermark.close()
-        watermark = resized
-
-        if opacity < 1.0:
-            alpha = watermark.split()[3]
-            try:
-                enhanced_alpha = ImageEnhance.Brightness(alpha).enhance(opacity)
-                try:
-                    watermark.putalpha(enhanced_alpha)
-                finally:
-                    enhanced_alpha.close()
-            finally:
-                alpha.close()
-
-        return watermark
-
-    def _create_shadow_image(self, watermark, opacity):
-        alpha = watermark.split()[3]
-        try:
-            shadow_alpha = ImageEnhance.Brightness(alpha).enhance(0.6)
-            try:
-                shadow = Image.new('RGBA', watermark.size, (0, 0, 0, 0))
-                shadow.putalpha(shadow_alpha)
-            finally:
-                shadow_alpha.close()
-        finally:
-            alpha.close()
-        blur_radius = max(1, int(min(watermark.size) * 0.04))
-        blurred = shadow.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-        shadow.close()
-        shadow_offset = max(2, int(min(watermark.size) * 0.02))
-        return blurred, shadow_offset
-
-    def _tile_overlay(self, overlay, tile_img, offset_x, offset_y):
-        if tile_img.size[0] <= 0 or tile_img.size[1] <= 0:
-            return
-        gap_x = max(0, int(offset_x))
-        gap_y = max(0, int(offset_y))
-        step_x = max(1, tile_img.size[0] + gap_x)
-        step_y = max(1, tile_img.size[1] + gap_y)
-
-        start_x = -tile_img.size[0]
-        start_y = -tile_img.size[1]
-        for y in range(start_y, overlay.size[1] + tile_img.size[1], step_y):
-            for x in range(start_x, overlay.size[0] + tile_img.size[0], step_x):
-                overlay.paste(tile_img, (x, y), tile_img)
-
-    def _blend_overlay(self, base_img, overlay, blend_mode):
-        base = base_img.convert('RGBA')
-        layer = overlay.convert('RGBA')
-        mode = str(blend_mode or 'normal').strip().lower()
-        if mode in ('', 'normal'):
-            try:
-                return Image.alpha_composite(base, layer)
-            finally:
-                base.close()
-                layer.close()
-
-        base_rgb = base.convert('RGB')
-        layer_rgb = layer.convert('RGB')
-        alpha = layer.split()[3]
-        base_alpha = base.split()[3]
-        blended = None
-        out_rgb = None
-        try:
-            if mode == 'multiply':
-                blended = ImageChops.multiply(base_rgb, layer_rgb)
-            elif mode == 'screen':
-                blended = ImageChops.screen(base_rgb, layer_rgb)
-            elif mode == 'overlay':
-                if hasattr(ImageChops, 'overlay'):
-                    blended = ImageChops.overlay(base_rgb, layer_rgb)
-                else:
-                    blended = ImageChops.multiply(base_rgb, layer_rgb)
-            elif mode in ('soft_light', 'softlight'):
-                if hasattr(ImageChops, 'soft_light'):
-                    blended = ImageChops.soft_light(base_rgb, layer_rgb)
-                else:
-                    blended = ImageChops.screen(base_rgb, layer_rgb)
-            else:
-                blended = layer_rgb
-
-            out_rgb = Image.composite(blended, base_rgb, alpha)
-            out = out_rgb.convert('RGBA')
-            out.putalpha(base_alpha)
-            return out
-        finally:
-            if out_rgb is not None:
-                out_rgb.close()
-            if blended is not None and blended is not layer_rgb:
-                blended.close()
-            base_alpha.close()
-            alpha.close()
-            base_rgb.close()
-            layer_rgb.close()
-            base.close()
-            layer.close()
-    
-    def _calculate_position(self, img_size, wm_size, position, offset_x, offset_y):
-        """Calculate watermark position based on position string."""
-        img_width, img_height = img_size
-        wm_width, wm_height = wm_size
-        
-        # Calculate base position
-        if position == 'top-left':
-            x = offset_x
-            y = offset_y
-        elif position == 'top-center':
-            x = (img_width - wm_width) // 2 + offset_x
-            y = offset_y
-        elif position == 'top-right':
-            x = img_width - wm_width - offset_x
-            y = offset_y
-        elif position == 'center-left':
-            x = offset_x
-            y = (img_height - wm_height) // 2 + offset_y
-        elif position == 'center':
-            x = (img_width - wm_width) // 2 + offset_x
-            y = (img_height - wm_height) // 2 + offset_y
-        elif position == 'center-right':
-            x = img_width - wm_width - offset_x
-            y = (img_height - wm_height) // 2 + offset_y
-        elif position == 'bottom-left':
-            x = offset_x
-            y = img_height - wm_height - offset_y
-        elif position == 'bottom-center':
-            x = (img_width - wm_width) // 2 + offset_x
-            y = img_height - wm_height - offset_y
-        elif position == 'bottom-right':
-            x = img_width - wm_width - offset_x
-            y = img_height - wm_height - offset_y
-        else:
-            # Default to center
-            x = (img_width - wm_width) // 2 + offset_x
-            y = (img_height - wm_height) // 2 + offset_y
-        
-        return x, y
-    
-    def _parse_color(self, color_str, opacity):
-        """Parse color string to RGBA tuple."""
-        color_text = str(color_str or "").strip().lstrip("#")
-        if len(color_text) == 3:
-            color_text = "".join(ch * 2 for ch in color_text)
-        if len(color_text) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in color_text):
-            logger.warning("Invalid font color '%s', using white", color_str)
-            color_text = "FFFFFF"
-
-        # Parse hex color
-        r = int(color_text[0:2], 16)
-        g = int(color_text[2:4], 16)
-        b = int(color_text[4:6], 16)
-        a = int(opacity * 255)
-        
-        return (r, g, b, a)
+            return ImageFont.truetype(name, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
-def process(input_data):
-    """
-    Process function used by the desktop API engine bridge.
-
-    Args:
-        input_data (dict): Input parameters
-
-    Returns:
-        dict: Processing result
-    """
+def _parse_color(value, default=(0, 0, 0)):
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6:
+        return default
     try:
-        # Extract parameters
-        payload = _resolve_request_payload(input_data)
-        watermark_type = payload["watermark_type"]
-        input_path = payload["input_path"]
-        output_path = payload["output_path"]
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return default
 
-        # Validate required parameters
-        if not input_path or not output_path:
-            return {
-                'success': False,
-                'error': 'Missing required parameters: input_path or output_path'
-            }
 
-        # Create watermark applier and apply watermark
-        applier = WatermarkApplier()
-        result = applier.apply(
-            watermark_type=watermark_type,
-            input_path=input_path,
-            output_path=output_path,
-            text=payload["text"],
-            font=payload["font"],
-            font_size=payload["font_size"],
-            font_color=payload["font_color"],
-            watermark_path=payload["watermark_path"],
-            watermark_scale=payload["watermark_scale"],
-            opacity=payload["opacity"],
-            position=payload["position"],
-            rotation=payload["rotation"],
-            offset_x=payload["offset_x"],
-            offset_y=payload["offset_y"],
-            blend_mode=payload["blend_mode"],
-            tiled=payload["tiled"],
-            shadow=payload["shadow"]
+def _resolve_font_size(img_width, opts):
+    size_mode = str(opts.get("size_mode") or "px").lower()
+    raw = opts.get("font_size", 36)
+    try:
+        value = max(4, min(2000, int(raw)))
+    except (TypeError, ValueError):
+        value = 36
+    if size_mode == "percent":
+        percent = max(1, min(100, value))
+        return max(8, round(img_width * percent / 100))
+    return value
+
+
+def _build_text_layer(width, height, opts, font_size):
+    """Render the watermark into a transparent RGBA layer sized to the image."""
+    text = str(opts.get("text") or "").replace("\r\n", "\n").strip()
+    if not text:
+        return None
+    font = _load_font(str(opts.get("font_name") or "微软雅黑"), font_size)
+    color = _parse_color(opts.get("color"), (0, 0, 0))
+    try:
+        alpha = max(1, min(100, int(opts.get("opacity", 50)))) * 255 // 100
+    except (TypeError, ValueError):
+        alpha = 128
+    fill = (*color, alpha)
+
+    stroke_width = 0
+    stroke_fill = None
+    try:
+        stroke_width = max(0, min(20, int(opts.get("stroke_width", 0) or 0)))
+    except (TypeError, ValueError):
+        pass
+    if stroke_width > 0:
+        stroke_rgb = _parse_color(opts.get("stroke_color"), (255, 255, 255))
+        stroke_fill = (*stroke_rgb, min(255, alpha + 60))
+
+    lines = text.split("\n")
+    probe = Image.new("RGBA", (1, 1))
+    draw = ImageDraw.Draw(probe)
+
+    def line_size(line_text):
+        box = draw.textbbox((0, 0), line_text or " ", font=font, stroke_width=stroke_width)
+        return box[2] - box[0], box[3] - box[1]
+
+    widths = []
+    heights = []
+    for line_text in lines:
+        w, h = line_size(line_text)
+        widths.append(w)
+        heights.append(h)
+    line_gap = max(2, font_size // 6)
+    total_w = max(widths)
+    total_h = sum(heights) + line_gap * (len(lines) - 1)
+
+    pad = stroke_width * 2 + (font_size // 3 if opts.get("shadow") else stroke_width)
+    layer_w = min(width * 2, total_w + pad * 2)
+    layer_h = min(height * 2, total_h + pad * 2)
+    layer = Image.new("RGBA", (max(1, layer_w), max(1, layer_h)), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(layer)
+
+    y = pad
+    for i, line_text in enumerate(lines):
+        x = pad
+        if opts.get("shadow"):
+            shadow_offset = max(1, font_size // 24)
+            ldraw.text(
+                (x + shadow_offset, y + shadow_offset), line_text,
+                font=font, fill=(0, 0, 0, min(160, alpha)), stroke_width=stroke_width,
+                stroke_fill=(0, 0, 0, 0),
+            )
+        ldraw.text(
+            (x, y), line_text,
+            font=font, fill=fill,
+            stroke_width=stroke_width, stroke_fill=stroke_fill,
         )
+        y += heights[i] + line_gap
 
-        return result
+    try:
+        angle = float(opts.get("rotation", 0) or 0)
+    except (TypeError, ValueError):
+        angle = 0.0
+    angle = ((angle % 360.0) + 360.0) % 360.0
+    if angle > 0.01:
+        layer = layer.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+    return layer
 
-    except Exception as e:
-        logger.error(f"Process function error: {e}", exc_info=True)
-        return {
-            'success': False,
-            'error': str(e)
-        }
+
+def _paste_positions(width, height, layer_w, layer_h, opts):
+    position = str(opts.get("position") or "br").lower()
+    if position not in POSITIONS:
+        position = "br"
+    try:
+        margin = max(0, min(2000, int(opts.get("margin", 40) or 40)))
+    except (TypeError, ValueError):
+        margin = 40
+
+    if opts.get("tiled"):
+        try:
+            gap_x = max(10, min(4000, int(opts.get("tile_gap_x", 80) or 80)))
+            gap_y = max(10, min(4000, int(opts.get("tile_gap_y", 80) or 80)))
+        except (TypeError, ValueError):
+            gap_x = gap_y = 80
+        step_x = layer_w + gap_x
+        step_y = layer_h + gap_y
+        points = []
+        offset_x = -layer_w
+        row = 0
+        while offset_x < width:
+            offset_y = -layer_h + (row % 2) * (step_y // 2)
+            while offset_y < height:
+                points.append((offset_x, offset_y))
+                offset_y += step_y
+            offset_x += step_x
+            row += 1
+        return points
+
+    xs = {"l": margin, "c": (width - layer_w) // 2, "r": width - layer_w - margin}
+    ys = {"t": margin, "c": (height - layer_h) // 2, "b": height - layer_h - margin}
+    return [(xs[position[1]], ys[position[0]])]
+
+
+class WatermarkTool:
+    def run(self, action, payload):
+        action = str(action or "apply").lower()
+        input_path = payload.get("input_path")
+        if not input_path:
+            return _error("WM_BAD_REQUEST", "Missing input_path")
+        source = Path(input_path)
+        if not source.exists():
+            return _error("WM_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
+
+        opts = payload
+        try:
+            with Image.open(source) as img:
+                img.load()
+                oriented = ImageOps_exif(img)
+                base = oriented.convert("RGBA")
+        except MemoryError:
+            return _error("WM_MEMORY_LIMIT", "Image is too large to process safely")
+        except Exception as exc:
+            return _error("WM_OPEN_FAILED", str(exc))
+
+        try:
+            font_size = _resolve_font_size(base.width, opts)
+            layer = _build_text_layer(base.width, base.height, opts, font_size)
+            if layer is None:
+                base.close()
+                return _error("WM_EMPTY_TEXT", "Watermark text is empty")
+
+            watermarked = base.copy()
+            base.close()
+            # paste (with mask) tolerates negative offsets, required for tiled wrap-around
+            for point in _paste_positions(watermarked.width, watermarked.height, layer.width, layer.height, opts):
+                watermarked.paste(layer, point, layer)
+            layer.close()
+
+            if action == "preview":
+                import io as _io
+                import base64 as _b64
+
+                # Downscale BEFORE compositing so huge inputs stay fast in live preview.
+                preview_src = watermarked
+                max_preview_edge = 1100
+                if max(preview_src.size) > max_preview_edge:
+                    scale = max_preview_edge / max(preview_src.size)
+                    preview_src = preview_src.resize(
+                        (max(1, round(preview_src.width * scale)), max(1, round(preview_src.height * scale))),
+                        Image.Resampling.BILINEAR,
+                    )
+                buffer = _io.BytesIO()
+                preview_src.save(buffer, format="PNG")
+                out_w, out_h = watermarked.size
+                watermarked.close()
+                if preview_src is not watermarked:
+                    preview_src.close()
+                return {
+                    "success": True,
+                    "action": "preview",
+                    "data_url": "data:image/png;base64," + _b64.b64encode(buffer.getvalue()).decode("ascii"),
+                    "width": out_w,
+                    "height": out_h,
+                }
+
+            output_path = str(payload.get("output_path") or "")
+            if not output_path:
+                watermarked.close()
+                return _error("WM_BAD_REQUEST", "Missing output_path")
+            parent = Path(output_path).parent
+            if str(parent):
+                os.makedirs(parent, exist_ok=True)
+
+            out_format = str(payload.get("output_format") or Path(output_path).suffix.lstrip(".") or "png").lower()
+            save_image = watermarked
+            if out_format in ("jpg", "jpeg"):
+                flat = Image.new("RGB", watermarked.size, (255, 255, 255))
+                flat.paste(watermarked, mask=watermarked.split()[-1])
+                watermarked.close()
+                save_image = flat
+            try:
+                if out_format in ("jpg", "jpeg"):
+                    try:
+                        q = max(1, min(100, int(payload.get("quality", 95))))
+                    except (TypeError, ValueError):
+                        q = 95
+                    save_image.save(output_path, format="JPEG", quality=q)
+                else:
+                    save_image.save(output_path, format="PNG")
+            finally:
+                save_image.close()
+
+            return {
+                "success": True,
+                "input_path": str(input_path),
+                "output_path": output_path,
+                "width": save_image.width,
+                "height": save_image.height,
+            }
+        except MemoryError:
+            return _error("WM_MEMORY_LIMIT", "Image is too large to process safely")
+        except Exception as exc:
+            logger.error("Watermark failed: %s", exc, exc_info=True)
+            return _error("WM_FAILED", str(exc))
+
+
+def ImageOps_exif(img):
+    from PIL import ImageOps
+
+    oriented = ImageOps.exif_transpose(img)
+    return oriented if oriented is not img else img.copy()
+
+
+_TOOL = WatermarkTool()
+
+
+def process(input_data: dict) -> dict:
+    return _TOOL.run(input_data.get("action", "apply"), input_data)
 
 
 def main():
-    """Main entry point for the watermark script."""
     try:
-        # Read input from stdin
-        input_data = json.load(sys.stdin)
-        payload = _resolve_request_payload(input_data)
-        logger.info(f"Received watermark request: {payload['watermark_type']} watermark")
-        
-        # Extract parameters
-        watermark_type = payload["watermark_type"]
-        input_path = payload["input_path"]
-        output_path = payload["output_path"]
-        
-        # Validate required parameters
-        if not input_path or not output_path:
-            result = {
-                'success': False,
-                'error': 'Missing required parameters: input_path or output_path'
-            }
-        else:
-            # Create watermark applier and apply watermark
-            applier = WatermarkApplier()
-            result = applier.apply(
-                watermark_type=watermark_type,
-                input_path=input_path,
-                output_path=output_path,
-                text=payload["text"],
-                font=payload["font"],
-                font_size=payload["font_size"],
-                font_color=payload["font_color"],
-                watermark_path=payload["watermark_path"],
-                watermark_scale=payload["watermark_scale"],
-                opacity=payload["opacity"],
-                position=payload["position"],
-                rotation=payload["rotation"],
-                offset_x=payload["offset_x"],
-                offset_y=payload["offset_y"],
-                blend_mode=payload["blend_mode"],
-                tiled=payload["tiled"],
-                shadow=payload["shadow"]
-            )
-        
-        # Write result to stdout
-        logger.info(f"Watermark application completed: {result.get('success')}")
-        json.dump(result, sys.stdout)
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON input: {e}")
-        json.dump({
-            'success': False,
-            'error': f'Invalid JSON input: {str(e)}'
-        }, sys.stdout)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        json.dump({
-            'success': False,
-            'error': str(e)
-        }, sys.stdout)
+        json.dump(process(json.load(sys.stdin)), sys.stdout)
+    except Exception as exc:
+        json.dump({"success": False, "error": str(exc)}, sys.stdout)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

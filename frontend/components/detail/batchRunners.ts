@@ -15,12 +15,6 @@ export type AppBindingsLike = {
     ConvertBatch?: (reqs: models.ConvertRequest[]) => Promise<any>;
     Compress?: (req: models.CompressRequest) => Promise<any>;
     CompressBatch?: (reqs: models.CompressRequest[]) => Promise<any>;
-    AddWatermark?: (req: models.WatermarkRequest) => Promise<any>;
-    AddWatermarkBatch?: (reqs: models.WatermarkRequest[]) => Promise<any>;
-    Adjust?: (req: models.AdjustRequest) => Promise<any>;
-    AdjustBatch?: (reqs: models.AdjustRequest[]) => Promise<any>;
-    ApplyFilter?: (req: models.FilterRequest) => Promise<any>;
-    ApplyFilterBatch?: (reqs: models.FilterRequest[]) => Promise<any>;
 };
 
 export type BatchRunnerContext = {
@@ -37,86 +31,6 @@ export type BatchRunnerContext = {
     getBatchChunkSize: (itemCount: number, requestsPerItem?: number) => number;
     normalizePath: (p: string) => string;
 };
-
-export async function runGenericBatch(options: {
-    ctx: BatchRunnerContext;
-    taskName: string;
-    label: string;
-    fallbackError: string;
-    buildChunk: (group: DroppedFile[], seqStart: number) => Promise<{ chunk: any[]; nextSeq: number }>;
-    runSingle: (item: any) => Promise<any>;
-    runBatch?: (items: any[]) => Promise<any>;
-    canBatch?: boolean;
-}) {
-    const {
-        ctx,
-        taskName,
-        label,
-        fallbackError,
-        buildChunk,
-        runSingle,
-        runBatch,
-        canBatch = true,
-    } = options;
-    const { files, total } = ctx;
-    let completed = 0;
-    let failed = 0;
-    let seq = 1;
-    const chunkSize = canBatch && runBatch ? ctx.getBatchChunkSize(files.length) : 1;
-
-    for (let i = 0; i < files.length; i += chunkSize) {
-        if (ctx.cancelRequestedRef.current) break;
-        const group = files.slice(i, i + chunkSize);
-        const built = await buildChunk(group, seq);
-        const chunk = built.chunk;
-        seq = built.nextSeq;
-        if (ctx.cancelRequestedRef.current || chunk.length === 0) break;
-
-        try {
-            const res = (chunk.length > 1 && canBatch && runBatch)
-                ? await runBatch(chunk)
-                : [await runSingle(chunk[0])];
-            const outcome = normalizeBatchResults(res, chunk, fallbackError);
-            completed += outcome.settled;
-            failed += outcome.failed;
-            outcome.results.forEach((item, idx) => {
-                if (!item?.success && !isCancellationError(item?.error)) {
-                    ctx.reportTaskFailure(
-                        taskName,
-                        chunk[idx]?.input_path || item?.input_path || '',
-                        item?.error,
-                        fallbackError,
-                    );
-                }
-            });
-            if (outcome.cancelled) {
-                ctx.cancelRequestedRef.current = true;
-                ctx.setCancelRequested(true);
-                ctx.setProgressThrottled((completed / total) * 100);
-                break;
-            }
-        } catch (err) {
-            if (isCancellationError(err) || ctx.cancelRequestedRef.current) {
-                ctx.cancelRequestedRef.current = true;
-                ctx.setCancelRequested(true);
-                break;
-            }
-            console.error(`Failed to process ${label} batch:`, err);
-            failed += chunk.length;
-            completed += chunk.length;
-            ctx.reportBatchTaskFailure(taskName, group, err, fallbackError);
-        }
-        ctx.setProgressThrottled((completed / total) * 100);
-    }
-
-    const cancelled = ctx.cancelRequestedRef.current;
-    const extra = failed > 0 ? `（失败 ${failed}）` : '';
-    ctx.flushProgress();
-    if (cancelled || failed > 0) {
-        ctx.setLastMessage(summarizeBatchProgress(total, completed, failed, cancelled, label, extra));
-    }
-}
-
 
 export async function runConvertBatch(options: {
     ctx: BatchRunnerContext;
@@ -143,17 +57,19 @@ export async function runConvertBatch(options: {
     joinPath: (base: string, rel: string) => string;
     basename: (p: string) => string;
     stripExtension: (p: string) => string;
+    onDone?: (summary: RunDoneSummary) => void;
 }) {
     const {
         ctx, format, quality, compressLevel, icoSizeGroups, overwriteSource,
         resizeMode, scalePercent, fixedWidth, fixedHeight, longEdge, maintainAR, keepMetadata,
         outputDir, outputTemplate, outputPrefix, preserveStructure, batchTime,
-        buildOutputRelPath, resolveUniquePath, resolveConverterOverwritePath, joinPath, basename, stripExtension,
+        buildOutputRelPath, resolveUniquePath, resolveConverterOverwritePath, joinPath, basename, stripExtension, onDone,
     } = options;
     const isIcoFormat = format === 'ico';
     const totalTasks = isIcoFormat ? ctx.files.length * icoSizeGroups.length : ctx.total;
     let completed = 0;
     let failed = 0;
+    let skipped = 0;
     let seq = 1;
     const chunkSize = ctx.getBatchChunkSize(ctx.files.length, icoSizeGroups.length);
 
@@ -209,6 +125,12 @@ export async function runConvertBatch(options: {
                         output_path = await resolveUniquePath(overwritePath);
                     }
                 }
+                if (!output_path) {
+                    skipped += 1;
+                    completed += 1;
+                    seq += 1;
+                    continue;
+                }
                 chunk.push({
                     input_path,
                     output_path,
@@ -261,12 +183,32 @@ export async function runConvertBatch(options: {
         ctx.setProgressThrottled((completed / totalTasks) * 100);
     }
     const cancelled = ctx.cancelRequestedRef.current;
-    const extra = failed > 0 ? `（失败 ${failed}）` : '';
+    onDone?.({ total: ctx.total, failed, skipped });
+    const extraParts = [
+        failed > 0 ? `失败 ${failed}` : '',
+        skipped > 0 ? `跳过 ${skipped}` : '',
+    ].filter(Boolean);
+    const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
     ctx.flushProgress();
-    if (cancelled || failed > 0) {
+    if (cancelled || failed > 0 || skipped > 0) {
         ctx.setLastMessage(summarizeBatchProgress(totalTasks, completed, failed, cancelled, '转换', extra));
     }
 }
+
+export type CompressBatchStats = {
+    succeeded: number;
+    failed: number;
+    warnings: number;
+    skipped: number;
+    totalOriginalBytes: number;
+    totalCompressedBytes: number;
+};
+
+export type RunDoneSummary = {
+    total: number;
+    failed: number;
+    skipped: number;
+};
 
 export async function runCompressBatch(options: {
     ctx: BatchRunnerContext;
@@ -287,16 +229,21 @@ export async function runCompressBatch(options: {
     buildOutputRelPath: (file: DroppedFile, opts: any) => string;
     resolveUniquePath: (candidate: string) => Promise<string>;
     joinPath: (base: string, rel: string) => string;
+    onStats?: (stats: CompressBatchStats) => void;
+    onDone?: (summary: RunDoneSummary) => void;
 }) {
     const {
         ctx, level, engine, targetSizeKB, resizeMode, resizePercent, resizeWidth, resizeHeight, maintainAspect, overwriteSource,
         outputDir, outputTemplate, outputPrefix, preserveStructure, batchTime,
-        buildOutputRelPath, resolveUniquePath, joinPath,
+        buildOutputRelPath, resolveUniquePath, joinPath, onStats, onDone,
     } = options;
     let completed = 0;
     let failed = 0;
     let warnings = 0;
+    let skipped = 0;
     let seq = 1;
+    let totalOriginalBytes = 0;
+    let totalCompressedBytes = 0;
     const chunkSize = ctx.getBatchChunkSize(ctx.files.length);
 
     for (let i = 0; i < ctx.files.length; i += chunkSize) {
@@ -317,6 +264,12 @@ export async function runCompressBatch(options: {
                     date: batchTime,
                 });
                 output_path = await resolveUniquePath(joinPath(outputDir, rel));
+                if (!output_path) {
+                    skipped += 1;
+                    completed += 1;
+                    seq += 1;
+                    continue;
+                }
             }
             chunk.push({
                 input_path,
@@ -343,7 +296,12 @@ export async function runCompressBatch(options: {
             failed += outcome.failed;
             warnings += outcome.warnings;
             outcome.results.forEach((item, idx) => {
-                if (!item?.success && !isCancellationError(item?.error)) {
+                if (item?.success) {
+                    const originalSize = Number(item?.original_size);
+                    const compressedSize = Number(item?.compressed_size);
+                    if (Number.isFinite(originalSize) && originalSize > 0) totalOriginalBytes += originalSize;
+                    if (Number.isFinite(compressedSize) && compressedSize >= 0) totalCompressedBytes += compressedSize;
+                } else if (!item?.success && !isCancellationError(item?.error)) {
                     ctx.reportTaskFailure('图片压缩', chunk[idx]?.input_path || item?.input_path || '', item?.error, '压缩失败');
                 }
             });
@@ -367,13 +325,23 @@ export async function runCompressBatch(options: {
         ctx.setProgressThrottled((completed / ctx.total) * 100);
     }
     const cancelled = ctx.cancelRequestedRef.current;
+    onStats?.({
+        succeeded: Math.max(0, completed - failed - skipped),
+        failed,
+        warnings,
+        skipped,
+        totalOriginalBytes,
+        totalCompressedBytes,
+    });
+    onDone?.({ total: ctx.total, failed, skipped });
     const extraParts = [
         failed > 0 ? `失败 ${failed}` : '',
+        skipped > 0 ? `跳过 ${skipped}` : '',
         warnings > 0 ? `提示 ${warnings}` : '',
     ].filter(Boolean);
     const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
     ctx.flushProgress();
-    if (cancelled || failed > 0 || warnings > 0) {
+    if (cancelled || failed > 0 || warnings > 0 || skipped > 0) {
         ctx.setLastMessage(summarizeBatchProgress(ctx.total, completed, failed, cancelled, '压缩', extra));
     }
 }

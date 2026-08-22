@@ -22,20 +22,6 @@ const PROBE_ANIMATED_EXTENSIONS = new Set(['png', 'webp']);
 const GIF_SPEED_MIN = 50;
 const GIF_SPEED_MAX = 300;
 const GIF_SPEED_STEP = 10;
-const WATERMARK_BACKEND_POSITION_MAP: Record<string, string> = {
-    tl: 'top-left',
-    tc: 'top-center',
-    tr: 'top-right',
-    cl: 'center-left',
-    ml: 'center-left',
-    c: 'center',
-    mc: 'center',
-    cr: 'center-right',
-    mr: 'center-right',
-    bl: 'bottom-left',
-    bc: 'bottom-center',
-    br: 'bottom-right',
-};
 
 function normalizePath(path: string): string {
     return String(path || '').replace(/\\/g, '/');
@@ -109,11 +95,6 @@ export function normalizeGifSpeedPercent(value: number): number {
         GIF_SPEED_MIN,
         Math.min(GIF_SPEED_MAX, Math.round(clamped / GIF_SPEED_STEP) * GIF_SPEED_STEP),
     );
-}
-
-export function resolveWatermarkBackendPosition(value: string): string {
-    const normalized = String(value || '').trim();
-    return WATERMARK_BACKEND_POSITION_MAP[normalized] || normalized;
 }
 
 export function selectAnimatedProbeCandidatePaths(inputPaths: string[], limit = 10000): string[] {

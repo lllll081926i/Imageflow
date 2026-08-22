@@ -37,17 +37,20 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
         >
             {/* Navigation Items */}
             <div ref={listRef} className="flex-1 overflow-y-auto px-3 space-y-1 no-scrollbar py-4 relative">
-                <div className={`h-6 text-xs font-medium text-gray-400 px-3 uppercase tracking-wider transition-all duration-300 flex items-center whitespace-nowrap overflow-hidden ${collapsed ? 'opacity-0' : 'opacity-100'}`}>
+                <div className={`text-xs font-medium text-gray-400 px-3 uppercase tracking-wider transition-all duration-300 flex items-center whitespace-nowrap overflow-hidden ${collapsed ? 'max-h-0 opacity-0' : 'max-h-6 opacity-100'}`}>
                     工具箱
                 </div>
 
                 <div
-                    className={`absolute top-0 left-3 right-3 bg-[#007AFF] rounded-xl shadow-md shadow-blue-500/20 transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] pointer-events-none ${
+                    className={`spring-indicator absolute top-0 left-3 right-3 bg-[#007AFF] rounded-xl shadow-md shadow-blue-500/20 pointer-events-none ${
                         isValidActive ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
                     }`}
                     style={{
                         height: activeHeight,
                         transform: `translateY(${activeTop}px)`,
+                        transitionProperty: 'transform, height, opacity',
+                        transitionDuration: '520ms, 520ms, 300ms',
+                        transitionTimingFunction: 'cubic-bezier(0.22, 1.28, 0.36, 1), cubic-bezier(0.22, 1.28, 0.36, 1), ease',
                     }}
                 />
                 
@@ -56,8 +59,9 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                         key={item.id}
                         ref={el => { itemRefs.current[item.id] = el; }}
                         onClick={() => setActive(item.id)}
-                        className={`w-full flex items-center h-12 rounded-xl text-sm font-medium transition-all duration-300 group relative px-3 z-10 ${
-                            active === item.id 
+                        title={collapsed ? item.title : undefined}
+                        className={`w-full flex items-center h-12 rounded-xl text-sm font-medium spring-tap-sm group relative z-10 ${collapsed ? 'justify-center px-0' : 'px-3'} ${
+                            active === item.id
                                 ? 'bg-transparent'
                                 : 'text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
                         }`}
@@ -80,9 +84,10 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
 
             {/* Footer / Toggle & Settings */}
             <div className="p-3 border-t border-gray-200 dark:border-white/5 space-y-1">
-                <button 
+                <button
                     onClick={() => setCollapsed(!collapsed)}
-                    className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors group px-3"
+                    title={collapsed ? '展开侧边栏' : undefined}
+                    className={`w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors spring-tap-sm group ${collapsed ? 'justify-center px-0' : 'px-3'}`}
                 >
                     <div className="w-6 h-6 flex items-center justify-center shrink-0">
                         <Icon name={collapsed ? "PanelLeft" : "PanelLeftOpen"} size={20} className="transition-transform duration-300 group-hover:scale-110" />
@@ -94,7 +99,8 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
 
                 <button
                     onClick={() => setActive('settings')}
-                    className="w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors px-3"
+                    title={collapsed ? '全局设置' : undefined}
+                    className={`w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors spring-tap-sm ${collapsed ? 'justify-center px-0' : 'px-3'}`}
                 >
                     <div className="w-6 h-6 flex items-center justify-center shrink-0">
                         <Icon name="Settings" size={20} />

@@ -1,61 +1,4 @@
 export namespace models {
-	
-	export class AdjustRequest {
-	    input_path: string;
-	    output_path: string;
-	    rotate: number;
-	    flip_h: boolean;
-	    flip_v: boolean;
-	    brightness: number;
-	    contrast: number;
-	    saturation: number;
-	    hue: number;
-	    exposure: number;
-	    vibrance: number;
-	    sharpness: number;
-	    crop_ratio: string;
-	    crop_mode: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new AdjustRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.rotate = source["rotate"];
-	        this.flip_h = source["flip_h"];
-	        this.flip_v = source["flip_v"];
-	        this.brightness = source["brightness"];
-	        this.contrast = source["contrast"];
-	        this.saturation = source["saturation"];
-	        this.hue = source["hue"];
-	        this.exposure = source["exposure"];
-	        this.vibrance = source["vibrance"];
-	        this.sharpness = source["sharpness"];
-	        this.crop_ratio = source["crop_ratio"];
-	        this.crop_mode = source["crop_mode"];
-	    }
-	}
-	export class AdjustResult {
-	    success: boolean;
-	    input_path: string;
-	    output_path: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new AdjustResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.error = source["error"];
-	    }
-	}
 	export class AppSettings {
 	    max_concurrency: number;
 	    output_prefix: string;
@@ -257,46 +200,6 @@ export namespace models {
 		    }
 		    return a;
 		}
-	}
-	export class FilterRequest {
-	    input_path: string;
-	    output_path: string;
-	    filter_type: string;
-	    intensity: number;
-	    grain: number;
-	    vignette: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new FilterRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.filter_type = source["filter_type"];
-	        this.intensity = source["intensity"];
-	        this.grain = source["grain"];
-	        this.vignette = source["vignette"];
-	    }
-	}
-	export class FilterResult {
-	    success: boolean;
-	    input_path: string;
-	    output_path: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new FilterResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.error = source["error"];
-	    }
 	}
 	export class GIFSplitRequest {
 	    action?: string;
@@ -621,34 +524,36 @@ export namespace models {
 	        this.error = source["error"];
 	    }
 	}
-	export class PDFRequest {
-	    image_paths: string[];
-	    output_path: string;
-	    page_size: string;
-	    layout: string;
-	    margin: number;
-	    compression_level: number;
-	    fit_mode?: string;
-	    title: string;
-	    author: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PDFRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.image_paths = source["image_paths"];
-	        this.output_path = source["output_path"];
-	        this.page_size = source["page_size"];
-	        this.layout = source["layout"];
-	        this.margin = source["margin"];
-	        this.compression_level = source["compression_level"];
-	        this.fit_mode = source["fit_mode"];
-	        this.title = source["title"];
-	        this.author = source["author"];
-	    }
-	}
+ 	export class PDFRequest {
+ 	    image_paths: string[];
+ 	    output_path: string;
+ 	    page_size: string;
+ 	    layout: string;
+ 	    margin: number;
+ 	    compression_level: number;
+ 	    fit_mode?: string;
+ 	    title: string;
+ 	    author: string;
+ 	    user_password?: string;
+ 	
+ 	    static createFrom(source: any = {}) {
+ 	        return new PDFRequest(source);
+ 	    }
+ 	
+ 	    constructor(source: any = {}) {
+ 	        if ('string' === typeof source) source = JSON.parse(source);
+ 	        this.image_paths = source["image_paths"];
+ 	        this.output_path = source["output_path"];
+ 	        this.page_size = source["page_size"];
+ 	        this.layout = source["layout"];
+ 	        this.margin = source["margin"];
+ 	        this.compression_level = source["compression_level"];
+ 	        this.fit_mode = source["fit_mode"];
+ 	        this.title = source["title"];
+ 	        this.author = source["author"];
+ 	        this.user_password = source["user_password"];
+ 	    }
+ 	}
 	export class PDFResult {
 	    success: boolean;
 	    output_path: string;
@@ -666,34 +571,6 @@ export namespace models {
 	        this.output_path = source["output_path"];
 	        this.page_count = source["page_count"];
 	        this.file_size = source["file_size"];
-	        this.error = source["error"];
-	    }
-	}
-	export class PreviewRequest {
-	    input_path: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PreviewRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.input_path = source["input_path"];
-	    }
-	}
-	export class PreviewResult {
-	    success: boolean;
-	    data_url?: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PreviewResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.data_url = source["data_url"];
 	        this.error = source["error"];
 	    }
 	}
@@ -727,213 +604,22 @@ export namespace models {
 	        this.reserved = source["reserved"];
 	    }
 	}
-	export class ResolveOutputPathResult {
-	    success: boolean;
-	    output_path?: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ResolveOutputPathResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.output_path = source["output_path"];
-	        this.error = source["error"];
-	    }
-	}
-	export class SubtitleStitchRequest {
-	    input_paths: string[];
-	    output_path: string;
-	    subtitle_crop_ratio: number;
-	    header_keep_full: boolean;
-	    dedup_enabled: boolean;
-	    dedup_threshold: number;
-	    minimum_strip_height: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new SubtitleStitchRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.input_paths = source["input_paths"];
-	        this.output_path = source["output_path"];
-	        this.subtitle_crop_ratio = source["subtitle_crop_ratio"];
-	        this.header_keep_full = source["header_keep_full"];
-	        this.dedup_enabled = source["dedup_enabled"];
-	        this.dedup_threshold = source["dedup_threshold"];
-	        this.minimum_strip_height = source["minimum_strip_height"];
-	    }
-	}
-	export class SubtitleStitchResult {
-	    success: boolean;
-	    output_path?: string;
-	    input_count?: number;
-	    kept_count?: number;
-	    skipped_count?: number;
-	    strip_height?: number;
-	    error_code?: string;
-	    error_detail?: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SubtitleStitchResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.output_path = source["output_path"];
-	        this.input_count = source["input_count"];
-	        this.kept_count = source["kept_count"];
-	        this.skipped_count = source["skipped_count"];
-	        this.strip_height = source["strip_height"];
-	        this.error_code = source["error_code"];
-	        this.error_detail = source["error_detail"];
-	        this.error = source["error"];
-	    }
-	}
-	export class WatermarkRequest {
-	    input_path: string;
-	    output_path: string;
-	    watermark_type: string;
-	    text?: string;
-	    image_path?: string;
-	    position: string;
-	    opacity: number;
-	    scale: number;
-	    font_size: number;
-	    font_color: string;
-	    rotation: number;
-	    font_name: string;
-	    blend_mode: string;
-	    tiled: boolean;
-	    shadow: boolean;
-	    offset_x: number;
-	    offset_y: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new WatermarkRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.watermark_type = source["watermark_type"];
-	        this.text = source["text"];
-	        this.image_path = source["image_path"];
-	        this.position = source["position"];
-	        this.opacity = source["opacity"];
-	        this.scale = source["scale"];
-	        this.font_size = source["font_size"];
-	        this.font_color = source["font_color"];
-	        this.rotation = source["rotation"];
-	        this.font_name = source["font_name"];
-	        this.blend_mode = source["blend_mode"];
-	        this.tiled = source["tiled"];
-	        this.shadow = source["shadow"];
-	        this.offset_x = source["offset_x"];
-	        this.offset_y = source["offset_y"];
-	    }
-	}
-	export class WatermarkResult {
-	    success: boolean;
-	    input_path: string;
-	    output_path: string;
-	    error?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new WatermarkResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.input_path = source["input_path"];
-	        this.output_path = source["output_path"];
-	        this.error = source["error"];
-        }
-    }
-
-    export class ProcessImageRequest {
-        input_path: string;
-        output_path: string;
-        rotate: number;
-        flip_h: boolean;
-        flip_v: boolean;
-        brightness: number;
-        contrast: number;
-        saturation: number;
-        hue: number;
-        exposure: number;
-        vibrance: number;
-        sharpness: number;
-        crop_ratio: string;
-        crop_mode: string;
-        filter: string;
-        intensity: number;
-        grain: number;
-        vignette: number;
-        blur_radius: number;
-        sharpen_factor: number;
-        noise_level: number;
-        vignette_strength: number;
-        color_offset_x: number;
-        color_offset_y: number;
-
-        static createFrom(source: any = {}) {
-            return new ProcessImageRequest(source);
-        }
-
-        constructor(source: any = {}) {
-            if ('string' === typeof source) source = JSON.parse(source);
-            this.input_path = source["input_path"];
-            this.output_path = source["output_path"];
-            this.rotate = source["rotate"];
-            this.flip_h = source["flip_h"];
-            this.flip_v = source["flip_v"];
-            this.brightness = source["brightness"];
-            this.contrast = source["contrast"];
-            this.saturation = source["saturation"];
-            this.hue = source["hue"];
-            this.exposure = source["exposure"];
-            this.vibrance = source["vibrance"];
-            this.sharpness = source["sharpness"];
-            this.crop_ratio = source["crop_ratio"];
-            this.crop_mode = source["crop_mode"];
-            this.filter = source["filter"];
-            this.intensity = source["intensity"];
-            this.grain = source["grain"];
-            this.vignette = source["vignette"];
-            this.blur_radius = source["blur_radius"];
-            this.sharpen_factor = source["sharpen_factor"];
-            this.noise_level = source["noise_level"];
-            this.vignette_strength = source["vignette_strength"];
-            this.color_offset_x = source["color_offset_x"];
-            this.color_offset_y = source["color_offset_y"];
-        }
-    }
-    export class ProcessImageResult {
-        success: boolean;
-        input_path: string;
-        output_path: string;
-        file_size?: number;
-        error?: string;
-
-        static createFrom(source: any = {}) {
-            return new ProcessImageResult(source);
-        }
-
-        constructor(source: any = {}) {
-            if ('string' === typeof source) source = JSON.parse(source);
-            this.success = source["success"];
-            this.input_path = source["input_path"];
-            this.output_path = source["output_path"];
-            this.file_size = source["file_size"];
-            this.error = source["error"];
-        }
-    }
-}
+ 	export class ResolveOutputPathResult {
+ 	    success: boolean;
+ 	    output_path?: string;
+ 	    exists?: boolean;
+ 	    error?: string;
+ 	
+ 	    static createFrom(source: any = {}) {
+ 	        return new ResolveOutputPathResult(source);
+ 	    }
+ 	
+ 	    constructor(source: any = {}) {
+ 	        if ('string' === typeof source) source = JSON.parse(source);
+ 	        this.success = source["success"];
+ 	        this.output_path = source["output_path"];
+ 	        this.exists = source["exists"];
+ 	        this.error = source["error"];
+ 	    }
+ 	}
+ }

@@ -6,9 +6,6 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
-
-from PIL import Image
 
 from backend.api import desktop_api
 from backend.api.desktop_api import DesktopAPI
@@ -51,9 +48,6 @@ class BatchContractTests(unittest.TestCase):
         methods = [
             ("convert_batch", self._payloads()),
             ("compress_batch", self._payloads(prefix="c")),
-            ("add_watermark_batch", self._payloads(prefix="w")),
-            ("adjust_batch", self._payloads(prefix="a")),
-            ("apply_filter_batch", self._payloads(prefix="f")),
         ]
 
         for method_name, payloads in methods:
@@ -114,9 +108,6 @@ class BatchContractTests(unittest.TestCase):
         for method_name in (
             "convert_batch",
             "compress_batch",
-            "add_watermark_batch",
-            "adjust_batch",
-            "apply_filter_batch",
         ):
             with self.subTest(method=method_name):
                 self.assertEqual(getattr(self.app, method_name)([]), [])
@@ -184,124 +175,6 @@ class BatchContractTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("tracked", str(result[0].get("error") or ""))
         self.assertIsNone(manager.current_task_id)
-
-
-class PreviewIsolationTests(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.settings_file = os.path.join(self.temp_dir.name, "settings.json")
-        os.environ["IMAGEFLOW_SETTINGS_FILE"] = self.settings_file
-
-    def tearDown(self):
-        os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None)
-        os.environ.pop("IMAGEFLOW_PREVIEW_MAX_BYTES", None)
-        self.temp_dir.cleanup()
-
-    def _png(self, name: str = "preview.png", size=(64, 48), color=(12, 34, 56)) -> str:
-        path = os.path.join(self.temp_dir.name, name)
-        Image.new("RGB", size, color).save(path, format="PNG")
-        return path
-
-    def test_build_image_preview_returns_jpeg_data_url(self):
-        from backend.application.preview import build_image_preview
-
-        result = build_image_preview(self._png())
-        self.assertTrue(result.get("success"), result)
-        self.assertTrue(str(result.get("data_url") or "").startswith("data:image/jpeg;base64,"))
-
-    def test_build_image_preview_skips_when_file_too_large(self):
-        from backend.application.preview import build_image_preview
-
-        os.environ["IMAGEFLOW_PREVIEW_MAX_BYTES"] = "32"
-        path = self._png("big-name-only.png")
-        # Force file size above threshold with padding bytes after a valid image write is hard;
-        # write a larger raw file that still exists for size check before decode.
-        with open(path, "wb") as handle:
-            handle.write(b"0" * 128)
-        result = build_image_preview(path)
-        self.assertFalse(result.get("success"))
-        self.assertEqual(result.get("error"), "PREVIEW_SKIPPED")
-
-    def test_build_image_preview_smart_success_path(self):
-        from backend.application.preview import build_image_preview_smart
-
-        result = build_image_preview_smart(self._png("isolated.png"))
-        self.assertTrue(result.get("success"), result)
-        self.assertIn("data_url", result)
-
-    def test_build_image_preview_smart_timeout_terminates_worker(self):
-        from backend.application import preview as preview_module
-
-        class HangingProcess:
-            def __init__(self, *_args, **_kwargs):
-                self._alive = False
-                self.exitcode = None
-                self.terminate_calls = 0
-                self.kill_calls = 0
-
-            def start(self):
-                self._alive = True
-
-            def join(self, timeout=None):
-                # Stay alive for the initial timeout join, die after terminate.
-                if self.terminate_calls:
-                    self._alive = False
-                    self.exitcode = -15
-
-            def is_alive(self):
-                return self._alive
-
-            def terminate(self):
-                self.terminate_calls += 1
-
-            def kill(self):
-                self.kill_calls += 1
-                self._alive = False
-                self.exitcode = -9
-
-        class DummyQueue:
-            def get_nowait(self):
-                raise preview_module.Empty()
-
-            def close(self):
-                return None
-
-            def join_thread(self):
-                return None
-
-        original_process = preview_module.Process
-        original_queue = preview_module.Queue
-        hanging = {"proc": None}
-
-        def process_factory(*args, **kwargs):
-            proc = HangingProcess(*args, **kwargs)
-            hanging["proc"] = proc
-            return proc
-
-        try:
-            preview_module.Process = process_factory  # type: ignore[assignment]
-            preview_module.Queue = DummyQueue  # type: ignore[assignment]
-            result = preview_module.build_image_preview_isolated("any.png", timeout=0.05)
-        finally:
-            preview_module.Process = original_process
-            preview_module.Queue = original_queue
-
-        self.assertFalse(result.get("success"))
-        self.assertEqual(result.get("error"), "预览超时")
-        self.assertIsNotNone(hanging["proc"])
-        self.assertGreaterEqual(hanging["proc"].terminate_calls, 1)
-
-    def test_desktop_api_get_image_preview_uses_isolated_builder(self):
-        app = create_app()
-        with mock.patch(
-            "backend.application.preview.build_image_preview_smart",
-            return_value={"success": True, "data_url": "data:image/jpeg;base64,xx"},
-        ) as isolated:
-            result = app.get_image_preview({"input_path": self._png("via-api.png")})
-        self.assertTrue(result.get("success"))
-        isolated.assert_called_once()
-        called_path = isolated.call_args[0][0]
-        self.assertTrue(str(called_path).endswith("via-api.png"))
 
 
 class SvgSafetyUnitTests(unittest.TestCase):

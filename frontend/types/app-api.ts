@@ -10,18 +10,23 @@ type ResolveFilePathOptions = {
     timeoutMs?: number;
 };
 
+export type ConflictStrategy = 'rename' | 'overwrite' | 'skip';
+
 export type AppSettingsSnapshot = {
     max_concurrency: number;
     output_prefix: string;
     output_template: string;
     preserve_folder_structure: boolean;
-    conflict_strategy: string;
+    conflict_strategy: ConflictStrategy;
     default_output_dir: string;
     recent_input_dirs: string[];
     recent_output_dirs: string[];
     auto_check_updates: boolean;
     open_output_folder_on_complete: boolean;
     remember_window_state: boolean;
+    ui_transparency: boolean;
+    ui_reduced_motion: boolean;
+    background_running: boolean;
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -40,7 +45,21 @@ export const DEFAULT_APP_SETTINGS: AppSettingsSnapshot = {
     auto_check_updates: true,
     open_output_folder_on_complete: false,
     remember_window_state: true,
+    ui_transparency: true,
+    ui_reduced_motion: false,
+    background_running: false,
 };
+
+/** Reflect appearance settings onto <html> classes used by the CSS layer. */
+export function applyAppearance(settings: Pick<AppSettingsSnapshot, 'ui_transparency' | 'ui_reduced_motion'>) {
+    try {
+        const root = document.documentElement;
+        root.classList.toggle('material-off', settings.ui_transparency === false);
+        root.classList.toggle('reduced-motion', settings.ui_reduced_motion === true);
+    } catch {
+        // ignore
+    }
+}
 
 const normalizeSavedPath = (value: unknown) => {
     if (typeof value !== 'string') return '';
@@ -94,8 +113,9 @@ export function normalizeAppSettings(raw?: Partial<AppSettingsSnapshot> | null):
         preserve_folder_structure: typeof raw.preserve_folder_structure === 'boolean'
             ? raw.preserve_folder_structure
             : DEFAULT_APP_SETTINGS.preserve_folder_structure,
-        conflict_strategy: typeof raw.conflict_strategy === 'string' && raw.conflict_strategy.trim() === 'rename'
-            ? 'rename'
+        conflict_strategy: typeof raw.conflict_strategy === 'string'
+            && ['rename', 'overwrite', 'skip'].includes(raw.conflict_strategy.trim())
+            ? (raw.conflict_strategy.trim() as AppSettingsSnapshot['conflict_strategy'])
             : DEFAULT_APP_SETTINGS.conflict_strategy,
         default_output_dir: normalizeSavedPath(raw.default_output_dir),
         recent_input_dirs: normalizeRecentPaths(raw.recent_input_dirs),
@@ -109,17 +129,47 @@ export function normalizeAppSettings(raw?: Partial<AppSettingsSnapshot> | null):
         remember_window_state: typeof raw.remember_window_state === 'boolean'
             ? raw.remember_window_state
             : DEFAULT_APP_SETTINGS.remember_window_state,
+        ui_transparency: typeof raw.ui_transparency === 'boolean'
+            ? raw.ui_transparency
+            : DEFAULT_APP_SETTINGS.ui_transparency,
+        ui_reduced_motion: typeof raw.ui_reduced_motion === 'boolean'
+            ? raw.ui_reduced_motion
+            : DEFAULT_APP_SETTINGS.ui_reduced_motion,
+        background_running: typeof raw.background_running === 'boolean'
+            ? raw.background_running
+            : DEFAULT_APP_SETTINGS.background_running,
     };
 }
 
-export async function loadAppSettings(options?: { throwOnError?: boolean }): Promise<AppSettingsSnapshot> {
+// Session cache: settings rarely change; avoid an IPC round-trip on every
+// page mount. saveAppSettings / updateRecentPaths keep it fresh.
+let settingsCache: AppSettingsSnapshot | null = null;
+
+export function invalidateSettingsCache() {
+    settingsCache = null;
+}
+
+export function getCachedSettings(): AppSettingsSnapshot | null {
+    return settingsCache ? { ...settingsCache } : null;
+}
+
+export async function loadAppSettings(options?: {
+    throwOnError?: boolean;
+    /** skip cache and read from the host (default: false) */
+    force?: boolean;
+}): Promise<AppSettingsSnapshot> {
+    if (!options?.force && settingsCache) {
+        return { ...settingsCache };
+    }
     const app = getAppBindings();
     if (!app?.GetSettings) {
         return { ...DEFAULT_APP_SETTINGS };
     }
     try {
         const settings = await app.GetSettings();
-        return normalizeAppSettings(settings as Partial<AppSettingsSnapshot>);
+        const normalized = normalizeAppSettings(settings as Partial<AppSettingsSnapshot>);
+        settingsCache = normalized;
+        return { ...normalized };
     } catch (error) {
         console.error(error);
         if (options?.throwOnError) {
@@ -133,10 +183,13 @@ export async function saveAppSettings(settings: AppSettingsSnapshot): Promise<Ap
     const app = getAppBindings();
     const normalized = normalizeAppSettings(settings);
     if (!app?.SaveSettings) {
-        return normalized;
+        settingsCache = normalized;
+        return { ...normalized };
     }
     const saved = await app.SaveSettings(normalized as any);
-    return normalizeAppSettings((saved as Partial<AppSettingsSnapshot>) || normalized);
+    const result = normalizeAppSettings((saved as Partial<AppSettingsSnapshot>) || normalized);
+    settingsCache = result;
+    return { ...result };
 }
 
 export function pushRecentPath(paths: string[], nextPath: string): string[] {
@@ -154,7 +207,9 @@ export async function updateRecentPaths(payload: { inputDir?: string; outputDir?
         input_dir: payload.inputDir || '',
         output_dir: payload.outputDir || '',
     } as any);
-    return normalizeAppSettings(saved as Partial<AppSettingsSnapshot>);
+    const result = normalizeAppSettings(saved as Partial<AppSettingsSnapshot>);
+    settingsCache = result;
+    return { ...result };
 }
 
 export function getAppBindings(): Partial<AppBindings> | null {

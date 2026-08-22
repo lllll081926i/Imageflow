@@ -51,8 +51,7 @@ ImageFlow 当前采用 **React 前端 + Python 后端 + pywebview 桌面宿主**
 │                      Image Processing Engines                │
 │  backend/engines/*.py                                         │
 │  - converter / compressor / gif_splitter                      │
-│  - pdf_generator / watermark / adjuster / filter              │
-│  - metadata_tool / info_viewer / subtitle_stitcher            │
+│  - pdf_generator / metadata_tool                              │
 └───────────────────────────────┬─────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────┐
@@ -84,7 +83,7 @@ ImageFlow 当前采用 **React 前端 + Python 后端 + pywebview 桌面宿主**
 
 - 将前端 payload 中的路径字段标准化。
 - 调用设置存储、系统对话框、字体列表和预览生成。
-- 为转换、压缩、PDF、GIF、水印、调整、滤镜、元数据等操作选择对应引擎。
+- 为转换、压缩、PDF、GIF、元数据等操作选择对应引擎。
 - 对批处理调用 `execute_engine_batch()`，对单文件操作调用 `execute_engine()`。
 - 提供 PascalCase 方法，兼容历史 Wails 风格绑定名称。
 

@@ -67,12 +67,20 @@ def reset_process_pool_for_tests() -> None:
 
 
 def warm_process_pool(min_size: int | None = None) -> int:
-    """Pre-create the process pool so first user action avoids cold spawn."""
+    """Pre-create the pool AND spin up worker processes so the first user
+    batch avoids per-worker spawn cost (expensive on Windows)."""
     if _pool_disabled:
         return 0
     size = _desired_pool_size(min_size)
     pool = _get_pool(size)
-    # Touch pool object to ensure workers can start lazily on first submit.
+    # ProcessPoolExecutor spawns workers lazily on submit; force them up with
+    # trivial throwaway jobs so the first real batch hits warm processes.
+    try:
+        futs = [pool.submit(os.getpid) for _ in range(size)]
+        for fut in futs:
+            fut.result(timeout=15)
+    except Exception:
+        pass
     return getattr(pool, "_max_workers", size)
 
 

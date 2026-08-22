@@ -21,7 +21,6 @@ class DesktopAPITests(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None)
-        os.environ.pop("IMAGEFLOW_PREVIEW_MAX_BYTES", None)
         self.temp_dir.cleanup()
 
     def test_ping_and_settings_roundtrip(self):
@@ -178,48 +177,6 @@ class DesktopAPITests(unittest.TestCase):
         finally:
             desktop_api.open_file_dialog = original_open_file_dialog
 
-    def test_get_image_preview_returns_data_url(self):
-        app = create_app()
-        preview = app.get_image_preview(
-            {
-                "input_path": str(Path("backend/testdata/simple.svg").resolve()),
-            }
-        )
-
-        self.assertTrue(preview["success"])
-        self.assertTrue(str(preview["data_url"]).startswith("data:image/jpeg;base64,"))
-
-    def test_get_image_preview_skips_large_input_when_limit_exceeded(self):
-        app = create_app()
-        large_file = Path(self.temp_dir.name) / "large.png"
-        large_file.write_bytes(b"x" * 32)
-        os.environ["IMAGEFLOW_PREVIEW_MAX_BYTES"] = "4"
-
-        preview = app.get_image_preview({"input_path": str(large_file)})
-
-        self.assertFalse(preview["success"])
-        self.assertEqual(preview["error"], "PREVIEW_SKIPPED")
-
-    def test_get_image_preview_ignores_invalid_max_bytes_env(self):
-        app = create_app()
-        preview_path = Path("backend/testdata/simple.svg").resolve()
-        os.environ["IMAGEFLOW_PREVIEW_MAX_BYTES"] = "not-a-number"
-
-        preview = app.get_image_preview({"input_path": str(preview_path)})
-
-        self.assertTrue(preview["success"])
-        self.assertTrue(str(preview["data_url"]).startswith("data:image/jpeg;base64,"))
-
-    def test_get_image_preview_returns_error_payload_for_invalid_image(self):
-        app = create_app()
-        invalid_image = Path(self.temp_dir.name) / "broken.png"
-        invalid_image.write_text("not an image", encoding="utf-8")
-
-        preview = app.get_image_preview({"input_path": str(invalid_image)})
-
-        self.assertFalse(preview["success"])
-        self.assertIn("error", preview)
-
     def test_resolve_output_path_returns_error_for_empty_base_path(self):
         app = create_app()
 
@@ -227,6 +184,84 @@ class DesktopAPITests(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertIn("路径不能为空", result["error"])
+
+    def test_get_thumbnail_returns_data_url_and_caches(self):
+        from PIL import Image as PILImage
+
+        app = create_app()
+        image_path = str((Path(self.temp_dir.name) / "thumb.png").resolve())
+        PILImage.new("RGBA", (64, 32), (10, 200, 30, 255)).save(image_path, format="PNG")
+
+        result = app.get_thumbnail({"path": image_path, "max_edge": 48})
+
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["data_url"].startswith("data:image/png;base64,"))
+        self.assertLessEqual(max(result["width"], result["height"]), 48)
+
+        cached = app.get_thumbnail({"path": image_path, "max_edge": 48})
+        self.assertEqual(cached["data_url"], result["data_url"])
+
+        missing = app.get_thumbnail({"path": str(Path(self.temp_dir.name) / "missing.png")})
+        self.assertFalse(missing["success"])
+        self.assertIn("NOT_FOUND", missing["error"])
+
+    def test_get_thumbnail_rejects_unsupported_extensions(self):
+        app = create_app()
+        text_path = (Path(self.temp_dir.name) / "note.txt").resolve()
+        text_path.write_text("hello", encoding="utf-8")
+
+        result = app.get_thumbnail({"path": str(text_path)})
+
+        self.assertFalse(result["success"])
+        self.assertIn("UNSUPPORTED_FORMAT", result["error"])
+
+    def test_resolve_output_path_strategies(self):
+        app = create_app()
+        existing = Path(self.temp_dir.name) / "exists.png"
+        existing.write_bytes(b"x")
+        missing = Path(self.temp_dir.name) / "missing.png"
+
+        overwrite = app.resolve_output_path(
+            {"base_path": str(existing), "strategy": "overwrite"}
+        )
+        self.assertTrue(overwrite["success"])
+        self.assertEqual(Path(overwrite["output_path"]), existing)
+        self.assertTrue(overwrite["exists"])
+
+        skip_missing = app.resolve_output_path({"base_path": str(missing), "strategy": "skip"})
+        self.assertTrue(skip_missing["success"])
+        self.assertFalse(skip_missing["exists"])
+
+        skip_existing = app.resolve_output_path({"base_path": str(existing), "strategy": "skip"})
+        self.assertTrue(skip_existing["success"])
+        self.assertTrue(skip_existing["exists"])
+
+        renamed = app.resolve_output_path({"base_path": str(existing)})
+        self.assertTrue(renamed["success"])
+        self.assertNotEqual(Path(renamed["output_path"]), existing)
+        self.assertTrue(Path(renamed["output_path"]).exists() is False)
+
+    def test_resolve_output_paths_batch_reports_exists_flags(self):
+        app = create_app()
+        existing = Path(self.temp_dir.name) / "batch-exists.png"
+        existing.write_bytes(b"x")
+        missing = Path(self.temp_dir.name) / "batch-missing.png"
+
+        result = app.resolve_output_paths(
+            {
+                "items": [str(existing), str(missing)],
+                "strategy": "skip",
+            }
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["paths"], [str(existing), str(missing)])
+        self.assertEqual(result["exists"], [True, False])
+
+        renamed = app.resolve_output_paths({"items": [str(existing)]})
+        self.assertTrue(renamed["success"])
+        self.assertNotIn("exists", renamed)
+        self.assertNotEqual(Path(renamed["paths"][0]), existing)
 
     def test_generate_pdf_preserves_image_object_payloads_when_normalizing_paths(self):
         app = create_app()

@@ -5,14 +5,14 @@
 <h1 align="center">ImageFlow</h1>
 
 <p align="center">
-  一款面向桌面端的图像处理工作台：格式转换、压缩、GIF、PDF、水印、图片美化（调色+滤镜）一站式完成。
+  一款面向桌面端的图像处理工作台：11 个工具页覆盖转换、压缩、切图、拼接、水印、色板、GIF 与 PDF。
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/pywebview-6.2-0f172a?style=for-the-badge&logo=python" alt="pywebview" />
   <img src="https://img.shields.io/badge/uv-managed-111827?style=for-the-badge&logo=python" alt="uv" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111827" alt="React" />
-  <img src="https://img.shields.io/badge/Python-%3E%3D3.10-3776AB?style=for-the-badge&logo=python&logoColor=ffdd54" alt="Python" />
+  <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?style=for-the-badge&logo=python&logoColor=ffdd54" alt="Python" />
   <img src="https://img.shields.io/badge/License-MIT-16a34a?style=for-the-badge" alt="MIT" />
 </p>
 
@@ -24,15 +24,35 @@ ImageFlow 当前采用 **纯 Python 后端 + React 前端 + pywebview 宿主** �
 - **backend/main.py**：桌面应用入口，负责窗口启动与宿主生命周期。
 - **backend/api/**：统一对前端暴露的桌面 API，保持原有调用面兼容。
 - **backend/application/**：任务管理、批处理、预览与执行编排。
-- **backend/engines/**：图像能力引擎，负责转换、压缩、GIF、PDF、水印、图片美化、字幕拼接等核心处理。
-- **React**：保留原有前端界面与交互。
+- **backend/engines/**：图像能力引擎，负责转换、压缩、分割、水印、拼接、色板、富文本、GIF、PDF 等核心处理。
+- **React**：macOS 风格界面，弹簧动效体系与可开关的毛玻璃材质。
 - **pywebview**：提供桌面窗口、原生对话框与拖拽桥接。
 
 适用场景：
-- 批量格式转换与压缩
-- 图像资料整理（命名模板、目录结构保留）
-- 社媒素材处理（美化、水印）
-- 动图和文档产出（GIF、PDF、字幕长图）
+- 批量格式转换、压缩、尺寸调整
+- 切图产出（宫格 / 自定义行列）与长图拼接
+- 批量加水印、色彩提取、富文本制图
+- 动图和文档产出（GIF、PDF）
+
+---
+
+## 功能页总览（v2.2）
+
+| 页面 | 能力要点 | 预设 |
+|---|---|---|
+| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO 输出；SVG 光栅化；缩放三模式；EXIF 保留 | — |
+| 图片压缩 | JPEG(MozJPEG)/PNG(pngquant+OxiPNG)/WEBP；智能档 + 目标体积 + **自定义质量**；元数据剥离 | — |
+| 尺寸调整 | 固定比例 / 长边 / 短边，批量 LANCZOS | ✅ |
+| 宫格切图 | 四 / 九 / 十六宫格，实时分割预览 | — |
+| 图片布局 | 自定义行×列（1–50）；优先正方形（舍弃余料）/ 完整覆盖两种模式；批量 | ✅ |
+| 长图拼接 | 纵向 / 横向；统一宽高、间距、背景色；单张加边框；上限 16000px / 256MP | ✅ |
+| 批量水印 | 字体 / 字号（像素或占宽）/ 颜色 / 不透明度 / 旋转 / 九宫格 / 平铺 / 描边 / 投影；实时预览 | ✅ 样式预设 |
+| 色彩提取 | 主题色 + 十色色板；导出色板图或拼接在原图下方 | — |
+| 转 PDF | 多图合并、15 种纸张、网格拼版、加密 | — |
+| GIF 工具 | 帧导出（PNG/JPG/WEBP/BMP/TIFF）、倒放、变速、压缩、缩放、互转 APNG/WEBP | — |
+| 富文本制图 | 标题/正文/列表/引用/图片块；6 套内置主题；画布样式随心定制；实时预览 | ✅ 模板 |
+
+全局能力：批量并发可调、输出命名模板、冲突策略（重命名/覆盖/跳过）、失败重试、完成卡片一键打开目录、后台运行（托盘）、外观（透明效果 / 减弱动态）、窗口记忆。
 
 ---
 
@@ -77,9 +97,6 @@ sequenceDiagram
 | 图片压缩 | 多档压缩策略；可指定目标体积 | `backend/engines/compressor.py` |
 | 转 PDF | 多图合并 PDF；页面尺寸、方向、边距 | `backend/engines/pdf_generator.py` |
 | GIF 工具 | 导出、倒放、调帧率、压缩、缩放、互转 | `backend/engines/gif_splitter.py` |
-| 字幕拼接 | 首帧保留，字幕长图拼接 | `backend/engines/subtitle_stitcher.py` |
-| 图片水印 | 文字/图片水印，批量添加 | `backend/engines/watermark.py` |
-| 图片美化 | 调色、裁剪、旋转翻转 + 滤镜/颗粒/暗角一站式 | `backend/engines/image_processor.py` |
 | 全局设置 | 路径、命名模板、并发、自动检查更新、窗口记忆 | `backend/infrastructure/settings_store.py` |
 
 ## 技术栈与依赖
@@ -97,8 +114,8 @@ sequenceDiagram
 ### Python 图像栈
 - Python `>=3.10`
 - Pillow
-- reportlab / svglib / lxml
-- piexif / exifread
+- reportlab
+- resvg-py（SVG 光栅化）
 - mozjpeg-lossless-optimization / imagequant / pyoxipng（压缩增强）
 
 ---
@@ -153,10 +170,12 @@ uv sync
 
 ```bash
 # 根目录一条命令启动开发模式
-npm run dev
+uv run imageflow
 ```
 
-该命令会自动启动 Vite 前端开发服务器和 pywebview 桌面宿主。前端页面支持 Vite HMR，`backend/**/*.py` 变更后会自动重启 Python 宿主。
+该命令会自动启动 Vite 前端开发服务器和 pywebview 桌面宿主。前端页面支持 Vite HMR，`backend/**/*.py`（除 `engines/` 独立模块）变更后会自动重启 Python 宿主。
+
+> 等价旧命令：`npm run dev`（Node 版启动器，行为一致）。
 
 ### 4) 构建发布
 
@@ -201,18 +220,14 @@ uv run python -m backend.main
 
 ## 支持格式（当前代码实现）
 
-### 普通处理输入（转换、压缩、PDF、水印、调整、滤镜、GIF 工具）
-- `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `ico`, `tiff`, `tif`, `svg`
-
-### 信息查看输入
-- 普通处理输入格式
-- `heic`, `heif`（读取容器头部信息；当前未作为普通处理/转换输入）
+### 普通处理输入（转换、压缩、PDF、GIF 工具、布局、水印、色板）
+- `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `heic`, `heif`, `ico`, `tiff`, `tif`, `svg`（SVG 仅转换/预览光栅化）
 
 ### 转换输出（转换模块）
 - `jpg`, `jpeg`, `png`, `webp`, `bmp`, `tiff`, `tif`, `ico`, `avif`
 
 ### GIF 帧导出格式
-- `png`, `bmp`
+- `png`, `jpg`, `webp`, `bmp`, `tiff`
 
 ---
 
@@ -245,7 +260,11 @@ uv run python -m backend.main
 | `output_prefix` | `IF` | 输出前缀 |
 | `output_template` | `{prefix}{basename}` | 输出命名模板 |
 | `preserve_folder_structure` | `true` | 保留原目录层级 |
-| `conflict_strategy` | `rename` | 冲突处理策略（当前固定 rename） |
+| `conflict_strategy` | `rename` | 冲突处理策略：`rename` 自动重命名 / `overwrite` 直接覆盖 / `skip` 跳过同名 |
+| `open_output_folder_on_complete` | `false` | 完成后自动打开输出目录 |
+| `ui_transparency` | `true` | 毛玻璃/亚克力材质（关闭回退纯色，更省电） |
+| `ui_reduced_motion` | `false` | 减弱动态效果（关闭所有弹簧动画） |
+| `background_running` | `false` | 后台运行：点关闭隐藏到系统托盘 |
 
 设置文件位置：`os.UserConfigDir()/imageflow/settings.json`  
 Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/settings.json`
@@ -280,6 +299,9 @@ Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/set
 uv run python -m unittest discover -s backend/tests -v
 # 等价：
 npm run test:backend
+
+# pytest（dev 依赖组）
+uv run pytest backend/tests -q
 
 # 仅引擎回归
 uv run python -m unittest discover -s backend/tests/engines -v
@@ -319,6 +341,7 @@ npm run build:frontend
 
 ## 开发文档
 
+- **设计系统（样式与动效契约）：`docs/DESIGN.md`**
 - 后端架构：`docs/BACKEND_ARCHITECTURE.md`
 - 后端说明：`docs/BACKEND_README.md`
 - 压缩方案：`docs/image-compression.md`

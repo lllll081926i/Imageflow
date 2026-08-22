@@ -120,7 +120,7 @@ class PDFGenerator:
     def generate(self, images, output_path, layout='single',
                  custom_rows=2, custom_cols=2, page_size='A4',
                  margin=DEFAULT_MARGIN, title='', author='', portrait=True,
-                 compression_level=0, fit_mode='contain'):
+                 compression_level=0, fit_mode='contain', user_password=''):
         """
         Generate a PDF from multiple images.
         
@@ -171,13 +171,18 @@ class PDFGenerator:
 
             # Create PDF document
             safe_margin = max(0, float(margin))
+            doc_kwargs = {}
+            safe_password = str(user_password or '').strip()
+            if safe_password:
+                doc_kwargs['encrypt'] = safe_password
             doc = SimpleDocTemplate(
                 output_path,
                 pagesize=pagesize,
                 leftMargin=safe_margin,
                 rightMargin=safe_margin,
                 topMargin=safe_margin,
-                bottomMargin=safe_margin
+                bottomMargin=safe_margin,
+                **doc_kwargs
             )
 
             # Set metadata
@@ -604,6 +609,7 @@ def process(input_data):
         portrait = _coerce_portrait(input_data.get('portrait'), raw_layout)
         compression_level = input_data.get('compression_level', 0)
         fit_mode = input_data.get('fit_mode', 'contain')
+        user_password = input_data.get('user_password', '')
 
         # Validate required parameters
         if not images or not output_path:
@@ -627,6 +633,7 @@ def process(input_data):
             portrait=portrait,
             compression_level=compression_level,
             fit_mode=fit_mode,
+            user_password=user_password,
         )
 
         return result

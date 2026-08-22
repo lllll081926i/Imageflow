@@ -1,4 +1,4 @@
-"""Detailed memory-budget and safety tests for GIF / subtitle / filter engines."""
+"""Detailed memory-budget tests for the GIF engine."""
 
 from __future__ import annotations
 
@@ -14,9 +14,7 @@ ENGINE_DIR = Path(__file__).resolve().parents[2] / "engines"
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
-from image_processor import ImageProcessor as filter_engine  # noqa: E402
 import gif_splitter  # noqa: E402
-import subtitle_stitcher  # noqa: E402
 
 
 class GifMemoryBudgetTests(unittest.TestCase):
@@ -153,105 +151,3 @@ class GifMemoryBudgetTests(unittest.TestCase):
         self.assertFalse(result.get("success"))
         self.assertGreaterEqual(closed["count"], 2)
 
-
-class SubtitleCanvasBudgetTests(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-
-    def tearDown(self):
-        self.temp_dir.cleanup()
-
-    def _frame(self, name: str, size=(80, 80)) -> str:
-        path = os.path.join(self.temp_dir.name, name)
-        Image.new("RGB", size, (30, 40, 50)).save(path, format="PNG")
-        return path
-
-    def test_canvas_edge_limit_is_enforced(self):
-        original_edge = subtitle_stitcher.MAX_CANVAS_EDGE
-        original_pixels = subtitle_stitcher.MAX_CANVAS_PIXELS
-        try:
-            subtitle_stitcher.MAX_CANVAS_EDGE = 100
-            subtitle_stitcher.MAX_CANVAS_PIXELS = 100_000_000
-            frames = [self._frame(f"edge-{index}.png", size=(120, 40)) for index in range(2)]
-            result = subtitle_stitcher.process(
-                {
-                    "action": "subtitle_stitch",
-                    "input_paths": frames,
-                    "output_path": os.path.join(self.temp_dir.name, "edge-out.png"),
-                    "subtitle_crop_ratio": 0.25,
-                    "header_keep_full": True,
-                    "dedup_enabled": False,
-                    "minimum_strip_height": 8,
-                }
-            )
-            self.assertFalse(result.get("success"))
-            self.assertEqual(result.get("error_code"), "SUBTITLE_CANVAS_TOO_LARGE")
-        finally:
-            subtitle_stitcher.MAX_CANVAS_EDGE = original_edge
-            subtitle_stitcher.MAX_CANVAS_PIXELS = original_pixels
-
-    def test_canvas_pixel_limit_message_includes_budget(self):
-        original = subtitle_stitcher.MAX_CANVAS_PIXELS
-        try:
-            subtitle_stitcher.MAX_CANVAS_PIXELS = 500
-            frames = [self._frame(f"px-{index}.png", size=(60, 60)) for index in range(3)]
-            result = subtitle_stitcher.process(
-                {
-                    "action": "subtitle_stitch",
-                    "input_paths": frames,
-                    "output_path": os.path.join(self.temp_dir.name, "px-out.png"),
-                    "subtitle_crop_ratio": 0.2,
-                    "header_keep_full": True,
-                    "dedup_enabled": False,
-                    "minimum_strip_height": 8,
-                }
-            )
-            self.assertFalse(result.get("success"))
-            self.assertEqual(result.get("error_code"), "SUBTITLE_CANVAS_TOO_LARGE")
-            self.assertIn("500", str(result.get("error") or ""))
-        finally:
-            subtitle_stitcher.MAX_CANVAS_PIXELS = original
-
-
-class FilterSafetyDetailedTests(unittest.TestCase):
-    def setUp(self):
-        self.tool = filter_engine()
-
-    def test_fast_noise_path_returns_image(self):
-        with Image.new("RGB", (24, 24), (40, 40, 40)) as img:
-            result = self.tool._add_noise(img, 0.35)
-            try:
-                self.assertEqual(result.size, img.size)
-                self.assertEqual(result.mode, "RGB")
-            finally:
-                if result is not img:
-                    result.close()
-
-    def test_fast_vignette_path_returns_image(self):
-        with Image.new("RGB", (24, 24), (80, 80, 80)) as img:
-            result = self.tool._add_vignette(img, 0.5)
-            try:
-                self.assertEqual(result.size, img.size)
-            finally:
-                if result is not img:
-                    result.close()
-
-    def test_slow_fallbacks_raise_runtime_error_with_clear_message(self):
-        with Image.new("RGB", (8, 8), (10, 10, 10)) as img:
-            with self.assertRaises(RuntimeError) as noise_ctx:
-                self.tool._add_noise_slow(img, 0.2)
-            with self.assertRaises(RuntimeError) as vignette_ctx:
-                self.tool._add_vignette_slow(img, 0.2)
-        self.assertIn("disabled", str(noise_ctx.exception).lower())
-        self.assertIn("disabled", str(vignette_ctx.exception).lower())
-
-    def test_zero_strength_noise_and_vignette_are_noops(self):
-        with Image.new("RGB", (12, 12), (7, 8, 9)) as img:
-            noise = self.tool._add_noise(img, 0)
-            vignette = self.tool._add_vignette(img, 0)
-            self.assertIs(noise, img)
-            self.assertIs(vignette, img)
-
-
-if __name__ == "__main__":
-    unittest.main()

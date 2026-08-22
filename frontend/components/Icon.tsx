@@ -55,7 +55,21 @@ const icons: Record<string, React.ReactNode> = {
     // Window Controls
     Minimize: <line x1="4" y1="12" x2="20" y2="12" />,
     Maximize: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
-    Close: <g><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></g>
+    Close: <g><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></g>,
+
+    // Actions
+    X: <g><path d="M18 6 6 18"/><path d="m6 6 12 12"/></g>,
+    Check: <path d="M20 6 9 17l-5-5"/>,
+    Trash2: <g><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></g>,
+    ListFilter: <g><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></g>,
+    ArrowUp: <g><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></g>,
+    ArrowDown: <g><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></g>,
+
+    // Grid
+    Grid: <g><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></g>,
+    SplitGrid: <g><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></g>,
+    Expand: <g><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></g>,
+    Stitch: <g><rect x="3" y="5" width="8" height="6" rx="1"/><rect x="13" y="5" width="8" height="6" rx="1"/><rect x="8" y="15" width="8" height="4" rx="1"/><line x1="12" y1="11" x2="12" y2="15"/></g>
 };
 
 const Icon: React.FC<IconProps> = ({ name, size = 20, className = "" }) => {

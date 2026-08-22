@@ -18,6 +18,8 @@ type PdfSettingsProps = {
     setTitle: (v: string) => void;
     author: string;
     setAuthor: (v: string) => void;
+    password: string;
+    setPassword: (v: string) => void;
 };
 
 export const PdfSettings = memo(({
@@ -37,6 +39,8 @@ export const PdfSettings = memo(({
     setTitle,
     author,
     setAuthor,
+    password,
+    setPassword,
 }: PdfSettingsProps) => {
 
     return (
@@ -115,7 +119,14 @@ export const PdfSettings = memo(({
                 </div>
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">文档加密 (可选)</label>
-                    <input type="password" placeholder="留空则不加密" className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all" />
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="留空则不加密"
+                        autoComplete="new-password"
+                        className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
+                    />
                 </div>
             </div>
         </div>

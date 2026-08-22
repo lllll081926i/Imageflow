@@ -64,6 +64,16 @@ class SettingsStoreTests(unittest.TestCase):
             self.assertEqual(loaded.default_output_dir, "D:/Out")
             self.assertEqual(loaded.recent_input_dirs, [r"D:\Input", "E:/Other"])
 
+    def test_normalize_settings_accepts_all_conflict_strategies(self):
+        from backend.infrastructure.settings_store import AppSettings, normalize_settings
+
+        for strategy in ("rename", "overwrite", "skip"):
+            normalized = normalize_settings(AppSettings(conflict_strategy=strategy))
+            self.assertEqual(normalized.conflict_strategy, strategy)
+
+        fallback = normalize_settings(AppSettings(conflict_strategy="bogus"))
+        self.assertEqual(fallback.conflict_strategy, "rename")
+
     def test_load_settings_allows_override_path_with_double_dot_in_directory_name(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_file = Path(temp_dir) / "a..b" / "settings.json"

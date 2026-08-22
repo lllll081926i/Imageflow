@@ -188,9 +188,9 @@ class GifSplitterTests(unittest.TestCase):
             with Image.open(frame_path) as img:
                 self.assertEqual(img.format, "PNG")
 
-    def test_export_frames_jpg_request_rejected(self):
+    def test_export_frames_jpg_flattens_alpha(self):
         gif_path = self._make_gif()
-        out_dir = self._path("frames_jpg_rejected")
+        out_dir = self._path("frames_jpg")
         result = handle_request(
             {
                 "action": "export_frames",
@@ -199,9 +199,94 @@ class GifSplitterTests(unittest.TestCase):
                 "output_format": "jpg",
             }
         )
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("export_count"), 2)
+        for frame_path in result.get("frame_paths", []):
+            self.assertTrue(frame_path.endswith(".jpg"))
+            self.assertTrue(os.path.exists(frame_path))
+            with Image.open(frame_path) as img:
+                self.assertEqual(img.format, "JPEG")
+                self.assertEqual(img.mode, "RGB")
+
+    def test_export_frames_webp(self):
+        gif_path = self._make_gif()
+        out_dir = self._path("frames_webp")
+        result = handle_request(
+            {
+                "action": "export_frames",
+                "input_path": gif_path,
+                "output_dir": out_dir,
+                "output_format": "webp",
+            }
+        )
+        self.assertTrue(result.get("success"))
+        for frame_path in result.get("frame_paths", []):
+            self.assertTrue(os.path.exists(frame_path))
+            with Image.open(frame_path) as img:
+                self.assertEqual(img.format, "WEBP")
+
+    def test_export_frames_unknown_format_rejected(self):
+        gif_path = self._make_gif()
+        out_dir = self._path("frames_xyz_rejected")
+        result = handle_request(
+            {
+                "action": "export_frames",
+                "input_path": gif_path,
+                "output_dir": out_dir,
+                "output_format": "xyz",
+            }
+        )
         self.assertFalse(result.get("success"))
-        self.assertIn("Unsupported output format: jpg", result.get("error", ""))
+        self.assertIn("Unsupported output format: xyz", result.get("error", ""))
         self.assertEqual(result.get("error_code"), "GIF_EXPORT_UNSUPPORTED_FORMAT")
+
+    def test_reverse_gif_with_webp_output(self):
+        gif_path = self._make_gif()
+        output_path = self._path("reversed.webp")
+        result = handle_request(
+            {
+                "action": "reverse",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "output_format": "webp",
+            }
+        )
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("output_format"), "webp")
+        with Image.open(output_path) as img:
+            self.assertEqual(img.format, "WEBP")
+            self.assertGreaterEqual(int(getattr(img, "n_frames", 1) or 1), 2)
+
+    def test_change_speed_with_apng_output(self):
+        gif_path = self._make_gif()
+        output_path = self._path("speed.apng")
+        result = handle_request(
+            {
+                "action": "change_speed",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "speed_factor": 1.5,
+                "output_format": "apng",
+            }
+        )
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(result.get("output_format"), "apng")
+        with Image.open(output_path) as img:
+            self.assertGreaterEqual(int(getattr(img, "n_frames", 1) or 1), 1)
+
+    def test_reverse_gif_rejects_unknown_output_format(self):
+        gif_path = self._make_gif()
+        output_path = self._path("reversed.xyz")
+        result = handle_request(
+            {
+                "action": "reverse",
+                "input_path": gif_path,
+                "output_path": output_path,
+                "output_format": "xyz",
+            }
+        )
+        self.assertFalse(result.get("success"))
+        self.assertEqual(result.get("error_code"), "GIF_OUTPUT_FORMAT_INVALID")
 
     def test_get_frame_count_success(self):
         gif_path = self._make_gif()

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────
 
 SVG_DIMENSION_SCAN_BYTES = 256 * 1024
+MAX_SVG_SOURCE_BYTES = 8 * 1024 * 1024
 MAX_SVG_EDGE = 8192
 MAX_SVG_PIXELS = 16_000_000
 
@@ -137,9 +138,13 @@ def assert_svg_render_safe(svg_path: str) -> None:
     """Raise RuntimeError if SVG contains disallowed constructs."""
     try:
         with open(svg_path, "rb") as handle:
-            data = handle.read(SVG_DIMENSION_SCAN_BYTES)
+            data = handle.read(MAX_SVG_SOURCE_BYTES + 1)
     except OSError as exc:
         raise RuntimeError(f"Failed to read SVG: {exc}") from exc
+    if len(data) > MAX_SVG_SOURCE_BYTES:
+        raise RuntimeError(
+            f"SVG file size exceeds maximum safe limit ({MAX_SVG_SOURCE_BYTES // (1024 * 1024)}MB)"
+        )
     text = decode_svg_text(data)
     if _SVG_UNSAFE_PATTERN.search(text):
         raise RuntimeError(

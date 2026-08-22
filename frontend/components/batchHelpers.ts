@@ -117,3 +117,13 @@ export function summarizeBatchProgress(total: number, settled: number, failed: n
     const body = `${label}${cancelled ? '已停止' : '完成'}：成功 ${success}/${safeTotal} 项${extra}`;
     return body;
 }
+
+export function formatBytes(bytes: number): string {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const exponent = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+    const scaled = value / Math.pow(1024, exponent);
+    const digits = exponent === 0 ? 0 : scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+    return `${scaled.toFixed(digits)} ${units[exponent]}`;
+}

@@ -41,6 +41,9 @@ from backend.engines._svg_ops import (
     parse_svg_intrinsic_size_from_text,
     parse_svg_number,
 )
+from backend.engines._image_formats import ensure_heif_supported
+
+ensure_heif_supported()
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -217,32 +220,17 @@ class ImageConverter:
         assert_svg_render_safe(svg_path)
         render_width, render_height = clamp_svg_render_size(render_width, render_height)
         try:
-            # Optional dependency (not in pyproject by default). When present, prefer it.
-            # We still rely on assert_svg_render_safe() first because CairoSVG historically
-            # may fetch external resources depending on version/options.
-            import cairosvg  # type: ignore
+            # Preferred renderer: resvg handles gradients/filters/masks/CSS correctly.
+            # assert_svg_render_safe() above already rejected external references;
+            # we deliberately do not pass resources_dir so relative fetches fail closed.
+            import resvg_py  # type: ignore
 
-            def _blocked_url_fetcher(url, *args, **kwargs):
-                raise RuntimeError(f"External SVG resource blocked: {url}")
-
-            svg2png = cairosvg.svg2png
-            try:
-                # Prefer keyword styles supported by modern CairoSVG builds.
-                png_data = svg2png(
-                    url=svg_path,
-                    output_width=render_width,
-                    output_height=render_height,
-                    unsafe=False,
-                    url_fetcher=_blocked_url_fetcher,
-                )
-            except TypeError:
-                # Fallback for builds that only accept the basic signature.
-                png_data = svg2png(
-                    url=svg_path,
-                    output_width=render_width,
-                    output_height=render_height,
-                )
-            img = Image.open(io.BytesIO(png_data))
+            png_data = resvg_py.svg_to_bytes(
+                svg_path=svg_path,
+                width=render_width if render_width > 0 else None,
+                height=render_height if render_height > 0 else None,
+            )
+            img = Image.open(io.BytesIO(bytes(png_data)))
             img.load()
             if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
                 img = self._replace_image(
@@ -251,46 +239,9 @@ class ImageConverter:
                 )
             return img
         except ImportError:
-            logger.debug("cairosvg not available, fallback to svglib/inkscape")
+            logger.debug("resvg_py not available, fallback to inkscape")
         except Exception as e:
-            logger.warning(f"cairosvg SVG render failed: {e}")
-
-        try:
-            from svglib.svglib import svg2rlg  # type: ignore
-            from reportlab.graphics import renderPM  # type: ignore
-            from reportlab.graphics.shapes import Drawing, Group  # type: ignore
-
-            # resolve_entities=False is the svglib default (1.6+) and blocks classic XXE.
-            # Keep it explicit so a dependency upgrade cannot silently re-enable entity expansion.
-            drawing = svg2rlg(svg_path, resolve_entities=False)
-            if drawing is None:
-                raise RuntimeError("svg2rlg returned None")
-
-            if render_width > 0 and render_height > 0:
-                source_w = float(getattr(drawing, "width", render_width) or render_width)
-                source_h = float(getattr(drawing, "height", render_height) or render_height)
-                sx = render_width / source_w
-                sy = render_height / source_h
-
-                wrapped = Drawing(render_width, render_height)
-                group = Group(drawing)
-                group.scale(sx, sy)
-                wrapped.add(group)
-                drawing = wrapped
-
-            png_bytes = renderPM.drawToString(drawing, fmt="PNG")
-            img = Image.open(io.BytesIO(png_bytes))
-            img.load()
-            if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
-                img = self._replace_image(
-                    img,
-                    img.resize((render_width, render_height), Image.Resampling.LANCZOS),
-                )
-            return img
-        except ImportError:
-            logger.debug("svglib/reportlab not available, fallback to inkscape")
-        except Exception as e:
-            logger.warning(f"svglib SVG render failed: {e}")
+            logger.warning(f"resvg SVG render failed: {e}")
 
         inkscape = shutil.which("inkscape")
         if inkscape:
@@ -328,7 +279,7 @@ class ImageConverter:
 
         raise RuntimeError(
             "SVG input is not supported by the current Python environment. "
-            "Install one of: cairosvg (recommended), svglib+lxml, or inkscape."
+            "Install resvg-py (recommended) or Inkscape."
         )
 
     def _normalize_ico_sizes(self, ico_sizes):
@@ -454,38 +405,24 @@ class ImageConverter:
             else:
                 logger.info(f"Opening image: {input_path}")
                 img = Image.open(input_path)
-                # Avoid full pixel decode when we only need metadata/size and will resize/re-encode.
-                # Still decode on demand when filters/mode conversion require pixel access.
-                needs_full_load = True
+                # Prefer decoder draft for large downscales to reduce decode cost.
                 mode = str(resize_mode or "").strip().lower()
-                if (
-                    mode in {"", "original"}
-                    and int(scale_percent or 0) <= 0
-                    and int(long_edge or 0) <= 0
-                    and int(width or 0) <= 0
-                    and int(height or 0) <= 0
-                    and format_type not in {"ico"}
-                ):
-                    # Direct re-encode/copy path still requires pixel data for most formats.
-                    needs_full_load = True
-                if needs_full_load:
-                    # Prefer decoder draft for large downscales to reduce decode cost.
-                    try:
-                        if mode == "percent" and int(scale_percent or 0) > 0 and int(scale_percent) < 100:
-                            pct = max(1, int(scale_percent))
-                            draft_w = max(1, int(img.size[0] * pct / 100))
-                            draft_h = max(1, int(img.size[1] * pct / 100))
-                            img.draft(img.mode, (draft_w, draft_h))
-                        elif mode == "long_edge" and int(long_edge or 0) > 0:
-                            le = max(1, int(long_edge))
-                            img.draft(img.mode, (le, le))
-                        elif mode == "fixed" and (int(width or 0) > 0 or int(height or 0) > 0):
-                            tw = int(width or img.size[0])
-                            th = int(height or img.size[1])
-                            img.draft(img.mode, (max(1, tw), max(1, th)))
-                    except Exception:
-                        pass
-                    img.load()
+                try:
+                    if mode == "percent" and int(scale_percent or 0) > 0 and int(scale_percent) < 100:
+                        pct = max(1, int(scale_percent))
+                        draft_w = max(1, int(img.size[0] * pct / 100))
+                        draft_h = max(1, int(img.size[1] * pct / 100))
+                        img.draft(img.mode, (draft_w, draft_h))
+                    elif mode == "long_edge" and int(long_edge or 0) > 0:
+                        le = max(1, int(long_edge))
+                        img.draft(img.mode, (le, le))
+                    elif mode == "fixed" and (int(width or 0) > 0 or int(height or 0) > 0):
+                        tw = int(width or img.size[0])
+                        th = int(height or img.size[1])
+                        img.draft(img.mode, (max(1, tw), max(1, th)))
+                except Exception:
+                    pass
+                img.load()
 
             if _PROFILE_ENABLED:
                 open_elapsed = time.perf_counter() - open_start
@@ -518,7 +455,7 @@ class ImageConverter:
                         img.resize((new_w, new_h), resample),
                     )
                     resized = True
-            elif mode == 'fixed':
+            elif mode in ('fixed', 'original', ''):
                 if width > 0 or height > 0:
                     img = self._replace_image(img, self._resize_image(img, width, height, maintain_ar))
                     resized = True

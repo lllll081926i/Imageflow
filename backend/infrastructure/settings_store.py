@@ -73,7 +73,7 @@ def normalize_settings(settings: AppSettings) -> AppSettings:
     output_prefix = str(settings.output_prefix or "").strip() or defaults.output_prefix
     output_template = str(settings.output_template or "").strip() or defaults.output_template
     conflict_strategy = str(settings.conflict_strategy or "").strip() or defaults.conflict_strategy
-    if conflict_strategy != "rename":
+    if conflict_strategy not in ("rename", "overwrite", "skip"):
         conflict_strategy = defaults.conflict_strategy
 
     return AppSettings(
@@ -93,6 +93,18 @@ def normalize_settings(settings: AppSettings) -> AppSettings:
         remember_window_state=_coerce_bool(
             getattr(settings, "remember_window_state", defaults.remember_window_state),
             defaults.remember_window_state,
+        ),
+        ui_transparency=_coerce_bool(
+            getattr(settings, "ui_transparency", defaults.ui_transparency),
+            defaults.ui_transparency,
+        ),
+        ui_reduced_motion=_coerce_bool(
+            getattr(settings, "ui_reduced_motion", defaults.ui_reduced_motion),
+            defaults.ui_reduced_motion,
+        ),
+        background_running=_coerce_bool(
+            getattr(settings, "background_running", defaults.background_running),
+            defaults.background_running,
         ),
     )
 
@@ -121,6 +133,17 @@ def _settings_file_path() -> tuple[Path, bool]:
     return Path.home() / ".config" / "imageflow" / "settings.json", False
 
 
+def _backup_corrupt_settings_file(path: Path) -> None:
+    try:
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = path.with_name(f"{path.stem}.corrupt-{timestamp}{path.suffix}.bak")
+        path.replace(backup)
+    except OSError:
+        pass
+
+
 def load_settings() -> AppSettings:
     try:
         path, _is_override = _settings_file_path()
@@ -130,12 +153,18 @@ def load_settings() -> AppSettings:
         return default_app_settings()
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return default_app_settings()
+
+    try:
+        data = json.loads(raw_text)
         if not isinstance(data, dict):
-            return default_app_settings()
+            raise ValueError("settings root must be a JSON object")
         settings = settings_from_dict(data)
         return normalize_settings(settings)
-    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError):
+        _backup_corrupt_settings_file(path)
         return default_app_settings()
 
 

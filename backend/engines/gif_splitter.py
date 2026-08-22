@@ -36,7 +36,9 @@ MIN_QUALITY = 1
 MAX_QUALITY = 100
 GIF_MIN_DELAY_MS = 20
 GIF_DELAY_UNIT_MS = 10
-FRAME_OUTPUT_FORMATS = {"png", "bmp"}
+FRAME_OUTPUT_FORMATS = {"png", "bmp", "jpg", "jpeg", "webp", "tiff"}
+# Formats that cannot store alpha: frames are flattened onto white before saving.
+FLATTEN_FRAME_FORMATS = {"jpg", "jpeg", "bmp"}
 MAX_FRAME_PIXEL_BUDGET = 16_000_000
 MAX_TOTAL_FRAME_PIXEL_BUDGET = 256_000_000
 
@@ -62,7 +64,10 @@ class GIFTool:
             os.makedirs(output_dir, exist_ok=True)
             base_name = Path(input_path).stem
             frame_files = []
-            save_format = output_format.upper()
+            save_format = {"jpg": "JPEG", "jpeg": "JPEG"}.get(output_format, output_format.upper())
+            if output_format == "jpeg":
+                output_format = "jpg"
+            flatten_alpha = output_format in FLATTEN_FRAME_FORMATS
 
             with Image.open(input_path) as animated:
                 frame_count = int(getattr(animated, "n_frames", 1) or 1)
@@ -78,9 +83,15 @@ class GIFTool:
                 for frame_idx in frame_indices:
                     animated.seek(frame_idx)
                     with animated.convert("RGBA") as frame:
+                        if flatten_alpha:
+                            background = Image.new("RGB", frame.size, (255, 255, 255))
+                            background.paste(frame, mask=frame.split()[-1])
+                            payload = background
+                        else:
+                            payload = frame
                         output_filename = f"{base_name}_frame_{frame_idx:04d}.{output_format}"
                         output_path = os.path.join(output_dir, output_filename)
-                        frame.save(output_path, format=save_format)
+                        payload.save(output_path, format=save_format)
                         frame_files.append(output_path)
 
             return {
@@ -100,8 +111,12 @@ class GIFTool:
             logger.error("GIF export failed: %s", exc, exc_info=True)
             return _error_response("GIF_EXPORT_FAILED", str(exc))
 
-    def reverse_gif(self, input_path, output_path, loop=None):
+    def reverse_gif(self, input_path, output_path, loop=None, output_format=None):
         try:
+            try:
+                target = self._resolve_process_target(output_format)
+            except ValueError as exc:
+                return _error_response("GIF_OUTPUT_FORMAT_INVALID", str(exc))
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
@@ -113,7 +128,7 @@ class GIFTool:
             self._ensure_parent_dir(output_path)
             frame_count = len(frames)
             try:
-                self._save_gif(frames, output_path, durations, loop_value)
+                self._save_processed_animation(frames, output_path, durations, loop_value, target)
             finally:
                 for frame in frames:
                     frame.close()
@@ -123,6 +138,7 @@ class GIFTool:
                 "input_path": input_path,
                 "output_path": output_path,
                 "frame_count": frame_count,
+                "output_format": target,
             }
         except FileNotFoundError:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
@@ -132,8 +148,12 @@ class GIFTool:
             logger.error("GIF reverse failed: %s", exc, exc_info=True)
             return _error_response("GIF_REVERSE_FAILED", str(exc))
 
-    def change_speed(self, input_path, output_path, speed_factor, loop=None):
+    def change_speed(self, input_path, output_path, speed_factor, loop=None, output_format=None):
         try:
+            try:
+                target = self._resolve_process_target(output_format)
+            except ValueError as exc:
+                return _error_response("GIF_OUTPUT_FORMAT_INVALID", str(exc))
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
@@ -160,14 +180,14 @@ class GIFTool:
             self._ensure_parent_dir(output_path)
             frame_count = len(quantized_frames)
             try:
-                self._save_gif(
+                self._save_processed_animation(
                     quantized_frames,
                     output_path,
                     new_durations,
                     loop_value,
+                    target,
+                    disposals=effective_disposals,
                     optimize=True,
-                    disposal=effective_disposals,
-                    transparency=255,
                 )
             finally:
                 for frame in quantized_frames:
@@ -179,6 +199,7 @@ class GIFTool:
                 "output_path": output_path,
                 "frame_count": frame_count,
                 "speed_factor": factor,
+                "output_format": target,
             }
         except FileNotFoundError:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
@@ -190,8 +211,12 @@ class GIFTool:
             logger.error("GIF speed change failed: %s", exc, exc_info=True)
             return _error_response("GIF_SPEED_CHANGE_FAILED", str(exc))
 
-    def compress_gif(self, input_path, output_path, quality=90, loop=None):
+    def compress_gif(self, input_path, output_path, quality=90, loop=None, output_format=None):
         try:
+            try:
+                target = self._resolve_process_target(output_format)
+            except ValueError as exc:
+                return _error_response("GIF_OUTPUT_FORMAT_INVALID", str(exc))
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
@@ -209,14 +234,15 @@ class GIFTool:
             self._ensure_parent_dir(output_path)
             frame_count = len(frames)
             try:
-                self._save_gif(
+                self._save_processed_animation(
                     frames,
                     output_path,
                     durations,
                     loop_value,
+                    target,
+                    quality=quality_value,
+                    disposals=disposals,
                     optimize=True,
-                    disposal=disposals,
-                    transparency=255,
                 )
             finally:
                 for frame in frames:
@@ -321,8 +347,12 @@ class GIFTool:
             logger.error("GIF build failed: %s", exc, exc_info=True)
             return _error_response("GIF_BUILD_FAILED", str(exc))
 
-    def resize_gif(self, input_path, output_path, width=None, height=None, maintain_aspect=True, loop=None):
+    def resize_gif(self, input_path, output_path, width=None, height=None, maintain_aspect=True, loop=None, output_format=None):
         try:
+            try:
+                target = self._resolve_process_target(output_format)
+            except ValueError as exc:
+                return _error_response("GIF_OUTPUT_FORMAT_INVALID", str(exc))
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
@@ -356,13 +386,13 @@ class GIFTool:
             self._ensure_parent_dir(output_path)
             frame_count = len(frames)
             try:
-                self._save_gif(
+                self._save_processed_animation(
                     frames,
                     output_path,
                     durations,
                     loop_value,
-                    disposal=disposals,
-                    transparency=255,
+                    target,
+                    disposals=disposals,
                 )
             finally:
                 for frame in frames:
@@ -378,6 +408,7 @@ class GIFTool:
                 "original_width": original_width,
                 "original_height": original_height,
                 "maintain_aspect": keep_aspect,
+                "output_format": target,
             }
         except FileNotFoundError:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
@@ -722,6 +753,28 @@ class GIFTool:
             return text
         raise ValueError(f"Unsupported output format: {value}")
 
+    def _resolve_process_target(self, output_format):
+        """Default to GIF when no explicit animation output format is requested."""
+        if output_format is None or not str(output_format).strip():
+            return "gif"
+        return self._sanitize_animation_output_format(output_format)
+
+    def _save_processed_animation(self, frames, output_path, durations, loop_value, target, *, quality=90, disposals=None, optimize=False):
+        if target == "apng":
+            self._save_apng(frames, output_path, durations, loop_value, disposal=disposals)
+        elif target == "webp":
+            self._save_webp(frames, output_path, durations, loop_value, self._sanitize_quality(quality))
+        else:
+            self._save_gif(
+                frames,
+                output_path,
+                durations,
+                loop_value,
+                optimize=optimize,
+                disposal=disposals,
+                transparency=255,
+            )
+
     def _sanitize_dimension(self, value):
         try:
             dim = int(round(float(value)))
@@ -950,10 +1003,13 @@ def handle_request(input_data):
                 image_format = str(gif.format or "").upper()
                 if image_format not in {"GIF", "PNG", "WEBP"}:
                     raise ValueError("Input file is not a supported animated image")
+                width, height = gif.size
                 return {
                     "success": True,
                     "input_path": input_path,
                     "frame_count": int(getattr(gif, "n_frames", 1) or 1),
+                    "width": int(width),
+                    "height": int(height),
                 }
         except Exception as exc:
             return _error_response("GIF_GET_FRAME_COUNT_FAILED", str(exc))
@@ -971,27 +1027,30 @@ def handle_request(input_data):
         input_path = input_data.get("input_path")
         output_path = input_data.get("output_path")
         loop = input_data.get("loop")
+        output_format = input_data.get("output_format")
         if not input_path or not output_path:
             return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
-        return tool.reverse_gif(input_path, output_path, loop)
+        return tool.reverse_gif(input_path, output_path, loop, output_format)
 
     if action == "change_speed":
         input_path = input_data.get("input_path")
         output_path = input_data.get("output_path")
         speed_factor = input_data.get("speed_factor")
         loop = input_data.get("loop")
+        output_format = input_data.get("output_format")
         if not input_path or not output_path:
             return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
-        return tool.change_speed(input_path, output_path, speed_factor, loop)
+        return tool.change_speed(input_path, output_path, speed_factor, loop, output_format)
 
     if action == "compress":
         input_path = input_data.get("input_path")
         output_path = input_data.get("output_path")
         quality = input_data.get("quality", 90)
         loop = input_data.get("loop")
+        output_format = input_data.get("output_format")
         if not input_path or not output_path:
             return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
-        return tool.compress_gif(input_path, output_path, quality, loop)
+        return tool.compress_gif(input_path, output_path, quality, loop, output_format)
 
     if action == "resize":
         input_path = input_data.get("input_path")
@@ -1000,9 +1059,10 @@ def handle_request(input_data):
         height = input_data.get("height")
         maintain_aspect = input_data.get("maintain_aspect", True)
         loop = input_data.get("loop")
+        output_format = input_data.get("output_format")
         if not input_path or not output_path:
             return _error_response("GIF_BAD_REQUEST", "Missing input_path or output_path")
-        return tool.resize_gif(input_path, output_path, width, height, maintain_aspect, loop)
+        return tool.resize_gif(input_path, output_path, width, height, maintain_aspect, loop, output_format)
 
     if action == "build_gif":
         output_path = input_data.get("output_path")

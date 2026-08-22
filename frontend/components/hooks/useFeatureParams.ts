@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
 export function useConverterParams() {
     const [format, setFormat] = useState('JPG');
@@ -65,6 +65,7 @@ export function usePdfParams() {
     const [fileName, setFileName] = useState('');
     const [title, setTitle] = useState('');
     const [author, setAuthor] = useState('');
+    const [password, setPassword] = useState('');
 
     return {
         size, setSize,
@@ -75,40 +76,7 @@ export function usePdfParams() {
         fileName, setFileName,
         title, setTitle,
         author, setAuthor,
-    };
-}
-
-export function useImageProcessorParams() {
-    const [exposure, setExposure] = useState(0);
-    const [contrast, setContrast] = useState(0);
-    const [saturation, setSaturation] = useState(0);
-    const [sharpness, setSharpness] = useState(0);
-    const [vibrance, setVibrance] = useState(0);
-    const [hue, setHue] = useState(0);
-    const [rotate, setRotate] = useState(0);
-    const [flipH, setFlipH] = useState(false);
-    const [flipV, setFlipV] = useState(false);
-    const [cropRatio, setCropRatio] = useState('自由');
-    const [intensity, setIntensity] = useState(80);
-    const [grain, setGrain] = useState(0);
-    const [vignette, setVignette] = useState(0);
-    const [filterSelected, setFilterSelected] = useState(0);
-
-    return {
-        exposure, setExposure,
-        contrast, setContrast,
-        saturation, setSaturation,
-        sharpness, setSharpness,
-        vibrance, setVibrance,
-        hue, setHue,
-        rotate, setRotate,
-        flipH, setFlipH,
-        flipV, setFlipV,
-        cropRatio, setCropRatio,
-        intensity, setIntensity,
-        grain, setGrain,
-        vignette, setVignette,
-        filterSelected, setFilterSelected,
+        password, setPassword,
     };
 }
 
@@ -130,42 +98,170 @@ export function useGifParams() {
     };
 }
 
-export function useWatermarkParams() {
-    const [type, setType] = useState('文字');
-    const [text, setText] = useState('© ImageFlow');
-    const [imagePath, setImagePath] = useState('');
-    const [position, setPosition] = useState('br');
-    const [opacity, setOpacity] = useState(85);
-    const [rotate, setRotate] = useState(0);
-    const [size, setSize] = useState(40);
-    const [tiled, setTiled] = useState(false);
-    const [blendMode, setBlendMode] = useState('正常');
-    const [shadow, setShadow] = useState(false);
-    const [margin, setMargin] = useState({ x: 20, y: 20 });
-    const [font, setFont] = useState('Sans Serif');
-    const [color, setColor] = useState('#FFFFFF');
-    const [useSystemFonts, setUseSystemFonts] = useState(false);
-    const [systemFonts, setSystemFonts] = useState<string[]>([]);
-    const [isSystemFontsLoading, setIsSystemFontsLoading] = useState(false);
-    const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+export function useGridParams() {
+    const [gridSize, setGridSize] = useState('九宫格');
+    const [format, setFormat] = useState('PNG');
 
     return {
-        type, setType,
+        gridSize, setGridSize,
+        format, setFormat,
+    };
+}
+
+export function useSplitParams() {
+    const [rows, setRows] = useState(2);
+    const [cols, setCols] = useState(3);
+    const [mode, setMode] = useState<'square' | 'full'>('square');
+    const [format, setFormat] = useState('PNG');
+
+    return {
+        rows, setRows,
+        cols, setCols,
+        mode, setMode,
+        format, setFormat,
+    };
+}
+
+export type WatermarkStyle = {
+    text: string;
+    fontName: string;
+    sizeMode: 'px' | 'percent';
+    fontSize: number;
+    color: string;
+    opacity: number;
+    rotation: number;
+    position: string;
+    margin: number;
+    tiled: boolean;
+    tileGapX: number;
+    tileGapY: number;
+    strokeWidth: number;
+    strokeColor: string;
+    shadow: boolean;
+};
+
+export function useWatermarkParams() {
+    const [text, setText] = useState('ImageFlow');
+    const [fontName, setFontName] = useState('微软雅黑');
+    const [sizeMode, setSizeMode] = useState<'px' | 'percent'>('percent');
+    const [fontSize, setFontSize] = useState(6);
+    const [color, setColor] = useState('#FFFFFF');
+    const [opacity, setOpacity] = useState(60);
+    const [rotation, setRotation] = useState(0);
+    const [position, setPosition] = useState('br');
+    const [margin, setMargin] = useState(40);
+    const [tiled, setTiled] = useState(false);
+    const [tileGapX, setTileGapX] = useState(120);
+    const [tileGapY, setTileGapY] = useState(120);
+    const [strokeWidth, setStrokeWidth] = useState(0);
+    const [strokeColor, setStrokeColor] = useState('#000000');
+    const [shadow, setShadow] = useState(true);
+
+    const patch = useCallback((partial: Partial<WatermarkStyle>) => {
+        setText((prev) => partial.text ?? prev);
+        setFontName((prev) => partial.fontName ?? prev);
+        setSizeMode((prev) => partial.sizeMode ?? prev);
+        setFontSize((prev) => partial.fontSize ?? prev);
+        setColor((prev) => partial.color ?? prev);
+        setOpacity((prev) => partial.opacity ?? prev);
+        setRotation((prev) => partial.rotation ?? prev);
+        setPosition((prev) => partial.position ?? prev);
+        setMargin((prev) => partial.margin ?? prev);
+        setTiled((prev) => partial.tiled ?? prev);
+        setTileGapX((prev) => partial.tileGapX ?? prev);
+        setTileGapY((prev) => partial.tileGapY ?? prev);
+        setStrokeWidth((prev) => partial.strokeWidth ?? prev);
+        setStrokeColor((prev) => partial.strokeColor ?? prev);
+        setShadow((prev) => partial.shadow ?? prev);
+    }, []);
+
+    return {
         text, setText,
-        imagePath, setImagePath,
-        position, setPosition,
-        opacity, setOpacity,
-        rotate, setRotate,
-        size, setSize,
-        tiled, setTiled,
-        blendMode, setBlendMode,
-        shadow, setShadow,
-        margin, setMargin,
-        font, setFont,
+        fontName, setFontName,
+        sizeMode, setSizeMode,
+        fontSize, setFontSize,
         color, setColor,
-        useSystemFonts, setUseSystemFonts,
-        systemFonts, setSystemFonts,
-        isSystemFontsLoading, setIsSystemFontsLoading,
-        imageSize, setImageSize,
+        opacity, setOpacity,
+        rotation, setRotation,
+        position, setPosition,
+        margin, setMargin,
+        tiled, setTiled,
+        tileGapX, setTileGapX,
+        tileGapY, setTileGapY,
+        strokeWidth, setStrokeWidth,
+        strokeColor, setStrokeColor,
+        shadow, setShadow,
+        patch,
+    };
+}
+
+export function useResizeParams() {
+    const [mode, setMode] = useState<'percent' | 'long_edge' | 'short_edge'>('long_edge');
+    const [value, setValue] = useState(1920);
+    const [format, setFormat] = useState<'auto' | 'PNG' | 'JPG'>('auto');
+
+    return {
+        mode, setMode,
+        value, setValue,
+        format, setFormat,
+    };
+}
+
+export function useStitchParams() {
+    const [direction, setDirection] = useState<'vertical' | 'horizontal'>('vertical');
+    const [gap, setGap] = useState(0);
+    const [background, setBackground] = useState('#FFFFFF');
+    const [targetLength, setTargetLength] = useState(0);
+    const [border, setBorder] = useState(0);
+    const [outputFormat, setOutputFormat] = useState('PNG');
+
+    return {
+        direction, setDirection,
+        gap, setGap,
+        background, setBackground,
+        targetLength, setTargetLength,
+        border, setBorder,
+        outputFormat, setOutputFormat,
+    };
+}
+
+export type RichTextBlock = {
+    type: 'heading' | 'paragraph' | 'list' | 'quote' | 'image';
+    text?: string;
+    level?: number;
+    ordered?: boolean;
+    items?: string[];
+    path?: string;
+    width_percent?: number;
+};
+
+export function useRichTextParams() {
+    const [blocks, setBlocks] = useState<RichTextBlock[]>([
+        { type: 'heading', text: '标题', level: 1 },
+        { type: 'paragraph', text: '在这里输入正文内容…' },
+    ]);
+    const [width, setWidth] = useState(800);
+    const [padding, setPadding] = useState(48);
+    const [background, setBackground] = useState('#FFFFFF');
+    const [textColor, setTextColor] = useState('#1F2937');
+    const [headingColor, setHeadingColor] = useState('#111827');
+    const [accentColor, setAccentColor] = useState('#007AFF');
+    const [fontSize, setFontSize] = useState(18);
+    const [lineHeight, setLineHeight] = useState(1.6);
+    const [fontName, setFontName] = useState('微软雅黑');
+    const [fileName, setFileName] = useState('');
+
+    return {
+        blocks, setBlocks,
+        width, setWidth,
+        padding, setPadding,
+        background, setBackground,
+        textColor, setTextColor,
+        headingColor, setHeadingColor,
+        accentColor, setAccentColor,
+        fontSize, setFontSize,
+        lineHeight, setLineHeight,
+        fontName, setFontName,
+        fileName, setFileName,
     };
 }

@@ -87,9 +87,12 @@ def _run_in_tk_thread(callback):
 
 
 def _build_filetypes(options: dict[str, Any]) -> list[tuple[str, str]]:
+    default_pattern = (
+        "*.jpg *.jpeg *.png *.webp *.gif *.bmp *.avif *.heic *.heif *.ico *.tiff *.tif *.svg"
+    )
     filters = options.get("filters")
     if not isinstance(filters, list) or not filters:
-        return [("Images", "*.jpg *.jpeg *.png *.webp *.gif *.bmp *.avif *.ico *.tiff *.tif *.heic *.heif *.svg")]
+        return [("Images", default_pattern)]
 
     filetypes: list[tuple[str, str]] = []
     for item in filters:
@@ -103,7 +106,7 @@ def _build_filetypes(options: dict[str, Any]) -> list[tuple[str, str]]:
         if normalized:
             filetypes.append((name, normalized))
 
-    return filetypes or [("Images", "*.jpg *.jpeg *.png *.webp *.gif *.bmp *.avif *.ico *.tiff *.tif *.heic *.heif *.svg")]
+    return filetypes or [("Images", default_pattern)]
 
 
 def open_file_dialog(options: dict[str, Any] | None = None):

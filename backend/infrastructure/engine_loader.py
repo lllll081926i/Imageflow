@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Any
 
 ALLOWED_ENGINES = frozenset({
-    "converter", "compressor", "image_processor",
-    "watermark", "pdf_generator", "gif_splitter",
-    "subtitle_stitcher",
+    "converter", "compressor",
+    "pdf_generator", "gif_splitter",
+    "grid_cutter", "image_splitter", "watermark",
+    "resizer", "palette", "stitcher", "richtext",
 })
 
 ENGINES_REQUIRING_CONVERTER = frozenset({
     "pdf_generator",
-    "watermark",
 })
 
 

@@ -11,13 +11,11 @@ import {
     planIcoConversionSizes,
     resolveConverterOverwritePath,
     resolveGifAction,
-    resolveWatermarkBackendPosition,
     selectAnimatedProbeCandidatePaths,
     summarizeGifInputPaths,
 } from './gifHelpers';
 import { CustomSelect, FileDropZone } from './Controls';
 import DetailView from './DetailView';
-import Dashboard from './Dashboard';
 import GifSettingsPanel from './GifSettingsPanel';
 import { useGifResizeState } from './hooks/useGifResizeState';
 import { getAppBindings, resolveSelectedFilePaths } from '../types/app-api';
@@ -547,7 +545,6 @@ describe('DetailView 输出模板', () => {
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
             id: 'converter',
-            onBack: vi.fn(),
         }));
         const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
@@ -589,7 +586,7 @@ describe('DetailView 输出模板', () => {
 });
 
 describe('DetailView 输入格式限制', () => {
-    it('转换页不把当前环境无法解码的 HEIC/HEIF 暴露为普通转换输入', async () => {
+    it('转换页把 HEIC/HEIF 暴露为普通转换输入（后端 pillow-heif 解码）', async () => {
         vi.mocked(getAppBindings).mockReturnValue({
             GetSettings: vi.fn().mockResolvedValue({
                 max_concurrency: 4,
@@ -605,7 +602,6 @@ describe('DetailView 输入格式限制', () => {
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
             id: 'converter',
-            onBack: vi.fn(),
         }));
         const fileInput = container.querySelector('input[type="file"][accept]') as HTMLInputElement | null;
 
@@ -613,8 +609,8 @@ describe('DetailView 输入格式限制', () => {
         const accept = fileInput?.getAttribute('accept') || '';
         expect(accept).toContain('.avif');
         expect(accept).toContain('.svg');
-        expect(accept).not.toContain('.heic');
-        expect(accept).not.toContain('.heif');
+        expect(accept).toContain('.heic');
+        expect(accept).toContain('.heif');
 
         await act(async () => {
             root.unmount();
@@ -639,7 +635,6 @@ describe('DetailView 输入格式限制', () => {
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
             id: 'compressor',
-            onBack: vi.fn(),
         }));
         const fileInput = container.querySelector('input[type="file"][accept]') as HTMLInputElement | null;
 
@@ -703,7 +698,6 @@ describe('DetailView 图片压缩', () => {
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
             id: 'compressor',
-            onBack: vi.fn(),
         }));
         const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
         const file = {
@@ -789,7 +783,6 @@ describe('DetailView ICO 转换', () => {
 
         const { container, root } = await renderElement(React.createElement(DetailView, {
             id: 'converter',
-            onBack: vi.fn(),
         }));
 
         const formatTrigger = Array.from(container.querySelectorAll('button'))
@@ -866,155 +859,6 @@ describe('DetailView ICO 转换', () => {
     });
 });
 
-describe('DetailView 图片美化', () => {
-    it('垂直翻转控件会把 flip_v 参数传给后端', async () => {
-        const settings = {
-            max_concurrency: 4,
-            output_prefix: '',
-            output_template: '{basename}',
-            preserve_folder_structure: false,
-            conflict_strategy: 'rename',
-            default_output_dir: 'D:/out',
-            recent_input_dirs: [],
-            recent_output_dirs: [],
-        };
-        const adjust = vi.fn().mockResolvedValue({ success: true });
-        const expandDroppedPaths = vi.fn().mockResolvedValue({
-            has_directory: false,
-            files: [{
-                input_path: 'C:/input/sample.png',
-                source_root: 'C:/input',
-                relative_path: 'sample.png',
-                is_from_dir_drop: false,
-                size: 12,
-                mod_time: 1710000000,
-            }],
-        });
-        const resolveOutputPath = vi.fn(async (payload: { base_path: string }) => ({
-            success: true,
-            output_path: payload.base_path,
-        }));
-        const appBindings = {
-            GetSettings: vi.fn().mockResolvedValue(settings),
-            UpdateRecentPaths: vi.fn().mockResolvedValue(settings),
-            ExpandDroppedPaths: expandDroppedPaths,
-            ResolveOutputPath: resolveOutputPath,
-            GetImagePreview: vi.fn().mockResolvedValue({ success: true, data_url: 'data:image/png;base64,' }),
-            ProcessImage: adjust,
-            ProcessImageBatch: undefined,
-        };
-        vi.mocked(getAppBindings).mockReturnValue(appBindings as any);
-        (window as { pywebview?: unknown }).pywebview = { api: appBindings };
-
-        const { container, root } = await renderElement(React.createElement(DetailView, {
-            id: 'image_processor',
-            onBack: vi.fn(),
-        }));
-        const dropTarget = container.querySelector('[style*="--if-drop-target"]') as HTMLElement;
-        const file = {
-            name: 'sample.png',
-            size: 12,
-            lastModified: 1710000000000,
-            path: 'C:/input/sample.png',
-        } as any;
-
-        await act(async () => {
-            const event = new Event('drop', { bubbles: true, cancelable: true });
-            Object.defineProperty(event, 'dataTransfer', {
-                value: { files: [file] },
-                configurable: true,
-            });
-            dropTarget.dispatchEvent(event);
-            await flushMicrotasks();
-            await flushMicrotasks();
-        });
-
-        const verticalFlipButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('垂直翻转')) as HTMLButtonElement | undefined;
-        expect(verticalFlipButton).toBeTruthy();
-
-        await act(async () => {
-            verticalFlipButton?.click();
-            await flushMicrotasks();
-        });
-
-        const startButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('开始处理')) as HTMLButtonElement | undefined;
-        expect(startButton).toBeTruthy();
-
-        await act(async () => {
-            startButton?.click();
-            await flushMicrotasks();
-            await flushMicrotasks();
-        });
-
-        expect(adjust).toHaveBeenCalledTimes(1);
-        expect(adjust.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-            flip_v: true,
-        }));
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
-});
-
-describe('DetailView 图片水印', () => {
-    it('水印图片选择器不暴露后端无法直接读取的 SVG', async () => {
-        const settings = {
-            max_concurrency: 4,
-            output_prefix: '',
-            output_template: '{basename}',
-            preserve_folder_structure: false,
-            conflict_strategy: 'rename',
-            default_output_dir: '',
-            recent_input_dirs: [],
-            recent_output_dirs: [],
-        };
-        vi.mocked(getAppBindings).mockReturnValue({
-            GetSettings: vi.fn().mockResolvedValue(settings),
-        } as any);
-        const openFileDialog = vi.fn().mockResolvedValue(null);
-        (window as { runtime?: unknown }).runtime = {
-            OpenFileDialog: openFileDialog,
-        };
-
-        const { container, root } = await renderElement(React.createElement(DetailView, {
-            id: 'watermark',
-            onBack: vi.fn(),
-        }));
-
-        const imageModeButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.trim() === '图片') as HTMLButtonElement | undefined;
-        expect(imageModeButton).toBeTruthy();
-
-        await act(async () => {
-            imageModeButton?.click();
-            await flushMicrotasks();
-        });
-
-        const uploadButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('点击上传水印图')) as HTMLButtonElement | undefined;
-        expect(uploadButton).toBeTruthy();
-
-        await act(async () => {
-            uploadButton?.click();
-            await flushMicrotasks();
-        });
-
-        expect(openFileDialog).toHaveBeenCalledTimes(1);
-        const filters = openFileDialog.mock.calls[0]?.[0]?.filters || [];
-        expect(String(filters[0]?.Pattern || '')).toContain('*.png');
-        expect(String(filters[0]?.Pattern || '')).not.toContain('*.svg');
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
-});
-
 describe('resolveGifAction', () => {
     it('maps 倒放 to reverse', () => {
         expect(resolveGifAction('倒放')).toBe('reverse');
@@ -1069,24 +913,6 @@ describe('normalizeGifSpeedPercent', () => {
         expect(normalizeGifSpeedPercent(95)).toBe(100);
         expect(normalizeGifSpeedPercent(234)).toBe(230);
         expect(normalizeGifSpeedPercent(305)).toBe(300);
-    });
-});
-
-describe('resolveWatermarkBackendPosition', () => {
-    it('把前端九宫格位置映射为后端水印锚点名称', () => {
-        expect(resolveWatermarkBackendPosition('tl')).toBe('top-left');
-        expect(resolveWatermarkBackendPosition('tc')).toBe('top-center');
-        expect(resolveWatermarkBackendPosition('tr')).toBe('top-right');
-        expect(resolveWatermarkBackendPosition('cl')).toBe('center-left');
-        expect(resolveWatermarkBackendPosition('c')).toBe('center');
-        expect(resolveWatermarkBackendPosition('cr')).toBe('center-right');
-        expect(resolveWatermarkBackendPosition('bl')).toBe('bottom-left');
-        expect(resolveWatermarkBackendPosition('bc')).toBe('bottom-center');
-        expect(resolveWatermarkBackendPosition('br')).toBe('bottom-right');
-    });
-
-    it('保留已经是后端格式的位置值', () => {
-        expect(resolveWatermarkBackendPosition('bottom-right')).toBe('bottom-right');
     });
 });
 
@@ -1294,122 +1120,6 @@ describe('useGifResizeState', () => {
             root?.unmount();
             await flushMicrotasks();
         });
-    });
-});
-
-describe('FEATURES', () => {
-    it('保留 GIF 工具并单独提供字幕拼接入口', () => {
-        const gifFeature = FEATURES.find((feature) => feature.id === 'gif');
-        const subtitleFeature = FEATURES.find((feature) => feature.id === 'subtitle_stitch');
-
-        expect(gifFeature?.title).toBe('GIF 工具');
-        expect(subtitleFeature?.title).toBe('字幕拼接');
-    });
-
-    it('落地页工具卡可以触发对应功能入口', async () => {
-        const onSelect = vi.fn();
-        const { container, root } = await renderElement(
-            React.createElement(Dashboard, { onSelect })
-        );
-        const subtitleCard = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('字幕拼接')) as HTMLButtonElement | undefined;
-
-        expect(container.querySelector('.imageflow-dashboard-grid')).toBeTruthy();
-        expect(subtitleCard).toBeTruthy();
-        await act(async () => {
-            subtitleCard?.click();
-            await flushMicrotasks();
-        });
-        expect(onSelect).toHaveBeenCalledWith('subtitle_stitch');
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
-});
-
-describe('SubtitleStitchPage', () => {
-    it('桌面文件选择器会传递静态截图格式过滤规则', async () => {
-        const selectInputFiles = vi.fn().mockResolvedValue([]);
-        vi.mocked(getAppBindings).mockReturnValue({
-            SelectInputFiles: selectInputFiles,
-        } as any);
-        const { default: SubtitleStitchPage } = await import('./SubtitleStitchPage');
-
-        const { container, root } = await renderElement(
-            React.createElement(SubtitleStitchPage, { isActive: true })
-        );
-        const selectButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('选择截图')) as HTMLButtonElement | undefined;
-        expect(selectButton).toBeTruthy();
-
-        await act(async () => {
-            selectButton?.click();
-            await flushMicrotasks();
-        });
-
-        expect(selectInputFiles).toHaveBeenCalledWith(expect.objectContaining({
-            allowsMultipleSelection: true,
-            filters: [expect.objectContaining({
-                DisplayName: 'Screenshots',
-                Pattern: expect.stringContaining('*.png'),
-            })],
-        }));
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
-
-    it('桌面桥接未直接提供绑定时使用运行时文件选择器', async () => {
-        vi.mocked(getAppBindings).mockReturnValue(null);
-        const openFileDialog = vi.fn().mockResolvedValue(['D:/input/subtitle-01.png']);
-        (window as { runtime?: unknown }).runtime = { OpenFileDialog: openFileDialog };
-        const { default: SubtitleStitchPage } = await import('./SubtitleStitchPage');
-
-        const { container, root } = await renderElement(
-            React.createElement(SubtitleStitchPage, { isActive: true })
-        );
-        const selectButton = Array.from(container.querySelectorAll('button'))
-            .find((button) => button.textContent?.includes('选择截图')) as HTMLButtonElement | undefined;
-
-        await act(async () => {
-            selectButton?.click();
-            await flushMicrotasks();
-        });
-
-        expect(openFileDialog).toHaveBeenCalledWith(expect.objectContaining({
-            allowsMultipleSelection: true,
-            filters: [expect.objectContaining({ DisplayName: 'Screenshots' })],
-        }));
-        expect(container.textContent).toContain('subtitle-01.png');
-
-        await act(async () => {
-            root.unmount();
-            await flushMicrotasks();
-        });
-    });
-});
-
-describe('App 启动加载', () => {
-    it('导入 App 时不会同步求值功能页模块', async () => {
-        vi.resetModules();
-        vi.doMock('./DetailView', () => {
-            throw new Error('DetailView should be lazy-loaded');
-        });
-        vi.doMock('./SubtitleStitchPage', () => {
-            throw new Error('SubtitleStitchPage should be lazy-loaded');
-        });
-
-        try {
-            await expect(import('../App')).resolves.toHaveProperty('default');
-        } finally {
-            vi.doUnmock('./DetailView');
-            vi.doUnmock('./SubtitleStitchPage');
-            vi.resetModules();
-        }
     });
 });
 
