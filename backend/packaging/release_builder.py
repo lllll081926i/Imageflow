@@ -24,6 +24,15 @@ BACKEND_RUNTIME_PACKAGES = [
     "backend.infrastructure",
 ]
 
+NATIVE_RUNTIME_PACKAGES = [
+    "pillow_heif",
+    "resvg_py",
+    "mozjpeg_lossless_optimization",
+    "imagequant",
+    "oxipng",
+    "pystray",
+]
+
 
 def _assert_inside_project(path: Path, project_root: Path) -> None:
     path.resolve().relative_to(project_root.resolve())
@@ -114,6 +123,8 @@ def build_pyinstaller_command(paths: ReleasePaths, icon_path: Path | None) -> li
     ]
     for package_name in BACKEND_RUNTIME_PACKAGES:
         command.extend(["--collect-submodules", package_name])
+    for package_name in NATIVE_RUNTIME_PACKAGES:
+        command.extend(["--collect-all", package_name])
     command.extend(["--collect-submodules", "webview"])
     logo_path = paths.project_root / "ico.png"
     if logo_path.exists():

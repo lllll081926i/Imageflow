@@ -121,10 +121,10 @@ npm run build:release
 
 ## 并发与取消
 
-- `TaskManager` 跟踪当前任务、取消状态和已挂载子进程。
-- 单任务通过 `execute_engine()` 启动独立子进程执行引擎。
-- 批处理通过 `execute_engine_batch()` 根据 `settings.max_concurrency` 启动有限数量 worker。
-- 取消任务时先 `terminate()`，超时后 `kill()`，并在 `finally` 中关闭 multiprocessing 队列。
+- `TaskManager` 跟踪当前任务和协作式取消状态。
+- `execute_engine()` 与 `execute_engine_batch()` 统一复用全局 `ProcessPoolExecutor`，按 `settings.max_concurrency` 提交任务。
+- 取消任务会设置取消标记，并对尚未开始的 future 调用 `future.cancel()`；已经运行的引擎会在当前操作结束后返回取消结果。
+- 进程池扩容时先切换新池，再等待旧池中的任务自然收尾，不会取消正在处理的批次。
 
 ## 配置
 
@@ -132,7 +132,7 @@ npm run build:release
 
 | 字段 | 默认值 | 说明 |
 |---|---:|---|
-| `max_concurrency` | `8` | 批处理并发数，保存时限制在 `1-32` |
+| `max_concurrency` | Windows 最多 `4`，其它平台最多 `8` | 批处理并发数，保存时限制在 `1-32` |
 | `output_prefix` | `IF` | 输出文件前缀 |
 | `output_template` | `{prefix}{basename}` | 输出命名模板 |
 | `preserve_folder_structure` | `true` | 目录拖拽时保留相对层级 |
@@ -173,4 +173,4 @@ uv run python -m unittest discover -s backend/tests -v
 
 - 查看 API 返回的 `success` 和 `error` 字段。
 - 对应引擎位于 `backend/engines/`，优先补充 `backend/tests/engines/` 回归测试后再修复。
-- 对 SVG 支持依赖当前 Python 环境中的 CairoSVG、svglib/reportlab 或 Inkscape 可用性。
+- 对 SVG 支持优先使用 `resvg-py`，不可用时回退到带 15 秒超时的 Inkscape；两条路径都执行外部引用安全检查。

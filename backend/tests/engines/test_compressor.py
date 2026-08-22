@@ -69,6 +69,26 @@ class CompressorTests(unittest.TestCase):
         self.assertEqual(result.get("width"), 200)
         self.assertEqual(result.get("height"), 100)
 
+    def test_jpeg_lossless_resize_does_not_copy_original_pixels(self):
+        src = self._path("resize.jpg")
+        out = self._path("resize_out.jpg")
+        Image.new("RGB", (400, 200), (20, 120, 240)).save(src, format="JPEG", quality=92)
+
+        result = ImageCompressor().compress(
+            input_path=src,
+            output_path=out,
+            level=CompressionLevel.LOSSLESS,
+            engine="pillow",
+            resize_mode="percent",
+            resize_percent=50,
+            maintain_aspect=True,
+        )
+
+        self.assertTrue(result.get("success"), result)
+        with Image.open(out) as output:
+            self.assertEqual(output.size, (200, 100))
+        self.assertEqual((result.get("width"), result.get("height")), (200, 100))
+
     def test_pixel_resize_locks_to_target_box_by_default(self):
         src = self._path("pixel_locked.png")
         out = self._path("pixel_locked_out.png")

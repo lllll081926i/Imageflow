@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 import logging
 import time
 from backend.engines._svg_ops import (
@@ -48,6 +48,17 @@ ensure_heif_supported()
 # Configure logging
 logger = logging.getLogger(__name__)
 _PROFILE_ENABLED = os.getenv("IMAGEFLOW_PROFILE") == "1"
+MAX_OUTPUT_SIDE = 16_000
+MAX_OUTPUT_PIXELS = 256_000_000
+
+
+def _validate_output_dimensions(width: int, height: int) -> None:
+    if width <= 0 or height <= 0:
+        raise ValueError("输出尺寸必须为正数")
+    if width > MAX_OUTPUT_SIDE or height > MAX_OUTPUT_SIDE or width * height > MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"输出尺寸 {width}x{height} 超出限制（{MAX_OUTPUT_SIDE}px 边长 / {MAX_OUTPUT_PIXELS // 1_000_000}MP 面积）"
+        )
 def _profile_log(message: str) -> None:
     if _PROFILE_ENABLED:
         logger.info(message)
@@ -259,7 +270,7 @@ class ImageConverter:
                     args.append(f"--export-width={render_width}")
                 if render_height > 0:
                     args.append(f"--export-height={render_height}")
-                subprocess.run(args, check=True, capture_output=True)
+                subprocess.run(args, check=True, capture_output=True, timeout=15)
                 img = Image.open(tmp_path)
                 img.load()
                 if render_width > 0 and render_height > 0 and img.size != (render_width, render_height):
@@ -423,6 +434,18 @@ class ImageConverter:
                 except Exception:
                     pass
                 img.load()
+                raw_exif = getattr(img, 'info', {}).get('exif') if hasattr(img, 'info') else None
+                oriented = ImageOps.exif_transpose(img) if hasattr(img, 'getexif') else img
+                if oriented is not img:
+                    img = self._replace_image(img, oriented)
+                    if keep_metadata and raw_exif:
+                        try:
+                            exif = Image.Exif()
+                            exif.load(raw_exif)
+                            exif.pop(274, None)
+                            img.info['exif'] = exif.tobytes()
+                        except Exception:
+                            logger.debug("Failed to remove EXIF orientation tag", exc_info=True)
 
             if _PROFILE_ENABLED:
                 open_elapsed = time.perf_counter() - open_start
@@ -436,6 +459,7 @@ class ImageConverter:
                 pct = max(1, int(scale_percent))
                 new_w = max(1, int(img.size[0] * pct / 100))
                 new_h = max(1, int(img.size[1] * pct / 100))
+                _validate_output_dimensions(new_w, new_h)
                 resample = Image.Resampling.BILINEAR if pct < 100 else Image.Resampling.LANCZOS
                 img = self._replace_image(
                     img,
@@ -449,6 +473,7 @@ class ImageConverter:
                     scale = le / float(max(w0, h0))
                     new_w = max(1, int(w0 * scale))
                     new_h = max(1, int(h0 * scale))
+                    _validate_output_dimensions(new_w, new_h)
                     resample = Image.Resampling.BILINEAR if scale < 1.0 else Image.Resampling.LANCZOS
                     img = self._replace_image(
                         img,
@@ -457,10 +482,14 @@ class ImageConverter:
                     resized = True
             elif mode in ('fixed', 'original', ''):
                 if width > 0 or height > 0:
+                    new_w, new_h = self._calculate_resize_dimensions(img.size, width, height, maintain_ar)
+                    _validate_output_dimensions(new_w, new_h)
                     img = self._replace_image(img, self._resize_image(img, width, height, maintain_ar))
                     resized = True
             else:
                 if width > 0 or height > 0:
+                    new_w, new_h = self._calculate_resize_dimensions(img.size, width, height, maintain_ar)
+                    _validate_output_dimensions(new_w, new_h)
                     img = self._replace_image(img, self._resize_image(img, width, height, maintain_ar))
                     resized = True
 
@@ -470,6 +499,8 @@ class ImageConverter:
             if format_type == 'ico':
                 img, ico_sizes = self._prepare_ico_image(img, ico_sizes)
                 output_path = _with_single_ico_size_suffix(output_path, ico_sizes)
+
+            _validate_output_dimensions(*img.size)
 
             img = self._replace_image(img, self._prepare_for_output(img, format_type))
 
@@ -602,6 +633,21 @@ class ImageConverter:
         resample = Image.Resampling.BILINEAR if scale < 0.85 else Image.Resampling.LANCZOS
         return img.resize((new_width, new_height), resample)
 
+    @staticmethod
+    def _calculate_resize_dimensions(size, target_width, target_height, maintain_ar):
+        original_width, original_height = size
+        if maintain_ar:
+            if target_width > 0 and target_height == 0:
+                ratio = target_width / original_width
+                return target_width, max(1, int(original_height * ratio))
+            if target_height > 0 and target_width == 0:
+                ratio = target_height / original_height
+                return max(1, int(original_width * ratio)), target_height
+            if target_width > 0 and target_height > 0:
+                ratio = min(target_width / original_width, target_height / original_height)
+                return max(1, int(original_width * ratio)), max(1, int(original_height * ratio))
+        return max(1, target_width or original_width), max(1, target_height or original_height)
+
     def _prepare_for_output(self, img, format_type):
         if format_type not in ['jpg', 'jpeg', 'pdf']:
             return img
@@ -713,6 +759,10 @@ def open_image_with_svg_support(input_path, *, format_type="png", ico_sizes=None
 
     img = Image.open(input_path)
     img.load()
+    oriented = ImageOps.exif_transpose(img)
+    if oriented is not img:
+        img.close()
+        img = oriented
     return img
 
 

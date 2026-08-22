@@ -88,20 +88,26 @@ def _get_pool(min_size: int = 1) -> ProcessPoolExecutor:
     global _pool, _pool_size
     target = max(_desired_pool_size(), max(1, int(min_size)))
     target = min(32, target)
+    old_pool: ProcessPoolExecutor | None = None
     with _pool_lock:
         if _pool is not None and _pool_size >= target:
             return _pool
         if _pool is not None:
-            try:
-                _pool.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                _pool.shutdown(wait=False)
-            except Exception:
-                pass
-            _pool = None
+            # Swap in the larger pool first.  Existing callers retain their
+            # reference to the old pool, whose queued work must be allowed to
+            # finish instead of being cancelled during a concurrency change.
+            old_pool = _pool
         _pool = ProcessPoolExecutor(max_workers=target)
         _pool_size = target
-        return _pool
+        next_pool = _pool
+    if old_pool is not None:
+        try:
+            old_pool.shutdown(wait=True, cancel_futures=False)
+        except TypeError:
+            old_pool.shutdown(wait=True)
+        except Exception:
+            pass
+    return next_pool
 
 
 def _run_jobs(

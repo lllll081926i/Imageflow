@@ -9,16 +9,17 @@ type ErrorBoundaryProps = {
 
 type ErrorBoundaryState = {
     error: Error | null;
+    retryKey: number;
 };
 
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
         super(props);
-        this.state = { error: null };
+        this.state = { error: null, retryKey: 0 };
     }
 
     static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-        return { error };
+        return { error, retryKey: 0 };
     }
 
     componentDidCatch(error: Error, info: ErrorInfo) {
@@ -26,7 +27,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     }
 
     handleReset = () => {
-        this.setState({ error: null });
+        this.setState((state) => ({ error: null, retryKey: state.retryKey + 1 }));
         if (this.props.onReset) {
             this.props.onReset();
         }
@@ -34,7 +35,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
     render() {
         if (!this.state.error) {
-            return this.props.children;
+            return <React.Fragment key={this.state.retryKey}>{this.props.children}</React.Fragment>;
         }
 
         const title = this.props.title || '界面渲染出错';

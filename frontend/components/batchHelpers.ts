@@ -111,9 +111,9 @@ export function normalizeBatchResults(
     };
 }
 
-export function summarizeBatchProgress(total: number, settled: number, failed: number, cancelled: boolean, label: string, extra = ''): string {
+export function summarizeBatchProgress(total: number, settled: number, failed: number, cancelled: boolean, label: string, extra = '', cancelledItems = 0): string {
     const safeTotal = Math.max(0, total);
-    const success = Math.max(0, settled - failed);
+    const success = Math.max(0, settled - failed - Math.max(0, cancelledItems));
     const body = `${label}${cancelled ? '已停止' : '完成'}：成功 ${success}/${safeTotal} 项${extra}`;
     return body;
 }

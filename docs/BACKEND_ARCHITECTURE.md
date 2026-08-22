@@ -41,21 +41,20 @@ ImageFlow 当前采用 **React 前端 + Python 后端 + pywebview 桌面宿主**
 │                       Application Layer                      │
 │  backend/application/task_manager.py                          │
 │  backend/application/image_ops.py                             │
-│  backend/application/preview.py                               │
 │  - cancellation state                                         │
-│  - multiprocessing worker lifecycle                           │
-│  - preview generation                                         │
+│  - ProcessPoolExecutor lifecycle                               │
+│  - batch scheduling                                            │
 └───────────────────────────────┬─────────────────────────────┘
                                 │ allow-listed engine loading
 ┌───────────────────────────────▼─────────────────────────────┐
 │                      Image Processing Engines                │
 │  backend/engines/*.py                                         │
 │  - converter / compressor / gif_splitter                      │
-│  - pdf_generator / metadata_tool                              │
+│  - pdf_generator / richtext / watermark                       │
 └───────────────────────────────┬─────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────┐
-│                Pillow / ReportLab / piexif / exifread        │
+│                Pillow / ReportLab / resvg-py                 │
 │                         Local File System                    │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -89,20 +88,13 @@ ImageFlow 当前采用 **React 前端 + Python 后端 + pywebview 桌面宿主**
 
 ### 应用层
 
-`TaskManager` 保存任务 ID、取消标记、当前任务和已挂载子进程。取消逻辑会先 `terminate()`，等待超时后再 `kill()`。
+`TaskManager` 保存任务 ID、取消标记和当前任务。取消采用协作式语义：设置取消标记，并取消尚未开始的 future；已经运行的引擎在当前操作结束后返回取消结果。
 
 `image_ops.py` 管理 multiprocessing 生命周期：
 
-- 单任务：每次启动一个子进程，结果通过 `Queue` 返回。
-- 批处理：按 `max_concurrency` 启动有限数量 worker，从任务队列取 payload，按原始索引回填结果。
-- 所有队列都在 `finally` 中关闭并 `join_thread()`，避免文件描述符和 feeder 线程泄漏。
-- worker 启动失败时清理已启动进程，避免半启动状态残留。
-
-`preview.py` 生成前端预览图：
-
-- 使用 `IMAGEFLOW_PREVIEW_MAX_BYTES` 限制预览输入大小。
-- 将大图缩略到 `1280` 边以内并输出 JPEG data URL。
-- 通过引擎加载器复用 SVG 打开逻辑。
+- 单任务和批处理都提交给全局 `ProcessPoolExecutor`，按输入索引收集结果。
+- 进程池按需扩容；扩容时旧池等待已有任务完成，新池承接后续任务。
+- 缩略图由 `backend/api/desktop_api.py` 负责，并复用 SVG 安全检查和尺寸上限。
 
 ### 领域与基础设施
 
@@ -140,7 +132,7 @@ _normalize_payload_paths(payload)
   ↓
 _run_operation(lambda: execute_engine("converter", payload, task_manager))
   ↓
-multiprocessing.Process(target=_process_worker)
+ProcessPoolExecutor worker
   ↓
 invoke_engine_process("converter", payload)
   ↓
@@ -160,11 +152,9 @@ DesktopAPI.ConvertBatch(payloads)
   ↓
 execute_engine_batch("converter", payloads, settings, task_manager)
   ↓
-创建 task_queue / result_queue
+提交 N 个 future 到全局进程池
   ↓
-启动 N 个 worker 进程
-  ↓
-worker 重复处理队列任务并回填原始 index
+按 future 索引收集结果
   ↓
 按输入顺序返回结果列表
 ```
@@ -193,15 +183,14 @@ worker 重复处理队列任务并回填原始 index
 
 - 入口 API 尽量捕获异常并返回 `success: false`。
 - 引擎内部使用带前缀的错误码表达可识别错误，例如 `[BAD_INPUT]`、`[NOT_FOUND]`、`[UNSUPPORTED_FORMAT]`、`[PY_CANCELLED]`。
-- worker 默认不返回 traceback；需要调试时可设置 `IMAGEFLOW_DEBUG_TRACEBACK=1`。
+- worker 默认不返回 traceback；前端显示结构化错误码和消息。
 
 ## 并发与性能
 
-- 默认并发数为 `8`，保存设置时限制在 `1-32`。
-- 单文件操作独立子进程执行，避免图像库异常影响宿主进程。
-- 批处理复用固定数量 worker，减少一次一个进程的启动成本。
+- 默认并发数按平台推导（Windows 最多 `4`，其它平台最多 `8`），保存设置时限制在 `1-32`。
+- 单文件操作和批处理均复用全局 `ProcessPoolExecutor`，减少一次一个进程的启动成本。
 - 预览生成有文件大小阈值和缩略尺寸上限，避免前端渲染大图时内存过高。
-- SVG 转位图优先尝试 CairoSVG，其次 svglib/reportlab，最后尝试系统 Inkscape。
+- SVG 转位图优先尝试 `resvg-py`，失败时回退到带超时的 Inkscape。
 
 ## 安全边界
 

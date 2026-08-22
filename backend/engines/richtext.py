@@ -198,7 +198,10 @@ class RichTextRenderer:
             elif kind == "image":
                 total_height += params["h"]
         total_height += padding
-        total_height = min(round(total_height), 16000)
+        total_height = round(total_height)
+        if total_height > 16000:
+            return _error("RT_TOO_TALL", "富文本内容高度超过 16000px 安全上限")
+        probe.close()
 
         canvas = Image.new("RGB", (width, total_height), bg)
         draw = ImageDraw.Draw(canvas)
@@ -253,11 +256,14 @@ class RichTextRenderer:
             os.makedirs(parent, exist_ok=True)
 
         result = {
-            "success": True,
+            "success": not bool(image_paths_missing),
             "width": canvas.width,
             "height": canvas.height,
             "missing_images": image_paths_missing,
         }
+        if image_paths_missing:
+            result["error_code"] = "RT_MISSING_IMAGES"
+            result["error"] = "存在无法读取的图片块"
 
         if payload.get("preview"):
             import io as _io

@@ -15,9 +15,10 @@ import sys
 import json
 import os
 import math
+import secrets
 import tempfile
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 from reportlab.lib.pagesizes import (
     A0,
     A1,
@@ -37,6 +38,7 @@ from reportlab.lib.pagesizes import (
 )
 from reportlab.platypus import SimpleDocTemplate, PageBreak, Image as RLImage
 from reportlab.pdfgen import canvas
+from reportlab.lib.pdfencrypt import StandardEncryption
 import logging
 
 from converter import is_svg_path, open_image_with_svg_support
@@ -115,6 +117,7 @@ class PDFGenerator:
         """Initialize the PDF generator."""
         logger.info("PDFGenerator initialized")
         self._size_cache: dict[str, tuple[int, int]] = {}
+        self._force_buffer_paths: set[str] = set()
         self._temp_image_paths: list[str] = []
     
     def generate(self, images, output_path, layout='single',
@@ -150,6 +153,12 @@ class PDFGenerator:
                 }
 
             image_count = len(valid_images)
+            if str(layout).lower() == 'custom':
+                try:
+                    custom_rows = max(1, int(custom_rows))
+                    custom_cols = max(1, int(custom_cols))
+                except (TypeError, ValueError):
+                    return {'success': False, 'error': 'custom_rows/custom_cols 必须为正整数'}
             page_count = self._estimate_page_count(image_count, layout, custom_rows, custom_cols)
             logger.info(f"Generating PDF with {image_count} images")
 
@@ -174,7 +183,19 @@ class PDFGenerator:
             doc_kwargs = {}
             safe_password = str(user_password or '').strip()
             if safe_password:
-                doc_kwargs['encrypt'] = safe_password
+                # Use a distinct owner key and 128-bit revision-3 encryption;
+                # the old shorthand selected 40-bit RC4 with all permissions
+                # enabled and made the owner password identical to the user
+                # password.
+                doc_kwargs['encrypt'] = StandardEncryption(
+                    safe_password,
+                    ownerPassword=secrets.token_urlsafe(24),
+                    canPrint=0,
+                    canModify=0,
+                    canCopy=0,
+                    canAnnotate=0,
+                    strength=128,
+                )
             doc = SimpleDocTemplate(
                 output_path,
                 pagesize=pagesize,
@@ -230,6 +251,7 @@ class PDFGenerator:
         """Validate that all image files exist and can be opened, caching sizes."""
         valid_images = []
         self._size_cache.clear()
+        self._force_buffer_paths.clear()
         from PIL import Image, UnidentifiedImageError
 
         for img_path in images:
@@ -249,8 +271,14 @@ class PDFGenerator:
                             pass
                 else:
                     with Image.open(img_path) as img:
-                        # Do not call load(); size is available from headers for common formats.
-                        self._size_cache[img_path] = img.size
+                        if img.getexif().get(274):
+                            self._force_buffer_paths.add(str(img_path))
+                        oriented = ImageOps.exif_transpose(img)
+                        try:
+                            self._size_cache[img_path] = oriented.size
+                        finally:
+                            if oriented is not img:
+                                oriented.close()
                 valid_images.append(img_path)
             except UnidentifiedImageError as e:
                 logger.warning(f"Cannot open image {img_path}: {e}")
@@ -393,7 +421,7 @@ class PDFGenerator:
         """
         # Use cached size if available, otherwise open to get dimensions
         cached_size = self._size_cache.get(img_path)
-        force_buffer = is_svg_path(img_path)
+        force_buffer = is_svg_path(img_path) or str(img_path) in self._force_buffer_paths
 
         if cached_size and compression_level <= 0 and not force_buffer and fit_mode != 'cover':
             # Fast path: use cached size, skip PIL open entirely
@@ -667,6 +695,7 @@ def main():
         portrait = _coerce_portrait(input_data.get('portrait'), raw_layout)
         compression_level = input_data.get('compression_level', 0)
         fit_mode = input_data.get('fit_mode', 'contain')
+        user_password = input_data.get('user_password', '')
         
         # Validate required parameters
         if not images or not output_path:
@@ -690,6 +719,7 @@ def main():
                 portrait=portrait,
                 compression_level=compression_level,
                 fit_mode=fit_mode,
+                user_password=user_password,
             )
         
         # Write result to stdout

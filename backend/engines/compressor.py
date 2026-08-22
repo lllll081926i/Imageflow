@@ -487,6 +487,7 @@ class ImageCompressor:
                     engine=engine,
                     target_bytes=target_bytes,
                     strip_metadata=bool(strip_metadata),
+                    allow_lossless_copy=not resize_applied,
                 )
             elif format_type == "PNG":
                 warning = self._compress_png(
@@ -602,6 +603,7 @@ class ImageCompressor:
         engine="",
         target_bytes=0,
         strip_metadata=False,
+        allow_lossless_copy=True,
     ):
         """Compress JPEG using MoZJPEG or Pillow."""
         logger.info(f"Compressing JPEG (level: {level})")
@@ -611,9 +613,9 @@ class ImageCompressor:
         use_mozjpeg = self.mozjpeg_available and engine in ("", "auto", "mozjpeg")
         force_pillow = engine in ("pillow",)
         lossless_warning = ""
-        if level == CompressionLevel.LOSSLESS and not use_mozjpeg and not force_pillow:
+        if level == CompressionLevel.LOSSLESS and allow_lossless_copy and not use_mozjpeg and not force_pillow:
             lossless_warning = "MozJPEG 不可用，已使用字节复制模式（仅剥离隐私元数据）"
-        if level == CompressionLevel.LOSSLESS and force_pillow:
+        if level == CompressionLevel.LOSSLESS and allow_lossless_copy and force_pillow:
             lossless_warning = "已选择 Pillow 引擎，改为字节复制模式以保持无损"
 
         def save_once(q):
@@ -621,7 +623,7 @@ class ImageCompressor:
                 work = img.convert("RGB")
             else:
                 work = img
-            if level == CompressionLevel.LOSSLESS and use_mozjpeg and not force_pillow and input_path.lower().endswith((".jpg", ".jpeg")):
+            if level == CompressionLevel.LOSSLESS and allow_lossless_copy and use_mozjpeg and not force_pillow and input_path.lower().endswith((".jpg", ".jpeg")):
                 # MozJPEG optimize API requires full bytes. Cap size to avoid multi-hundred-MB spikes.
                 max_mozjpeg_bytes = int(os.getenv("IMAGEFLOW_MOZJPEG_MAX_BYTES", str(48 * 1024 * 1024)))
                 try:
@@ -643,7 +645,7 @@ class ImageCompressor:
                 with open(output_path, "wb") as f:
                     f.write(optimized_bytes)
                 return
-            if level == CompressionLevel.LOSSLESS and (force_pillow or not use_mozjpeg):
+            if level == CompressionLevel.LOSSLESS and allow_lossless_copy and (force_pillow or not use_mozjpeg):
                 if strip_metadata:
                     with open(input_path, "rb") as src, open(output_path, "wb") as dst:
                         _copy_jpeg_without_metadata(src, dst)

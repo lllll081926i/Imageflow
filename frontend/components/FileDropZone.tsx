@@ -477,6 +477,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
     const directoryInputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
     const previewResultRef = useRef<ExpandDroppedPathsResult | null>(null);
+    const expandGenerationRef = useRef(0);
     const runtimeDropMarkerRef = useRef<RuntimeDropMarker | null>(null);
     const runtimeDropTimeoutRef = useRef<number | null>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
@@ -491,23 +492,33 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
     );
     const mergeResults = (base: ExpandDroppedPathsResult | null, incoming: ExpandDroppedPathsResult) => {
         if (!base) return incoming;
-        const seen = new Set(base.files.map((f) => pathKey(f.input_path)));
-        const merged = base.files.slice();
+        const byPath = new Map(base.files.map((f) => [pathKey(f.input_path), f] as const));
         for (const f of incoming.files) {
             const key = pathKey(f.input_path);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            merged.push(f);
+            const previous = byPath.get(key);
+            if (!previous) {
+                byPath.set(key, f);
+                continue;
+            }
+            // Keep the existing order while allowing the host expand result to
+            // enrich optimistic entries (size/mod_time/source metadata).
+            byPath.set(key, {
+                ...previous,
+                ...f,
+                input_path: previous.input_path || f.input_path,
+                size: f.size || previous.size,
+                mod_time: f.mod_time || previous.mod_time,
+            });
         }
         return {
             has_directory: base.has_directory || incoming.has_directory,
-            files: merged,
+            files: Array.from(byPath.values()),
         };
     };
     const snapshotSignature = useCallback((r: ExpandDroppedPathsResult | null) => {
         if (!r) return '';
         return `${r.has_directory ? 'd' : 'f'}#${r.files.length}#${
-            r.files.map((f) => `${f.input_path}|${f.size}|${f.mod_time}`).join(';')
+            r.files.map((f) => `${f.input_path}|${f.size}|${f.mod_time}|${f.source_root}|${f.relative_path}|${f.is_from_dir_drop ? 'd' : 'f'}`).join(';')
         }`;
     }, []);
 
@@ -612,6 +623,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
     });
 
     const applyFileSelection = async (files: File[], resolvedPaths?: string[]) => {
+        const generation = ++expandGenerationRef.current;
         onFilesSelected?.(files);
         const hasResolved = Boolean(resolvedPaths && resolvedPaths.length > 0);
         beginSelectionStatus(hasResolved ? '正在加载...' : '正在解析文件路径...');
@@ -627,12 +639,12 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                 void (async () => {
                     try {
                         const expanded = await expandPathsFromFiles(files, resolvedPaths);
+                        if (generation !== expandGenerationRef.current) return;
                         if (expanded && expanded.files?.length) {
-                            // Replace with host result for accuracy
-                            const filtered = filterExpandedResultByExtensions(expanded, acceptedExtensionSet);
-                            previewResultRef.current = filtered;
-                            setPreviewResult(filtered);
-                            onPathsExpanded?.(filtered);
+                            // Merge host metadata into the optimistic list.  A
+                            // background expand must never replace files added by
+                            // an earlier/later drop.
+                            mergeAndPublishResult(expanded);
                         }
                     } catch (e) {
                         console.error(e);
@@ -653,7 +665,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                 setSelectionStatus('正在扫描文件...');
             }
             const expanded = await expandPathsFromFiles(files, normalizedPaths);
-            if (expanded) {
+            if (expanded && generation === expandGenerationRef.current) {
                 mergeAndPublishResult(expanded);
                 return;
             }
@@ -697,6 +709,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
             if (shouldIgnoreRuntimeDrop(paths)) return;
             const app = getAppBindings();
             if (!app?.ExpandDroppedPaths) return;
+            const generation = ++expandGenerationRef.current;
 
             beginSelectionStatus('正在加载...');
             try {
@@ -716,7 +729,9 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                     mergeAndPublishResult(quick);
                 }
                 const result = await app.ExpandDroppedPaths(paths);
-                mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                if (generation === expandGenerationRef.current) {
+                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                }
             } catch (e) {
                 console.error(e);
                 setSelectionError('扫描拖入文件失败，请重试。');

@@ -18,6 +18,7 @@ import resizer
 import palette as palette_engine
 import stitcher
 import richtext
+import watermark
 
 
 def _solid(path, size, color):
@@ -183,6 +184,30 @@ class RichTextTests(unittest.TestCase):
         self.assertTrue(os.path.exists(out))
         self.assertGreater(result["height"], 100)
         self.assertTrue(result["data_url"].startswith("data:image/png;base64,"))
+
+
+class WatermarkTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_center_position_writes_image_and_dimensions(self):
+        src = os.path.join(self.tmp.name, "source.png")
+        out = os.path.join(self.tmp.name, "watermarked.png")
+        _solid(src, (160, 100), (240, 240, 240))
+        result = watermark.process({
+            "action": "apply",
+            "input_path": src,
+            "output_path": out,
+            "text": "中心",
+            "position": "c",
+        })
+        self.assertTrue(result["success"], result)
+        self.assertEqual((result["width"], result["height"]), (160, 100))
+        with Image.open(out) as image:
+            self.assertEqual(image.size, (160, 100))
 
 
 if __name__ == "__main__":

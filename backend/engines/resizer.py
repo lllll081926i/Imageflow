@@ -24,6 +24,8 @@ ensure_heif_supported()
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SAVE = {"jpg", "jpeg", "png", "webp", "bmp", "tiff"}
+MAX_SIDE = 16_000
+MAX_AREA = 256_000_000
 
 
 def _error(code, message):
@@ -54,20 +56,22 @@ class Resizer:
             try:
                 width, height = work.size
                 if mode == "percent":
-                    percent = max(1, min(1000, amount))
+                    percent = max(1, min(500, amount))
                     new_w = max(1, round(width * percent / 100))
                     new_h = max(1, round(height * percent / 100))
                 elif mode == "long_edge":
-                    edge = max(1, min(30000, amount))
+                    edge = max(1, min(MAX_SIDE, amount))
                     scale = edge / max(width, height)
                     new_w = max(1, round(width * scale))
                     new_h = max(1, round(height * scale))
                 else:
-                    edge = max(1, min(30000, amount))
+                    edge = max(1, min(MAX_SIDE, amount))
                     scale = edge / min(width, height)
                     new_w = max(1, round(width * scale))
                     new_h = max(1, round(height * scale))
 
+                if max(new_w, new_h) > MAX_SIDE or new_w * new_h > MAX_AREA:
+                    return _error("RESIZE_TOO_LARGE", f"Output exceeds limits ({MAX_SIDE}px side / {MAX_AREA // 1_000_000}MP area)")
                 resample = Image.Resampling.LANCZOS
                 resized = work.resize((new_w, new_h), resample=resample)
             finally:

@@ -153,7 +153,7 @@ def _normalize_payload_paths(payload: Any) -> Any:
         return payload
 
     normalized = dict(payload)
-    for field in ("input_path", "output_path", "output_dir", "image_path"):
+    for field in ("input_path", "output_path", "output_dir", "image_path", "path"):
         if field in normalized:
             normalized[field] = normalize_optional_user_supplied_path(str(normalized.get(field) or ""))
     for field in ("input_paths", "image_paths"):
@@ -322,9 +322,12 @@ def _thumbnail_cache_key(path: str, max_edge: int) -> tuple[str, int, int, int] 
 
 
 def _render_thumbnail_bytes(path: str, suffix: str, max_edge: int) -> tuple[bytes, str, int, int]:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     if suffix == ".svg":
+        from backend.engines._svg_ops import assert_svg_render_safe
+
+        assert_svg_render_safe(path)
         import resvg_py
 
         png_bytes = resvg_py.svg_to_bytes(svg_path=path, width=max_edge)
@@ -333,8 +336,13 @@ def _render_thumbnail_bytes(path: str, suffix: str, max_edge: int) -> tuple[byte
         _ensure_main_process_heif()
         img = Image.open(path)
 
-    with img:
+    original_img = img
+    with original_img:
         img.load()
+        oriented = ImageOps.exif_transpose(img)
+        if oriented is not img:
+            img.close()
+            img = oriented
         has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
         img.thumbnail((max_edge, max_edge))
         encode = img
@@ -346,7 +354,12 @@ def _render_thumbnail_bytes(path: str, suffix: str, max_edge: int) -> tuple[byte
         mime = "image/png" if has_alpha else "image/jpeg"
         buffer = io.BytesIO()
         encode.save(buffer, format=fmt, quality=80)
-        return buffer.getvalue(), mime, encode.width, encode.height
+        out_width, out_height = encode.size
+        if encode is not img:
+            encode.close()
+        if img is not original_img:
+            img.close()
+        return buffer.getvalue(), mime, out_width, out_height
 
 
 def _load_or_render_thumbnail(key: tuple[str, int, int, int], suffix: str) -> dict[str, Any]:
@@ -724,7 +737,12 @@ class DesktopAPI:
             def _quit() -> None:
                 self.runtime_quit()
 
-            ensure_tray(_show, _quit)
+            tray_ready = ensure_tray(_show, _quit)
+            if not tray_ready:
+                # Never hide the last window unless a working tray entry is
+                # available to restore it.
+                self.runtime_quit()
+                return {"success": True, "hidden": False}
             if webview.windows:
                 webview.windows[0].hide()
             return {"success": True, "hidden": True}

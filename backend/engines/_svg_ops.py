@@ -22,11 +22,10 @@ MAX_SVG_PIXELS = 16_000_000
 _SVG_UNSAFE_PATTERN = re.compile(
     r"(?is)"
     r"(<!DOCTYPE\b|<!ENTITY\b|"
-    r"\bxlink:href\s*=|"
+    r"\bxlink:href\s*=\s*['\"]\s*(?:file:|https?:|//)|"
     r"\bhref\s*=\s*['\"]\s*(?:file:|https?:|//)|"
     r"\bsrc\s*=\s*['\"]\s*(?:file:|https?:|//)|"
-    r"<image\b[^>]*(?:href|xlink:href)\s*=|"
-    r"<use\b[^>]*(?:href|xlink:href)\s*=|"
+    r"url\s*\(\s*['\"]?\s*(?:file:|https?:|//)|"
     r"<foreignObject\b|"
     r"<script\b|"
     r"@import\b)"

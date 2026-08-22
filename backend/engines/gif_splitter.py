@@ -73,11 +73,11 @@ class GIFTool:
                 frame_count = int(getattr(animated, "n_frames", 1) or 1)
                 if frame_count <= 1:
                     return _error_response("GIF_EXPORT_FAILED", "Input image is not an animated image")
-                self._assert_frame_pixel_budget(animated.size, 1)
                 frame_indices = self._parse_frame_range(frame_range, frame_count)
                 frame_indices = [i for i in frame_indices if 0 <= i < frame_count]
                 if not frame_indices:
                     return _error_response("GIF_EXPORT_EMPTY_SELECTION", "No frames selected for export")
+                self._assert_frame_pixel_budget(animated.size, len(frame_indices))
 
                 # Stream only selected frames instead of materializing the full animation.
                 for frame_idx in frame_indices:
@@ -107,6 +107,8 @@ class GIFTool:
             return _error_response("GIF_INPUT_NOT_FOUND", f"Input file not found: {input_path}")
         except UnidentifiedImageError:
             return _error_response("GIF_UNSUPPORTED_IMAGE", f"Unsupported image format: {input_path}")
+        except MemoryError as exc:
+            return _error_response("GIF_MEMORY_LIMIT", "GIF is too large to process safely", exc)
         except Exception as exc:
             logger.error("GIF export failed: %s", exc, exc_info=True)
             return _error_response("GIF_EXPORT_FAILED", str(exc))
@@ -283,6 +285,15 @@ class GIFTool:
             max_height = 0
             quantized_frames = []
             try:
+                # Check the complete animation budget before allocating all
+                # source RGBA frames.
+                for path in paths:
+                    with Image.open(path) as probe:
+                        max_width = max(max_width, probe.width)
+                        max_height = max(max_height, probe.height)
+                self._assert_frame_pixel_budget((max_width, max_height), len(paths))
+                max_width = 0
+                max_height = 0
                 for idx, path in enumerate(paths):
                     with Image.open(path) as img:
                         width, height = img.size
@@ -648,11 +659,13 @@ class GIFTool:
                 parts = frame_range.split(":")
                 if len(parts) == 2:
                     start, step = map(int, parts)
+                    if step <= 0:
+                        raise ValueError("frame range step must be greater than zero")
                     return list(range(start, total_frames, step))
             return [int(frame_range)]
         except (ValueError, IndexError) as exc:
-            logger.warning("Invalid frame range '%s': %s. Using all frames.", frame_range, exc)
-            return list(range(total_frames))
+            logger.warning("Invalid frame range '%s': %s", frame_range, exc)
+            return []
 
     def _save_gif(self, frames, output_path, durations, loop, optimize=False, disposal=None, transparency=None):
         if not frames:
@@ -708,7 +721,7 @@ class GIFTool:
             duration=durations,
             loop=loop if loop is not None else 0,
             quality=quality,
-            lossless=True,
+            lossless=False,
             method=6,
             background=(0, 0, 0, 0),
         )

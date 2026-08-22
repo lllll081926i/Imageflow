@@ -165,6 +165,11 @@ def _paste_positions(width, height, layer_w, layer_h, opts):
     position = str(opts.get("position") or "br").lower()
     if position not in POSITIONS:
         position = "br"
+    # "c" is the public shorthand for the center position.  The lookup
+    # below expects a two-character row/column code (for example "bc"), so
+    # normalize the shorthand before indexing it.
+    if position == "c":
+        position = "cc"
     try:
         margin = max(0, min(2000, int(opts.get("margin", 40) or 40)))
     except (TypeError, ValueError):
@@ -217,6 +222,15 @@ class WatermarkTool:
             return _error("WM_OPEN_FAILED", str(exc))
 
         try:
+            original_width, original_height = base.size
+            if action == "preview" and max(base.size) > 1100:
+                scale = 1100 / max(base.size)
+                preview_base = base.resize(
+                    (max(1, round(base.width * scale)), max(1, round(base.height * scale))),
+                    Image.Resampling.BILINEAR,
+                )
+                base.close()
+                base = preview_base
             font_size = _resolve_font_size(base.width, opts)
             layer = _build_text_layer(base.width, base.height, opts, font_size)
             if layer is None:
@@ -234,27 +248,15 @@ class WatermarkTool:
                 import io as _io
                 import base64 as _b64
 
-                # Downscale BEFORE compositing so huge inputs stay fast in live preview.
-                preview_src = watermarked
-                max_preview_edge = 1100
-                if max(preview_src.size) > max_preview_edge:
-                    scale = max_preview_edge / max(preview_src.size)
-                    preview_src = preview_src.resize(
-                        (max(1, round(preview_src.width * scale)), max(1, round(preview_src.height * scale))),
-                        Image.Resampling.BILINEAR,
-                    )
                 buffer = _io.BytesIO()
-                preview_src.save(buffer, format="PNG")
-                out_w, out_h = watermarked.size
+                watermarked.save(buffer, format="PNG")
                 watermarked.close()
-                if preview_src is not watermarked:
-                    preview_src.close()
                 return {
                     "success": True,
                     "action": "preview",
                     "data_url": "data:image/png;base64," + _b64.b64encode(buffer.getvalue()).decode("ascii"),
-                    "width": out_w,
-                    "height": out_h,
+                    "width": original_width,
+                    "height": original_height,
                 }
 
             output_path = str(payload.get("output_path") or "")
@@ -267,6 +269,7 @@ class WatermarkTool:
 
             out_format = str(payload.get("output_format") or Path(output_path).suffix.lstrip(".") or "png").lower()
             save_image = watermarked
+            output_width, output_height = watermarked.size
             if out_format in ("jpg", "jpeg"):
                 flat = Image.new("RGB", watermarked.size, (255, 255, 255))
                 flat.paste(watermarked, mask=watermarked.split()[-1])
@@ -288,8 +291,8 @@ class WatermarkTool:
                 "success": True,
                 "input_path": str(input_path),
                 "output_path": output_path,
-                "width": save_image.width,
-                "height": save_image.height,
+                "width": output_width,
+                "height": output_height,
             }
         except MemoryError:
             return _error("WM_MEMORY_LIMIT", "Image is too large to process safely")

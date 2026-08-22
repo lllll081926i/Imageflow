@@ -70,13 +70,23 @@ def ensure_tray(on_show: Callable[[], None], on_quit: Callable[[], None]) -> boo
             )
 
             def _run() -> None:
+                global _tray_icon
                 try:
                     icon.run()
                 except Exception:
-                    pass
+                    with _tray_lock:
+                        if _tray_icon is icon:
+                            _tray_icon = None
+                    # If the backend cannot keep a tray icon alive, make the
+                    # hidden window reachable again instead of leaving a
+                    # headless process behind.
+                    try:
+                        on_show()
+                    except Exception:
+                        pass
 
-            threading.Thread(target=_run, name="imageflow-tray", daemon=True).start()
             _tray_icon = icon
+            threading.Thread(target=_run, name="imageflow-tray", daemon=True).start()
             return True
         except Exception:
             return False

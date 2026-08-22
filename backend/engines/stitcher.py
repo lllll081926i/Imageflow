@@ -136,7 +136,12 @@ class Stitcher:
             probe_sizes = []
             for path in paths:
                 with Image.open(path) as probe:
-                    probe_sizes.append(probe.size)
+                    oriented = ImageOps.exif_transpose(probe)
+                    try:
+                        probe_sizes.append(oriented.size)
+                    finally:
+                        if oriented is not probe:
+                            oriented.close()
 
             if not target_length:
                 lengths = sorted(size[0] if direction == "vertical" else size[1] for size in probe_sizes)

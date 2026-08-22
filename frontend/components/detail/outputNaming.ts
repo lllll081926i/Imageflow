@@ -168,7 +168,7 @@ export const buildOutputRelPath = (
     if (suffix.startsWith('_ico')) {
         baseName = baseName.replace(/_ico\d+(?:-\d+)*$/i, '');
     }
-    const ext = (options.ext || extname(fileName)).toLowerCase();
+    const ext = (options.ext === undefined ? extname(fileName) : options.ext).toLowerCase();
     let name = buildOutputName(baseName, {
         template: options.template,
         prefix: options.prefix,

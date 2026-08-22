@@ -69,6 +69,7 @@ export async function runConvertBatch(options: {
     const totalTasks = isIcoFormat ? ctx.files.length * icoSizeGroups.length : ctx.total;
     let completed = 0;
     let failed = 0;
+    let cancelledItems = 0;
     let skipped = 0;
     let seq = 1;
     const chunkSize = ctx.getBatchChunkSize(ctx.files.length, icoSizeGroups.length);
@@ -150,7 +151,8 @@ export async function runConvertBatch(options: {
                 seq += 1;
             }
         }
-        if (ctx.cancelRequestedRef.current || chunk.length === 0) break;
+        if (ctx.cancelRequestedRef.current) break;
+        if (chunk.length === 0) continue;
         try {
             const res = chunk.length === 1
                 ? [await ctx.app.Convert!(chunk[0])]
@@ -164,6 +166,7 @@ export async function runConvertBatch(options: {
                 }
             });
             if (outcome.cancelled) {
+                cancelledItems += outcome.results.filter((item) => isCancellationError(item?.error)).length;
                 ctx.cancelRequestedRef.current = true;
                 ctx.setCancelRequested(true);
                 ctx.setProgressThrottled((completed / totalTasks) * 100);
@@ -191,7 +194,7 @@ export async function runConvertBatch(options: {
     const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
     ctx.flushProgress();
     if (cancelled || failed > 0 || skipped > 0) {
-        ctx.setLastMessage(summarizeBatchProgress(totalTasks, completed, failed, cancelled, '转换', extra));
+        ctx.setLastMessage(summarizeBatchProgress(totalTasks, completed, failed, cancelled, '转换', extra, cancelledItems));
     }
 }
 
@@ -239,6 +242,7 @@ export async function runCompressBatch(options: {
     } = options;
     let completed = 0;
     let failed = 0;
+    let cancelledItems = 0;
     let warnings = 0;
     let skipped = 0;
     let seq = 1;
@@ -286,7 +290,8 @@ export async function runCompressBatch(options: {
             } as models.CompressRequest);
             seq += 1;
         }
-        if (ctx.cancelRequestedRef.current || chunk.length === 0) break;
+        if (ctx.cancelRequestedRef.current) break;
+        if (chunk.length === 0) continue;
         try {
             const res = chunk.length === 1
                 ? [await ctx.app.Compress!(chunk[0])]
@@ -306,6 +311,7 @@ export async function runCompressBatch(options: {
                 }
             });
             if (outcome.cancelled) {
+                cancelledItems += outcome.results.filter((item) => isCancellationError(item?.error)).length;
                 ctx.cancelRequestedRef.current = true;
                 ctx.setCancelRequested(true);
                 ctx.setProgressThrottled((completed / ctx.total) * 100);
@@ -342,6 +348,6 @@ export async function runCompressBatch(options: {
     const extra = extraParts.length > 0 ? `（${extraParts.join('，')}）` : '';
     ctx.flushProgress();
     if (cancelled || failed > 0 || warnings > 0 || skipped > 0) {
-        ctx.setLastMessage(summarizeBatchProgress(ctx.total, completed, failed, cancelled, '压缩', extra));
+        ctx.setLastMessage(summarizeBatchProgress(ctx.total, completed, failed, cancelled, '压缩', extra, cancelledItems));
     }
 }

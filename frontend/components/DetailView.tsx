@@ -143,6 +143,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const [isProcessing, setIsProcessing] = useState(false);
     const [cancelRequested, setCancelRequested] = useState(false);
     const cancelRequestedRef = useRef(false);
+    const processingLockRef = useRef(false);
+    const processingRunIdRef = useRef(0);
     const {
         progress,
         setProgress,
@@ -618,7 +620,6 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const inputCount = dropResult?.files?.length ?? 0;
     const effectiveOutputDir = useMemo(() => {
         if (outputDir) return outputDir;
-        if (dropResult?.files?.[0]?.source_root) return dropResult.files[0].source_root;
         return '';
     }, [dropResult, outputDir]);
 
@@ -759,18 +760,61 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         }
     }, [isProcessing]);
 
+    // DetailView is keyed by the active tool.  Switching tools unmounts the
+    // old view, so explicitly cancel its backend task instead of allowing a
+    // stale run to continue writing files in the background.
+    useEffect(() => {
+        return () => {
+            if (!processingLockRef.current) return;
+            processingRunIdRef.current += 1;
+            cancelRequestedRef.current = true;
+            try {
+                const cancel = (getAppBindings() as any)?.CancelProcessing;
+                if (typeof cancel === 'function') void cancel();
+            } catch (err) {
+                console.error('Failed to cancel processing on view unmount:', err);
+            }
+        };
+    }, []);
+
     const handlePaletteExport = async (kind: 'palette' | 'combined') => {
         const file = dropResult?.files?.[0];
         if (!file) {
             showToast('请先拖入图片', 'error');
             return;
         }
+        if (!effectiveOutputDir) {
+            showToast('请先选择输出目录', 'error');
+            return;
+        }
         setPaletteBusy(true);
         try {
-            const stem = basename(file.input_path).replace(/\.[^.]+$/, '');
-            const dir = effectiveOutputDir || dirname(file.input_path);
-            const outPath = joinPath(dir, `${stem}_palette_${kind === 'palette' ? 'strip' : 'combined'}.png`);
+            const suffix = `_palette_${kind === 'palette' ? 'strip' : 'combined'}`;
+            const rel = buildOutputRelPath(file, {
+                ext: 'png',
+                suffix,
+                seq: 1,
+                op: 'palette',
+                template: outputSettings.output_template,
+                prefix: outputSettings.output_prefix,
+                preserveStructure: outputSettings.preserve_folder_structure,
+                date: new Date(),
+            });
+            const candidate = joinPath(effectiveOutputDir, rel);
             const app = getAppBindings();
+            let outPath = candidate;
+            if (app?.ResolveOutputPath) {
+                const resolved = await app.ResolveOutputPath({
+                    base_path: candidate,
+                    strategy: outputSettings.conflict_strategy,
+                    reserved: [],
+                });
+                if (outputSettings.conflict_strategy === 'skip' && resolved?.exists) {
+                    showToast('输出文件已存在，已跳过', 'info');
+                    return;
+                }
+                if (resolved?.success && resolved.output_path) outPath = normalizePath(resolved.output_path);
+            }
             const res = await app?.PaletteTool?.({
                 action: kind === 'palette' ? 'export_palette' : 'export_combined',
                 input_path: normalizePath(file.input_path),
@@ -781,7 +825,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             if (res?.success) {
                 showToast('已导出', 'success');
                 const openPath = (getAppBindings() as any)?.OpenPath;
-                if (typeof openPath === 'function') void openPath({ path: dir });
+                if (typeof openPath === 'function') void openPath({ path: effectiveOutputDir });
             } else {
                 showToast(res?.error || '导出失败', 'error');
             }
@@ -828,6 +872,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             return;
         }
 
+        // Acquire synchronously immediately before the first await.  React
+        // state updates are asynchronous, so relying on `isProcessing` alone
+        // lets two rapid clicks enter this function concurrently.
+        if (processingLockRef.current) return;
+        processingLockRef.current = true;
+        const runId = ++processingRunIdRef.current;
+        setIsProcessing(true);
+
         const appSettingsSnapshot = await loadOutputSettings();
         const preserveStructure = Boolean(appSettingsSnapshot.preserve_folder_structure);
         const outputTemplate = appSettingsSnapshot.output_template || defaultOutputSettings.output_template;
@@ -854,7 +906,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     const res = await appAny?.ResolveOutputPath?.({
                         base_path: normalized,
                         strategy: 'skip',
-                        reserved: [],
+                        reserved: Array.from(reservedPaths),
                     });
                     if (res?.success && res.exists) return '';
                 } catch (err) {
@@ -942,10 +994,23 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             return fallback;
         };
 
+        const resolveToolOutputPath = async (
+            file: DroppedFile,
+            options: { ext?: string; suffix?: string; op: string; seq: number },
+        ) => {
+            const rel = buildOutputRelPath(file, {
+                ...options,
+                template: outputTemplate,
+                prefix: outputPrefix,
+                preserveStructure,
+                date: batchTime,
+            });
+            return resolveUniquePath(joinPath(outDir, rel));
+        };
+
         currentRunFailedPathsRef.current = new Set<string>();
         setCompressStats(null);
         setRunSummary(null);
-        setIsProcessing(true);
         try {
             const files = useOverrideFiles
                 ? normalizedOverrideFiles
@@ -1574,12 +1639,24 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const sizeN = gridSizeMap[gridSize] ?? 3;
                 const fmt = (gridFormat || 'PNG').toLowerCase();
                 let failed = 0;
+                let skipped = 0;
+                let seq = 1;
                 for (const f of files) {
                     if (cancelRequestedRef.current) break;
+                    const outputDir = await resolveToolOutputPath(f, {
+                        ext: '', suffix: '_grid', op: 'grid', seq,
+                    });
+                    if (!outputDir) {
+                        skipped++;
+                        completed++;
+                        seq++;
+                        setProgress((completed / files.length) * 100);
+                        continue;
+                    }
                     try {
                         const res = await appAny.CutImageGrid({
                             input_path: normalizePath(f.input_path),
-                            output_dir: outDir,
+                            output_dir: outputDir,
                             grid_size: sizeN,
                             output_format: fmt,
                         });
@@ -1603,14 +1680,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         reportTaskFailure('宫格切图', f.input_path, err, '切图失败');
                     }
                     completed++;
+                    seq++;
                     setProgress((completed / files.length) * 100);
                 }
                 setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
                 const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed);
-                const extra = failed > 0 ? `（失败 ${failed}）` : '';
-                if (cancelled || failed > 0) {
+                const success = Math.max(0, files.length - failed - skipped);
+                const extraParts = [failed > 0 ? `失败 ${failed}` : '', skipped > 0 ? `跳过 ${skipped}` : ''].filter(Boolean);
+                const extra = extraParts.length ? `（${extraParts.join('，')}）` : '';
+                if (cancelled || failed > 0 || skipped > 0) {
                     setLastMessage(cancelled
                         ? `切图已停止：成功 ${success}/${files.length} 项${extra}`
                         : `切图失败：成功 ${success}/${files.length} 项${extra}`);
@@ -1628,14 +1707,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 }
                 const fmtLc = (splitParams.format || 'PNG').toLowerCase();
                 let failed = 0;
+                let skipped = 0;
+                let seq = 1;
                 let tiles = 0;
                 for (const f of files) {
                     if (cancelRequestedRef.current) break;
-                    const stem = basename(f.input_path).replace(/\.[^.]+$/, '') || 'output';
+                    const outputDir = await resolveToolOutputPath(f, {
+                        ext: '', suffix: '_split', op: 'split', seq,
+                    });
+                    if (!outputDir) {
+                        skipped++;
+                        completed++;
+                        seq++;
+                        setProgress((completed / files.length) * 100);
+                        continue;
+                    }
                     try {
                         const res = await appAny.SplitImage({
                             input_path: normalizePath(f.input_path),
-                            output_dir: joinPath(outDir, `${stem}_split`),
+                            output_dir: outputDir,
                             rows: splitParams.rows,
                             cols: splitParams.cols,
                             mode: splitParams.mode,
@@ -1663,17 +1753,18 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         reportTaskFailure('图片布局', f.input_path, err, '分割失败');
                     }
                     completed++;
+                    seq++;
                     setProgress((completed / files.length) * 100);
                 }
                 setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
                 const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed);
-                if (!cancelled && failed === 0) setLastMessage(`分割完成：${files.length} 张 → ${tiles} 块`);
-                else if (failed > 0 || cancelled) {
+                const success = Math.max(0, files.length - failed - skipped);
+                if (!cancelled && failed === 0 && skipped === 0) setLastMessage(`分割完成：${files.length} 张 → ${tiles} 块`);
+                else if (failed > 0 || skipped > 0 || cancelled) {
                     setLastMessage(cancelled
-                        ? `分割已停止：成功 ${success}/${files.length}`
-                        : `分割失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                        ? `分割已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
+                        : `分割失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
                 }
                 return;
             }
@@ -1685,14 +1776,25 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 }
                 const style: WatermarkStyle = wmParams;
                 let failed = 0;
+                let skipped = 0;
+                let seq = 1;
                 for (const f of files) {
                     if (cancelRequestedRef.current) break;
-                    const stem = basename(f.input_path).replace(/\.[^.]+$/, '') || 'output';
+                    const outputPath = await resolveToolOutputPath(f, {
+                        ext: 'png', suffix: '_wm', op: 'watermark', seq,
+                    });
+                    if (!outputPath) {
+                        skipped++;
+                        completed++;
+                        seq++;
+                        setProgress((completed / files.length) * 100);
+                        continue;
+                    }
                     try {
                         const res = await appAny.AddWatermark({
                             action: 'apply',
                             input_path: normalizePath(f.input_path),
-                            output_path: joinPath(outDir, `${stem}_wm.png`),
+                            output_path: outputPath,
                             text: style.text,
                             font_name: style.fontName,
                             size_mode: style.sizeMode,
@@ -1729,16 +1831,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         reportTaskFailure('批量水印', f.input_path, err, '水印失败');
                     }
                     completed++;
+                    seq++;
                     setProgress((completed / files.length) * 100);
                 }
                 setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
                 const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed);
-                if (!(cancelled || failed > 0)) setLastMessage(`水印完成：成功 ${success}/${files.length}`);
+                const success = Math.max(0, files.length - failed - skipped);
+                if (!(cancelled || failed > 0 || skipped > 0)) setLastMessage(`水印完成：成功 ${success}/${files.length}`);
                 else setLastMessage(cancelled
-                    ? `水印已停止：成功 ${success}/${files.length}`
-                    : `水印失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                    ? `水印已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
+                    : `水印失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
                 return;
             }
 
@@ -1749,9 +1852,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 }
                 let failed = 0;
                 const SAFE_OUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff']);
+                let skipped = 0;
+                let seq = 1;
                 for (const f of files) {
                     if (cancelRequestedRef.current) break;
-                    const stem = basename(f.input_path);
                     const origExt = extname(f.input_path) || 'png';
                     let outExt: string;
                     if (resizeParams.format === 'auto') {
@@ -1759,10 +1863,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     } else {
                         outExt = resizeParams.format.toLowerCase();
                     }
+                    const outputPath = await resolveToolOutputPath(f, {
+                        ext: outExt, suffix: '_resized', op: 'resize', seq,
+                    });
+                    if (!outputPath) {
+                        skipped++;
+                        completed++;
+                        seq++;
+                        setProgress((completed / files.length) * 100);
+                        continue;
+                    }
                     try {
                         const res = await appAny.ResizeImage({
                             input_path: normalizePath(f.input_path),
-                            output_path: joinPath(outDir, `${stem}_resized.${outExt}`),
+                            output_path: outputPath,
                             mode: resizeParams.mode,
                             value: resizeParams.value,
                             output_format: resizeParams.format === 'auto' ? undefined : resizeParams.format.toLowerCase(),
@@ -1787,16 +1901,17 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         reportTaskFailure('尺寸调整', f.input_path, err, '调整失败');
                     }
                     completed++;
+                    seq++;
                     setProgress((completed / files.length) * 100);
                 }
                 setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped: 0, outputDir: outDir });
+                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
                 const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed);
-                if (!(cancelled || failed > 0)) setLastMessage(`尺寸调整完成：成功 ${success}/${files.length}`);
+                const success = Math.max(0, files.length - failed - skipped);
+                if (!(cancelled || failed > 0 || skipped > 0)) setLastMessage(`尺寸调整完成：成功 ${success}/${files.length}`);
                 else setLastMessage(cancelled
-                    ? `已停止：成功 ${success}/${files.length}`
-                    : `失败：成功 ${success}/${files.length}（失败 ${failed}）`);
+                    ? `已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
+                    : `失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
                 return;
             }
 
@@ -1810,11 +1925,22 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 try {
-                    const firstStem = basename(files[0].input_path).replace(/\.[^.]+$/, '') || 'output';
+                    const outputPath = await resolveToolOutputPath(files[0], {
+                        ext: stitchParams.outputFormat.toLowerCase(),
+                        suffix: '_stitched',
+                        op: 'stitch',
+                        seq: 1,
+                    });
+                    if (!outputPath) {
+                        setRunSummary({ total: 1, failed: 0, skipped: 1, outputDir: outDir });
+                        setProgress(100);
+                        setLastMessage('输出文件已存在，已跳过（冲突策略：跳过同名）');
+                        return;
+                    }
                     const lengthKey = stitchParams.direction === 'vertical' ? 'target_width' : 'target_height';
                     const payload: Record<string, unknown> = {
                         input_paths: files.map((f) => normalizePath(f.input_path)),
-                        output_path: joinPath(outDir, `${firstStem}_stitched.${stitchParams.outputFormat.toLowerCase()}`),
+                        output_path: outputPath,
                         direction: stitchParams.direction,
                         gap: stitchParams.gap,
                         background: stitchParams.background,
@@ -1860,7 +1986,20 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 try {
-                    const name = (rtParams.fileName.trim() || 'richtext').replace(/[\\/:*?"<>|]/g, '_');
+                    const name = buildOutputName(stripExtension(rtParams.fileName.trim() || 'richtext'), {
+                        template: outputTemplate,
+                        prefix: outputPrefix,
+                        seq: 1,
+                        op: 'richtext',
+                        date: batchTime,
+                    });
+                    const outputPath = await resolveUniquePath(joinPath(outDir, `${name}.png`));
+                    if (!outputPath) {
+                        setRunSummary({ total: 1, failed: 0, skipped: 1, outputDir: outDir });
+                        setProgress(100);
+                        setLastMessage('输出文件已存在，已跳过（冲突策略：跳过同名）');
+                        return;
+                    }
                     const res = await appAny.RenderRichText({
                         blocks: rtParams.blocks as unknown as Array<Record<string, any>>,
                         width: rtParams.width,
@@ -1872,7 +2011,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                         font_size: rtParams.fontSize,
                         line_height: rtParams.lineHeight,
                         font_name: rtParams.fontName,
-                        output_path: joinPath(outDir, `${name}.png`),
+                        output_path: outputPath,
                     });
                     setProgress(100);
                     if (!res?.success) {
@@ -1905,6 +2044,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 setLastMessage(typeof e?.message === 'string' ? e.message : '处理失败');
             }
         } finally {
+            if (runId !== processingRunIdRef.current) return;
             const failedSet = currentRunFailedPathsRef.current;
             if (failedSet && currentRunFiles.length > 0) {
                 const nextFailed = currentRunFiles.filter((f) => failedSet.has(normalizePath(f.input_path)));
@@ -1931,6 +2071,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             cancelRequestedRef.current = false;
             setCancelRequested(false);
             setIsProcessing(false);
+            processingLockRef.current = false;
         }
     };
 
