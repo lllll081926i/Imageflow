@@ -217,15 +217,16 @@ class DesktopAPITests(unittest.TestCase):
 
     def test_resolve_output_path_strategies(self):
         app = create_app()
-        existing = Path(self.temp_dir.name) / "exists.png"
+        temp_path = Path(self.temp_dir.name).resolve()
+        existing = temp_path / "exists.png"
         existing.write_bytes(b"x")
-        missing = Path(self.temp_dir.name) / "missing.png"
+        missing = temp_path / "missing.png"
 
         overwrite = app.resolve_output_path(
             {"base_path": str(existing), "strategy": "overwrite"}
         )
         self.assertTrue(overwrite["success"])
-        self.assertEqual(Path(overwrite["output_path"]), existing)
+        self.assertEqual(Path(overwrite["output_path"]).resolve(), existing)
         self.assertTrue(overwrite["exists"])
 
         skip_missing = app.resolve_output_path({"base_path": str(missing), "strategy": "skip"})
@@ -238,14 +239,15 @@ class DesktopAPITests(unittest.TestCase):
 
         renamed = app.resolve_output_path({"base_path": str(existing)})
         self.assertTrue(renamed["success"])
-        self.assertNotEqual(Path(renamed["output_path"]), existing)
+        self.assertNotEqual(Path(renamed["output_path"]).resolve(), existing)
         self.assertTrue(Path(renamed["output_path"]).exists() is False)
 
     def test_resolve_output_paths_batch_reports_exists_flags(self):
         app = create_app()
-        existing = Path(self.temp_dir.name) / "batch-exists.png"
+        temp_path = Path(self.temp_dir.name).resolve()
+        existing = temp_path / "batch-exists.png"
         existing.write_bytes(b"x")
-        missing = Path(self.temp_dir.name) / "batch-missing.png"
+        missing = temp_path / "batch-missing.png"
 
         result = app.resolve_output_paths(
             {
@@ -255,13 +257,13 @@ class DesktopAPITests(unittest.TestCase):
         )
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["paths"], [str(existing), str(missing)])
+        self.assertEqual([str(Path(p).resolve()) for p in result["paths"]], [str(existing), str(missing)])
         self.assertEqual(result["exists"], [True, False])
 
         renamed = app.resolve_output_paths({"items": [str(existing)]})
         self.assertTrue(renamed["success"])
         self.assertNotIn("exists", renamed)
-        self.assertNotEqual(Path(renamed["paths"][0]), existing)
+        self.assertNotEqual(Path(renamed["paths"][0]).resolve(), existing)
 
     def test_generate_pdf_preserves_image_object_payloads_when_normalizing_paths(self):
         app = create_app()
