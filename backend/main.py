@@ -19,17 +19,19 @@ def main() -> None:
     x = y = None
     try:
         from backend.infrastructure.settings_store import load_settings
-        from backend.infrastructure.window_state import load_window_state
+        from backend.infrastructure.window_state import clamp_window_state, load_window_state
 
         settings = load_settings()
         if getattr(settings, "remember_window_state", True):
             state = load_window_state()
-            width = max(900, int(state.get("width") or width))
-            height = max(560, int(state.get("height") or height))
-            if "x" in state:
-                x = int(state["x"])
-            if "y" in state:
-                y = int(state["y"])
+            if state:
+                state = clamp_window_state(state)
+                width = int(state.get("width") or width)
+                height = int(state.get("height") or height)
+                if "x" in state:
+                    x = int(state["x"])
+                if "y" in state:
+                    y = int(state["y"])
     except Exception:
         pass
 

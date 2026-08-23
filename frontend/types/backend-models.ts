@@ -172,6 +172,8 @@ export namespace models {
 	export class ExpandDroppedPathsResult {
 	    files: DroppedFile[];
 	    has_directory: boolean;
+	    truncated?: boolean;
+	    max_files?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ExpandDroppedPathsResult(source);
@@ -181,6 +183,8 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.files = this.convertValues(source["files"], DroppedFile);
 	        this.has_directory = source["has_directory"];
+	        this.truncated = source["truncated"];
+	        this.max_files = source["max_files"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

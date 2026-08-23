@@ -164,6 +164,36 @@ class CompressorTests(unittest.TestCase):
             exif_out = out_img.getexif()
             self.assertIsNone(exif_out.get(0x010F))
 
+    def test_webp_strip_metadata_flag_respected(self):
+        src = self._path("input.webp")
+        img = Image.new("RGB", (32, 32), (255, 0, 0))
+        exif = Image.Exif()
+        exif[0x010F] = "UnitTestMake"
+        img.save(src, format="WEBP", exif=exif)
+
+        compressor = ImageCompressor()
+        out_keep = self._path("out_keep.webp")
+        keep = compressor.compress(
+            input_path=src,
+            output_path=out_keep,
+            level=CompressionLevel.MEDIUM,
+            strip_metadata=False,
+        )
+        self.assertTrue(keep.get("success"))
+        with Image.open(out_keep) as out_img:
+            self.assertEqual(out_img.getexif().get(0x010F), "UnitTestMake")
+
+        out_strip = self._path("out_strip.webp")
+        strip = compressor.compress(
+            input_path=src,
+            output_path=out_strip,
+            level=CompressionLevel.MEDIUM,
+            strip_metadata=True,
+        )
+        self.assertTrue(strip.get("success"))
+        with Image.open(out_strip) as out_img:
+            self.assertIsNone(out_img.getexif().get(0x010F))
+
     def test_jpeg_metadata_stripping_streams_without_unbounded_read(self):
         # SOI + APP1(EXIF) + COM + APP0(kept) + SOS + image bytes + EOI.
         jpeg_bytes = (
@@ -299,7 +329,7 @@ class CompressorTests(unittest.TestCase):
         self.assertEqual(result.get("compressed_size"), len(original_bytes))
         self.assertIn("保留原文件", str(result.get("warning", "")))
 
-    def test_fallback_compression_keeps_original_when_strip_metadata_requested(self):
+    def test_fallback_compression_does_not_restore_original_when_strip_metadata_requested(self):
         src = self._path("icon.ico")
         out = self._path("icon_compressed.ico")
         Image.new("RGBA", (64, 64), (255, 0, 0, 255)).save(
@@ -309,7 +339,14 @@ class CompressorTests(unittest.TestCase):
         )
         original_bytes = Path(src).read_bytes()
 
-        result = ImageCompressor().compress(
+        compressor = ImageCompressor()
+
+        def write_larger_candidate(_img, _input_path, output_path, *_args, **_kwargs):
+            Path(output_path).write_bytes(original_bytes + b"metadata-stripped-candidate")
+            return ""
+
+        compressor._compress_fallback = write_larger_candidate
+        result = compressor.compress(
             input_path=src,
             output_path=out,
             level=CompressionLevel.MEDIUM,
@@ -317,9 +354,9 @@ class CompressorTests(unittest.TestCase):
         )
 
         self.assertTrue(result.get("success"))
-        self.assertEqual(Path(out).read_bytes(), original_bytes)
-        self.assertEqual(result.get("compressed_size"), len(original_bytes))
-        self.assertIn("保留原文件", str(result.get("warning", "")))
+        self.assertNotEqual(Path(out).read_bytes(), original_bytes)
+        self.assertEqual(result.get("compressed_size"), len(original_bytes) + 27)
+        self.assertNotIn("保留原文件", str(result.get("warning", "")))
 
     def test_pngquant_rgb_path_closes_converted_and_quantized_images(self):
         class FakeImage:

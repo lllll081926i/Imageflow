@@ -8,6 +8,8 @@ export type DroppedFile = {
 export type ExpandDroppedPathsResult = {
     files: DroppedFile[];
     has_directory: boolean;
+    truncated?: boolean;
+    max_files?: number;
 };
 
 export type OutputSettings = {

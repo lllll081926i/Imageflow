@@ -118,12 +118,12 @@ export const PdfSettings = memo(({
                     <SegmentedControl options={['不压缩', '轻度', '标准', '强力']} value={compression} onChange={setCompression} />
                 </div>
                 <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">文档加密 (可选)</label>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">兼容性打开口令（128-bit RC4，非强加密）</label>
                     <input
                         type="password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="留空则不加密"
+                        placeholder="留空则不设置打开口令"
                         autoComplete="new-password"
                         className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#007AFF]/50 focus:border-[#007AFF] dark:text-white transition-all"
                     />

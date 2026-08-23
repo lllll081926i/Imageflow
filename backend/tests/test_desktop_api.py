@@ -4,6 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -17,10 +18,14 @@ class DesktopAPITests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.settings_file = os.path.join(self.temp_dir.name, "settings.json")
-        os.environ["IMAGEFLOW_SETTINGS_FILE"] = self.settings_file
+        self.settings_env = mock.patch.dict(
+            os.environ,
+            {"IMAGEFLOW_SETTINGS_FILE": self.settings_file},
+        )
+        self.settings_env.start()
 
     def tearDown(self):
-        os.environ.pop("IMAGEFLOW_SETTINGS_FILE", None)
+        self.settings_env.stop()
         self.temp_dir.cleanup()
 
     def test_ping_and_settings_roundtrip(self):
@@ -237,6 +242,16 @@ class DesktopAPITests(unittest.TestCase):
         self.assertTrue(skip_existing["success"])
         self.assertTrue(skip_existing["exists"])
 
+        skip_reserved = app.resolve_output_path(
+            {
+                "base_path": str(missing),
+                "strategy": "skip",
+                "reserved": [str(missing)],
+            }
+        )
+        self.assertTrue(skip_reserved["success"])
+        self.assertTrue(skip_reserved["exists"])
+
         renamed = app.resolve_output_path({"base_path": str(existing)})
         self.assertTrue(renamed["success"])
         self.assertNotEqual(Path(renamed["output_path"]).resolve(), existing)
@@ -259,6 +274,25 @@ class DesktopAPITests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual([str(Path(p).resolve()) for p in result["paths"]], [str(existing), str(missing)])
         self.assertEqual(result["exists"], [True, False])
+
+        duplicate = app.resolve_output_paths(
+            {
+                "items": [str(missing), str(missing)],
+                "strategy": "skip",
+            }
+        )
+        self.assertTrue(duplicate["success"])
+        self.assertEqual(duplicate["exists"], [False, True])
+
+        reserved = app.resolve_output_paths(
+            {
+                "items": [str(missing)],
+                "strategy": "skip",
+                "reserved": [str(missing)],
+            }
+        )
+        self.assertTrue(reserved["success"])
+        self.assertEqual(reserved["exists"], [True])
 
         renamed = app.resolve_output_paths({"items": [str(existing)]})
         self.assertTrue(renamed["success"])
@@ -292,6 +326,19 @@ class DesktopAPITests(unittest.TestCase):
             self.assertEqual(captured_payload["payload"]["images"], [{"path": image_path}])
         finally:
             desktop_api.execute_engine = original_execute_engine
+
+    def test_rich_text_block_paths_are_normalized_and_reject_parent_traversal(self):
+        image_path = str((Path(self.temp_dir.name) / "inline.png").resolve())
+
+        normalized = desktop_api._normalize_payload_paths(
+            {"blocks": [{"type": "image", "path": image_path}]}
+        )
+        self.assertEqual(normalized["blocks"][0]["path"], image_path)
+
+        with self.assertRaisesRegex(ValueError, "父级目录"):
+            desktop_api._normalize_payload_paths(
+                {"blocks": [{"type": "image", "path": "../outside.png"}]}
+            )
 
     def test_resolve_file_paths_extracts_absolute_paths_from_runtime_payloads(self):
         app = create_app()

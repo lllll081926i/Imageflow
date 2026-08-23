@@ -159,8 +159,9 @@ def _normalize_payload_paths(payload: Any) -> Any:
     for field in ("input_paths", "image_paths"):
         if field in normalized and isinstance(normalized[field], list):
             normalized[field] = [normalize_user_supplied_path(str(item)) for item in normalized[field] if str(item).strip()]
-    if isinstance(normalized.get("images"), list):
-        normalized["images"] = [_normalize_payload_paths(item) for item in normalized["images"]]
+    for field in ("images", "blocks"):
+        if isinstance(normalized.get(field), list):
+            normalized[field] = [_normalize_payload_paths(item) for item in normalized[field]]
     return normalized
 
 
@@ -543,7 +544,12 @@ class DesktopAPI:
     def resolve_output_path(self, payload: dict) -> dict:
         try:
             base = normalize_user_supplied_path(str(payload.get("base_path") or ""))
-            reserved = [str(item) for item in payload.get("reserved") or []]
+            reserved = [
+                normalize_user_supplied_path(str(item))
+                for item in payload.get("reserved") or []
+                if str(item).strip()
+            ]
+            reserved_keys = {_recent_path_key(item) for item in reserved}
             strategy = str(payload.get("strategy") or "rename").strip().lower()
             if strategy == "overwrite":
                 return {"success": True, "output_path": base, "exists": os.path.exists(base)}
@@ -551,7 +557,7 @@ class DesktopAPI:
                 return {
                     "success": True,
                     "output_path": base,
-                    "exists": os.path.exists(base),
+                    "exists": os.path.exists(base) or _recent_path_key(base) in reserved_keys,
                 }
             output_path = resolve_output_path(base, reserved)
             return {"success": True, "output_path": output_path}
@@ -565,7 +571,12 @@ class DesktopAPI:
             if not isinstance(items, list):
                 return {"success": False, "error": "Missing items list", "paths": []}
             strategy = str(payload.get("strategy") or "rename").strip().lower()
-            reserved = [str(item) for item in (payload.get("reserved") or []) if str(item).strip()]
+            reserved = [
+                normalize_user_supplied_path(str(item))
+                for item in (payload.get("reserved") or [])
+                if str(item).strip()
+            ]
+            reserved_keys = {_recent_path_key(item) for item in reserved}
             resolved: list[str] = []
             exists_flags: list[bool] | None = [] if strategy in ("overwrite", "skip") else None
             for raw in items:
@@ -577,7 +588,12 @@ class DesktopAPI:
                     reserved.append(output_path)
                 resolved.append(output_path)
                 if exists_flags is not None:
-                    exists_flags.append(os.path.exists(output_path))
+                    exists = os.path.exists(output_path)
+                    if strategy == "skip":
+                        key = _recent_path_key(output_path)
+                        exists = exists or key in reserved_keys
+                        reserved_keys.add(key)
+                    exists_flags.append(exists)
             result = {"success": True, "paths": resolved}
             if exists_flags is not None:
                 result["exists"] = exists_flags

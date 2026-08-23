@@ -192,6 +192,116 @@ describe('resolveSelectedFilePaths', () => {
 });
 
 describe('FileDropZone', () => {
+    it('并发拖入的目录扫描即使较晚完成也会合并完整结果', async () => {
+        let resolveFirst!: (value: any) => void;
+        let resolveSecond!: (value: any) => void;
+        const firstResult = new Promise((resolve) => { resolveFirst = resolve; });
+        const secondResult = new Promise((resolve) => { resolveSecond = resolve; });
+        const expandDroppedPaths = vi.fn()
+            .mockReturnValueOnce(firstResult)
+            .mockReturnValueOnce(secondResult);
+        const onPathsExpanded = vi.fn();
+        vi.mocked(getAppBindings).mockReturnValue({ ExpandDroppedPaths: expandDroppedPaths } as any);
+
+        const { container, root } = await renderElement(React.createElement(FileDropZone, {
+            onPathsExpanded,
+        }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+        const drop = async (file: any) => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', { value: { files: [file] }, configurable: true });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+        };
+
+        await act(async () => {
+            await drop({ name: 'folder-a', size: 0, lastModified: 1, path: 'D:/folder-a' });
+            await drop({ name: 'b.png', size: 2, lastModified: 2, path: 'D:/b.png' });
+        });
+        await act(async () => {
+            resolveSecond({
+                has_directory: false,
+                files: [{ input_path: 'D:/b.png', source_root: '', relative_path: 'b.png', is_from_dir_drop: false, size: 2, mod_time: 2 }],
+            });
+            await flushMicrotasks();
+            resolveFirst({
+                has_directory: true,
+                files: [{ input_path: 'D:/folder-a/a.png', source_root: 'D:/folder-a', relative_path: 'a.png', is_from_dir_drop: true, size: 3, mod_time: 3 }],
+            });
+            await flushMicrotasks();
+        });
+
+        const lastResult = onPathsExpanded.mock.calls.at(-1)?.[0];
+        expect(lastResult.has_directory).toBe(true);
+        expect(lastResult.files.map((file: any) => file.input_path)).toEqual(expect.arrayContaining([
+            'D:/folder-a/a.png',
+            'D:/b.png',
+        ]));
+        expect(lastResult.files.map((file: any) => file.input_path)).not.toContain('D:/folder-a');
+
+        await act(async () => { root.unmount(); await flushMicrotasks(); });
+    });
+
+    it('目录扫描达到上限时显示截断提示并保留结果标记', async () => {
+        const onPathsExpanded = vi.fn();
+        vi.mocked(getAppBindings).mockReturnValue({
+            ExpandDroppedPaths: vi.fn().mockResolvedValue({
+                has_directory: true,
+                truncated: true,
+                max_files: 10000,
+                files: [{ input_path: 'D:/batch/a.png', source_root: 'D:/batch', relative_path: 'a.png', is_from_dir_drop: true, size: 1, mod_time: 1 }],
+            }),
+        } as any);
+        const { container, root } = await renderElement(React.createElement(FileDropZone, { onPathsExpanded }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [{ name: 'batch', size: 0, lastModified: 1, path: 'D:/batch' }] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+            await flushMicrotasks();
+        });
+
+        expect(container.textContent).toContain('最多加载 10000 个文件');
+        expect(onPathsExpanded.mock.calls.at(-1)?.[0]).toMatchObject({ truncated: true, max_files: 10000 });
+        await act(async () => { root.unmount(); await flushMicrotasks(); });
+    });
+
+    it('删除最后一个目录后同步清除 has_directory', async () => {
+        const onPathsExpanded = vi.fn();
+        vi.mocked(getAppBindings).mockReturnValue({
+            ExpandDroppedPaths: vi.fn().mockResolvedValue({
+                has_directory: true,
+                files: [{ input_path: 'D:/batch/a.png', source_root: 'D:/batch', relative_path: 'a.png', is_from_dir_drop: true, size: 1, mod_time: 1 }],
+            }),
+        } as any);
+        const { container, root } = await renderElement(React.createElement(FileDropZone, { onPathsExpanded }));
+        const dropTarget = container.firstElementChild as HTMLElement;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [{ name: 'batch', size: 0, lastModified: 1, path: 'D:/batch' }] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+            await flushMicrotasks();
+        });
+        const removeFolderButton = container.querySelector('div[role="button"] button') as HTMLButtonElement;
+        await act(async () => {
+            removeFolderButton.click();
+            await flushMicrotasks();
+        });
+
+        expect(onPathsExpanded.mock.calls.at(-1)?.[0]).toMatchObject({ files: [], has_directory: false });
+        await act(async () => { root.unmount(); await flushMicrotasks(); });
+    });
+
     it('拖入文件后在等待运行时路径解析时展示进行中状态', async () => {
         vi.useFakeTimers();
         const runtime = {

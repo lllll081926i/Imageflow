@@ -476,8 +476,6 @@ class ImageCompressor:
 
             engine = str(engine or "").strip().lower()
             warning = ""
-            fallback_used = False
-
             if format_type in ["JPEG", "JPG"]:
                 warning = self._compress_jpeg(
                     img,
@@ -511,7 +509,6 @@ class ImageCompressor:
                 )
             else:
                 # Fallback to Pillow for other formats
-                fallback_used = True
                 warning = self._compress_fallback(
                     img,
                     input_path,
@@ -532,7 +529,7 @@ class ImageCompressor:
             if (
                 original_size > 0
                 and candidate_size > original_size
-                and (not strip_metadata or fallback_used)
+                and not strip_metadata
                 and not resize_applied
             ):
                 warning = _append_warning(warning, "压缩结果大于原图，已保留原文件内容")
@@ -941,13 +938,14 @@ class ImageCompressor:
         logger.info(f"Compressing WEBP (level: {level})")
 
         quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
+        metadata_kwargs = self._metadata_save_kwargs(img, strip_metadata)
 
         def save_once(q):
             if level == CompressionLevel.LOSSLESS:
-                save_kwargs = {"format": "WEBP", "lossless": True, "method": 6}
+                save_kwargs = {"format": "WEBP", "lossless": True, "method": 6, **metadata_kwargs}
             else:
                 q2 = max(1, min(100, int(q)))
-                save_kwargs = {"format": "WEBP", "quality": q2, "method": 6}
+                save_kwargs = {"format": "WEBP", "quality": q2, "method": 6, **metadata_kwargs}
             img.save(output_path, **save_kwargs)
 
         if target_bytes > 0 and level == CompressionLevel.LOSSLESS:
@@ -1013,17 +1011,18 @@ class ImageCompressor:
         logger.warning(f"Unsupported format, using fallback compression")
 
         quality = CompressionLevel.get_quality(level, getattr(self, '_quality_override', None))
+        metadata_kwargs = self._metadata_save_kwargs(img, strip_metadata)
 
         # Try to save with optimization
         try:
-            save_kwargs = {"format": img.format, "optimize": True}
+            save_kwargs = {"format": img.format, "optimize": True, **metadata_kwargs}
             if level != CompressionLevel.LOSSLESS:
                 save_kwargs["quality"] = quality
             img.save(output_path, **save_kwargs)
         except Exception as e:
             # Just save without optimization
             logger.warning(f"Optimization failed: {e}, saving without optimization")
-            img.save(output_path)
+            img.save(output_path, format=img.format, **metadata_kwargs)
 
         if target_bytes > 0:
             try:
@@ -1033,6 +1032,18 @@ class ImageCompressor:
                 logger.debug("Failed to stat fallback output during target size check: %s", output_path)
             return f"目标大小 {int(target_bytes / 1024)}KB 未达成，已输出最小可得文件"
         return ""
+
+    @staticmethod
+    def _metadata_save_kwargs(img, strip_metadata=False):
+        """Return metadata fields Pillow can preserve across supported encoders."""
+        if strip_metadata:
+            return {}
+        info = getattr(img, "info", {}) or {}
+        return {
+            key: info[key]
+            for key in ("exif", "icc_profile", "xmp")
+            if info.get(key) not in (None, b"", "")
+        }
 
 
 def process(input_data):

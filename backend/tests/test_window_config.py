@@ -8,6 +8,7 @@ from pathlib import Path
 import backend.main as main_module
 from backend.host.window import resolve_frontend_entry
 from backend.infrastructure import window_ops
+from backend.infrastructure.window_state import clamp_window_state
 
 
 class WindowConfigTests(unittest.TestCase):
@@ -20,6 +21,22 @@ class WindowConfigTests(unittest.TestCase):
     def test_prefers_explicit_frontend_url(self):
         entry = resolve_frontend_entry(frontend_url="http://127.0.0.1:5173")
         self.assertEqual(entry, "http://127.0.0.1:5173")
+
+    def test_clamps_restored_window_to_virtual_screen(self):
+        state = clamp_window_state(
+            {"width": 5000, "height": 3000, "x": 9000, "y": -4000},
+            bounds=(-1920, 0, 3840, 1080),
+        )
+
+        self.assertEqual(state, {"width": 3840, "height": 1080, "x": -1920, "y": 0})
+
+    def test_clamp_window_state_keeps_negative_monitor_coordinates(self):
+        state = clamp_window_state(
+            {"width": 1200, "height": 800, "x": -1600, "y": 100},
+            bounds=(-1920, 0, 3840, 1080),
+        )
+
+        self.assertEqual(state, {"width": 1200, "height": 800, "x": -1600, "y": 100})
 
     def test_uses_environment_frontend_url_when_present(self):
         import os

@@ -145,6 +145,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const cancelRequestedRef = useRef(false);
     const processingLockRef = useRef(false);
     const processingRunIdRef = useRef(0);
+    const expansionCountRef = useRef(0);
+    const handleExpansionStateChange = useCallback((expanding: boolean) => {
+        expansionCountRef.current = expanding
+            ? expansionCountRef.current + 1
+            : Math.max(0, expansionCountRef.current - 1);
+    }, []);
     const {
         progress,
         setProgress,
@@ -839,6 +845,10 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
 
     const handleStartProcessing = async (overrideFiles?: DroppedFile[]) => {
         if (isProcessing) return;
+        if (!Array.isArray(overrideFiles) && expansionCountRef.current > 0) {
+            setLastMessage('正在展开文件夹，请稍候再开始处理');
+            return;
+        }
         cancelRequestedRef.current = false;
         setCancelRequested(false);
         setLastMessage('');
@@ -902,6 +912,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 return normalized;
             }
             if (conflictStrategy === 'skip') {
+                if (reservedPaths.has(normalized)) return '';
                 try {
                     const res = await appAny?.ResolveOutputPath?.({
                         base_path: normalized,
@@ -960,7 +971,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     ) {
                         const existsFlags = res.exists;
                         return normalized.map((item, idx) => {
-                            if (existsFlags[idx]) return '';
+                            if (existsFlags[idx] || reservedPaths.has(item)) return '';
                             reservedPaths.add(item);
                             return item;
                         });
@@ -2085,6 +2096,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         <FileDropZone
             isActive={isActive}
             onPathsExpanded={handlePathsExpanded}
+            onExpansionStateChange={handleExpansionStateChange}
             acceptedFormats={acceptedInputFormats}
             fileDialogFilters={inputFileDialogFilters}
             allowMultiple={true}

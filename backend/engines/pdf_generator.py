@@ -183,7 +183,8 @@ class PDFGenerator:
             doc_kwargs = {}
             safe_password = str(user_password or '').strip()
             if safe_password:
-                # Use a distinct owner key and 128-bit revision-3 encryption;
+                # ReportLab provides compatibility-oriented 128-bit RC4 here,
+                # not modern strong PDF encryption. Keep the owner key distinct.
                 # the old shorthand selected 40-bit RC4 with all permissions
                 # enabled and made the owner password identical to the user
                 # password.

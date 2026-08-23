@@ -3,12 +3,25 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from backend.infrastructure import engine_loader
 from backend.app import create_app
 
 
 class EngineBridgeTests(unittest.TestCase):
+
+    def setUp(self):
+        self.settings_dir = tempfile.TemporaryDirectory()
+        self.settings_env = mock.patch.dict(
+            os.environ,
+            {"IMAGEFLOW_SETTINGS_FILE": str(Path(self.settings_dir.name) / "settings.json")},
+        )
+        self.settings_env.start()
+
+    def tearDown(self):
+        self.settings_env.stop()
+        self.settings_dir.cleanup()
 
     def test_convert_uses_python_engine_module(self):
         app = create_app()

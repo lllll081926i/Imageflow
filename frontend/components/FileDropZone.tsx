@@ -10,6 +10,7 @@ import { useThumbnail, usePreviewImage } from './thumbnails';
 interface FileDropZoneProps {
     onFilesSelected?: (files: File[]) => void;
     onPathsExpanded?: (result: ExpandDroppedPathsResult) => void;
+    onExpansionStateChange?: (expanding: boolean) => void;
     onItemSelect?: (file: DroppedFile) => void;
     selectedPath?: string;
     acceptedFormats?: string;
@@ -45,6 +46,8 @@ type SortOrder = 'asc' | 'desc';
 type ExpandDroppedPathsResult = {
     files: DroppedFile[];
     has_directory: boolean;
+    truncated?: boolean;
+    max_files?: number;
 };
 
 type FileTreeNode = {
@@ -456,6 +459,7 @@ const TreeNode: React.FC<TreeNodeProps> = memo(({
 const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({ 
     onFilesSelected, 
     onPathsExpanded,
+    onExpansionStateChange,
     onItemSelect,
     selectedPath,
     acceptedFormats = "image/*,.svg,.avif,.heic,.heif,.ico",
@@ -477,7 +481,6 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
     const directoryInputRef = useRef<HTMLInputElement>(null);
     const sortButtonRef = useRef<HTMLButtonElement>(null);
     const previewResultRef = useRef<ExpandDroppedPathsResult | null>(null);
-    const expandGenerationRef = useRef(0);
     const runtimeDropMarkerRef = useRef<RuntimeDropMarker | null>(null);
     const runtimeDropTimeoutRef = useRef<number | null>(null);
     const selectedKey = selectedPath ? normalizePath(selectedPath) : '';
@@ -506,30 +509,51 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                 ...previous,
                 ...f,
                 input_path: previous.input_path || f.input_path,
+                source_root: f.source_root || previous.source_root,
+                relative_path: f.relative_path || previous.relative_path,
+                is_from_dir_drop: Boolean(f.is_from_dir_drop || previous.is_from_dir_drop),
                 size: f.size || previous.size,
                 mod_time: f.mod_time || previous.mod_time,
             });
         }
+        const expandedDirectoryRoots = new Set(
+            incoming.files
+                .filter((file) => file.is_from_dir_drop && file.source_root)
+                .map((file) => pathKey(file.source_root)),
+        );
+        for (const rootKey of expandedDirectoryRoots) {
+            const placeholder = byPath.get(rootKey);
+            if (placeholder && !placeholder.is_from_dir_drop) {
+                byPath.delete(rootKey);
+            }
+        }
+        const truncated = Boolean(base.truncated || incoming.truncated);
         return {
             has_directory: base.has_directory || incoming.has_directory,
             files: Array.from(byPath.values()),
+            ...(truncated ? {
+                truncated: true,
+                max_files: incoming.max_files ?? base.max_files,
+            } : {}),
         };
     };
     const snapshotSignature = useCallback((r: ExpandDroppedPathsResult | null) => {
         if (!r) return '';
-        return `${r.has_directory ? 'd' : 'f'}#${r.files.length}#${
+        return `${r.has_directory ? 'd' : 'f'}#${r.truncated ? `t${r.max_files || ''}` : 'full'}#${r.files.length}#${
             r.files.map((f) => `${f.input_path}|${f.size}|${f.mod_time}|${f.source_root}|${f.relative_path}|${f.is_from_dir_drop ? 'd' : 'f'}`).join(';')
         }`;
     }, []);
 
     const mergeAndPublishResult = useCallback((incoming: ExpandDroppedPathsResult) => {
         const filteredIncoming = filterExpandedResultByExtensions(incoming, acceptedExtensionSet);
-        if (acceptedExtensionSet && incoming.files.length > 0 && filteredIncoming.files.length === 0) {
+        const mergedSnapshot = mergeResults(previewResultRef.current, filteredIncoming);
+        if (mergedSnapshot.truncated) {
+            setSelectionError(`最多加载 ${mergedSnapshot.max_files || 10000} 个文件，目录内容已截断`);
+        } else if (acceptedExtensionSet && incoming.files.length > 0 && filteredIncoming.files.length === 0) {
             setSelectionError('没有符合当前功能格式限制的文件');
         } else {
             setSelectionError('');
         }
-        const mergedSnapshot = mergeResults(previewResultRef.current, filteredIncoming);
         // Skip redundant publishes (e.g. background enrich that adds nothing new):
         // identical snapshots would just re-render the whole tree for nothing.
         if (snapshotSignature(mergedSnapshot) === snapshotSignature(previewResultRef.current)) {
@@ -623,8 +647,8 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
     });
 
     const applyFileSelection = async (files: File[], resolvedPaths?: string[]) => {
-        const generation = ++expandGenerationRef.current;
         onFilesSelected?.(files);
+        onExpansionStateChange?.(true);
         const hasResolved = Boolean(resolvedPaths && resolvedPaths.length > 0);
         beginSelectionStatus(hasResolved ? '正在加载...' : '正在解析文件路径...');
         try {
@@ -636,20 +660,17 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                     setSelectionStatus('');
                 }
                 // Background enrich via host (size/mod_time accuracy for dirs); ignore failures.
-                void (async () => {
-                    try {
-                        const expanded = await expandPathsFromFiles(files, resolvedPaths);
-                        if (generation !== expandGenerationRef.current) return;
-                        if (expanded && expanded.files?.length) {
-                            // Merge host metadata into the optimistic list.  A
-                            // background expand must never replace files added by
-                            // an earlier/later drop.
-                            mergeAndPublishResult(expanded);
-                        }
-                    } catch (e) {
-                        console.error(e);
+                try {
+                    const expanded = await expandPathsFromFiles(files, resolvedPaths);
+                    if (expanded?.files?.length) {
+                        // Merge host metadata into the optimistic list.  A
+                        // background expand must never replace files added by
+                        // an earlier/later drop.
+                        mergeAndPublishResult(expanded);
                     }
-                })();
+                } catch (e) {
+                    console.error(e);
+                }
                 return;
             }
 
@@ -665,7 +686,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                 setSelectionStatus('正在扫描文件...');
             }
             const expanded = await expandPathsFromFiles(files, normalizedPaths);
-            if (expanded && generation === expandGenerationRef.current) {
+            if (expanded) {
                 mergeAndPublishResult(expanded);
                 return;
             }
@@ -696,6 +717,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
             };
             mergeAndPublishResult(result);
         } finally {
+            onExpansionStateChange?.(false);
             endSelectionStatus();
         }
     };
@@ -709,7 +731,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
             if (shouldIgnoreRuntimeDrop(paths)) return;
             const app = getAppBindings();
             if (!app?.ExpandDroppedPaths) return;
-            const generation = ++expandGenerationRef.current;
+            onExpansionStateChange?.(true);
 
             beginSelectionStatus('正在加载...');
             try {
@@ -729,13 +751,12 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                     mergeAndPublishResult(quick);
                 }
                 const result = await app.ExpandDroppedPaths(paths);
-                if (generation === expandGenerationRef.current) {
-                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
-                }
+                mergeAndPublishResult(result as ExpandDroppedPathsResult);
             } catch (e) {
                 console.error(e);
                 setSelectionError('扫描拖入文件失败，请重试。');
             } finally {
+                onExpansionStateChange?.(false);
                 endSelectionStatus();
             }
         }, true);
@@ -743,7 +764,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
         return () => {
             window.runtime?.OnFileDropOff?.();
         };
-    }, [beginSelectionStatus, endSelectionStatus, isActive, mergeAndPublishResult, shouldIgnoreRuntimeDrop]);
+    }, [beginSelectionStatus, endSelectionStatus, isActive, mergeAndPublishResult, onExpansionStateChange, shouldIgnoreRuntimeDrop]);
 
     useEffect(() => () => {
         clearRuntimeDropWait();
@@ -802,8 +823,13 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                     return;
                 }
 
-                const result = await app.ExpandDroppedPaths(paths);
-                mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                onExpansionStateChange?.(true);
+                try {
+                    const result = await app.ExpandDroppedPaths(paths);
+                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                } finally {
+                    onExpansionStateChange?.(false);
+                }
                 return;
             }
             if (window.runtime?.OpenFileDialog) {
@@ -826,8 +852,13 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                     return;
                 }
 
-                const result = await app.ExpandDroppedPaths(paths);
-                mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                onExpansionStateChange?.(true);
+                try {
+                    const result = await app.ExpandDroppedPaths(paths);
+                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                } finally {
+                    onExpansionStateChange?.(false);
+                }
                 return;
             }
         } catch (e) {
@@ -854,8 +885,13 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                         directoryInputRef.current?.click();
                         return;
                     }
-                    const result = await app.ExpandDroppedPaths([dir]);
-                    mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                    onExpansionStateChange?.(true);
+                    try {
+                        const result = await app.ExpandDroppedPaths([dir]);
+                        mergeAndPublishResult(result as ExpandDroppedPathsResult);
+                    } finally {
+                        onExpansionStateChange?.(false);
+                    }
                     return;
                 }
             } catch (err) {
@@ -876,7 +912,10 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
         setPreviewResult((prev) => {
             if (!prev) return prev;
             const newFiles = prev.files.filter((f) => f.input_path !== path);
-            const newResult = { ...prev, files: newFiles };
+            const hasDirectory = newFiles.some((file) => file.is_from_dir_drop);
+            const newResult: ExpandDroppedPathsResult = newFiles.length > 0
+                ? { ...prev, files: newFiles, has_directory: hasDirectory }
+                : { files: newFiles, has_directory: false };
             previewResultRef.current = newResult;
             onPathsExpanded?.(newResult);
             return newResult;
@@ -887,8 +926,11 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
         e.stopPropagation();
         setPreviewResult((prev) => {
             if (!prev) return prev;
-            const newFiles = prev.files.filter((f) => f.source_root !== root);
-            const newResult = { ...prev, files: newFiles };
+            const newFiles = prev.files.filter((f) => f.source_root !== root && f.input_path !== root);
+            const hasDirectory = newFiles.some((file) => file.is_from_dir_drop);
+            const newResult: ExpandDroppedPathsResult = newFiles.length > 0
+                ? { ...prev, files: newFiles, has_directory: hasDirectory }
+                : { files: newFiles, has_directory: false };
             previewResultRef.current = newResult;
             onPathsExpanded?.(newResult);
             return newResult;
@@ -1115,6 +1157,11 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                             添加文件夹
                         </button>
                     </div>
+                    {selectionError && (
+                        <div className="mt-2 text-xs text-red-500 dark:text-red-300 text-center px-6">
+                            {selectionError}
+                        </div>
+                    )}
                 </div>
             ) : (
                 <>
