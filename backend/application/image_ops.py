@@ -135,15 +135,22 @@ def _run_jobs(
     results: list[dict[str, Any]] = [{"success": False, "error": "处理失败"} for _ in payloads]
     pending = set(futures)
     future_to_index = {future: index for index, future in enumerate(futures)}
+    cancellation_seen = False
 
     try:
         while pending:
             if task_manager is not None and task_id is not None and task_manager.is_cancelled(task_id):
+                cancellation_seen = True
                 for future in list(pending):
-                    future.cancel()
-                    index = future_to_index[future]
-                    results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
-                break
+                    if future.cancel():
+                        pending.remove(future)
+                        index = future_to_index[future]
+                        results[index] = {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
+                # Running process-pool jobs cannot be cancelled safely. Wait
+                # for them to finish so this call never returns while workers
+                # are still writing output files in the background.
+                if not pending:
+                    break
 
             done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
             if not done:
@@ -159,8 +166,8 @@ def _run_jobs(
                 except Exception as exc:
                     results[index] = {"success": False, "error": str(exc)}
     finally:
-        if task_manager is not None and task_id is not None and task_manager.is_cancelled(task_id):
-            for future in futures:
+        if cancellation_seen:
+            for future in pending:
                 future.cancel()
 
     return results
@@ -184,8 +191,6 @@ def execute_engine(
         task_id=effective_task_id,
     )
     result = results[0] if results else {"success": False, "error": "处理失败"}
-    if task_manager and effective_task_id is not None and task_manager.is_cancelled(effective_task_id):
-        return {"success": False, "error": "[PY_CANCELLED] operation cancelled"}
     return result
 
 

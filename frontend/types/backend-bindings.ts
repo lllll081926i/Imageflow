@@ -25,7 +25,7 @@ export type AppBindings = {
         error?: string;
     }>;
     OpenPath?: (arg1?: { path?: string; dir?: string }) => Promise<{ success?: boolean; path?: string; error?: string }>;
-    CheckForUpdates?: (arg1?: { timeout_seconds?: number }) => Promise<{
+    CheckForUpdates?: (arg1?: { timeout_seconds?: number; force?: boolean }) => Promise<{
         success?: boolean;
         current_version?: string;
         latest_version?: string;
@@ -33,6 +33,30 @@ export type AppBindings = {
         release_url?: string;
         release_notes?: string;
         checked?: boolean;
+        error?: string;
+        distribution_kind?: 'installed' | 'portable' | 'development';
+        platform?: string;
+        update_action?: 'install' | 'open_release';
+        installer_available?: boolean;
+        proxy_used?: boolean;
+        cached?: boolean;
+        asset_name?: string;
+        asset_size?: number;
+    }>;
+    DownloadAndInstallUpdate?: (arg1?: { expected_version?: string; timeout_seconds?: number }) => Promise<{
+        success?: boolean;
+        action?: 'installer_started' | 'release_page' | 'none';
+        version?: string;
+        release_url?: string;
+        proxy_used?: boolean;
+        portable?: boolean;
+        error?: string;
+        message?: string;
+    }>;
+    OpenReleasePage?: (arg1?: { url?: string }) => Promise<{
+        success?: boolean;
+        action?: 'release_page';
+        release_url?: string;
         error?: string;
     }>;
     Ping: () => Promise<string> | string;

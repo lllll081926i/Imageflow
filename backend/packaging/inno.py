@@ -4,7 +4,14 @@ import os
 import shutil
 from pathlib import Path
 
-from backend.packaging.release_config import PLATFORM_TAG, ReleasePaths
+from backend.packaging.release_config import (
+    APP_AUTHOR,
+    APP_COPYRIGHT,
+    APP_DESCRIPTION,
+    APP_HOMEPAGE,
+    PLATFORM_TAG,
+    ReleasePaths,
+)
 
 
 def _inno_path(path: Path) -> str:
@@ -16,14 +23,21 @@ def render_inno_script(paths: ReleasePaths, setup_icon: Path | None = None) -> s
     setup_icon_line = ""
     if setup_icon is not None:
         setup_icon_line = f"SetupIconFile={_inno_path(setup_icon)}\n"
+    architecture = "arm64" if paths.architecture == "arm64" else "x64compatible"
 
     return f"""[Setup]
 AppId={{{{7C8D34F5-0D4C-4E50-9C5B-4F9F93E3A511}}}}
 AppName={paths.app_name}
 AppVersion={paths.version}
 AppVerName={paths.app_name}
-AppPublisher=ImageFlow
+AppPublisher={APP_AUTHOR}
+AppPublisherURL={APP_HOMEPAGE}
+AppSupportURL={APP_HOMEPAGE}/issues
 AppUpdatesURL=https://github.com/lllll081926i/Imageflow/releases
+AppCopyright={APP_COPYRIGHT}
+AppComments={APP_DESCRIPTION}
+AppContact={APP_HOMEPAGE}/issues
+UninstallDisplayName={paths.app_name}
 DefaultDirName={{autopf}}\\{paths.app_name}
 AppendDefaultDirName=no
 UsePreviousAppDir=yes
@@ -40,9 +54,16 @@ WizardStyle=modern
 WizardResizable=yes
 CloseApplications=yes
 RestartApplications=no
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={architecture}
+ArchitecturesInstallIn64BitMode={architecture}
 UninstallDisplayIcon={{app}}\\{paths.app_name}.exe
+VersionInfoCompany={APP_AUTHOR}
+VersionInfoDescription={APP_DESCRIPTION}
+VersionInfoProductName={paths.app_name}
+VersionInfoProductVersion={paths.version}
+VersionInfoVersion={paths.version}
+VersionInfoCopyright={APP_COPYRIGHT}
+VersionInfoOriginalFileName={paths.app_name}-setup.exe
 {setup_icon_line}
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

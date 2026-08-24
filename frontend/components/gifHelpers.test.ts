@@ -70,6 +70,7 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete (window as { runtime?: unknown }).runtime;
     delete (window as { pywebview?: unknown }).pywebview;
+    Reflect.deleteProperty(window, 'requestIdleCallback');
 });
 
 describe('resolveSelectedFilePaths', () => {
@@ -192,6 +193,52 @@ describe('resolveSelectedFilePaths', () => {
 });
 
 describe('FileDropZone', () => {
+    it('先提交拖放反馈，再在浏览器空闲时启动路径扫描', async () => {
+        let runIdle!: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void;
+        Object.defineProperty(window, 'requestIdleCallback', {
+            configurable: true,
+            value: vi.fn((callback: typeof runIdle) => {
+                runIdle = callback;
+                return 1;
+            }),
+        });
+        const expandDroppedPaths = vi.fn().mockResolvedValue({
+            has_directory: false,
+            files: [{
+                input_path: 'D:/drop/a.png',
+                source_root: '',
+                relative_path: 'a.png',
+                is_from_dir_drop: false,
+                size: 12,
+                mod_time: 1,
+            }],
+        });
+        vi.mocked(getAppBindings).mockReturnValue({ ExpandDroppedPaths: expandDroppedPaths } as any);
+        const { container, root } = await renderElement(React.createElement(FileDropZone));
+        const dropTarget = container.firstElementChild as HTMLElement;
+
+        await act(async () => {
+            const event = new Event('drop', { bubbles: true, cancelable: true });
+            Object.defineProperty(event, 'dataTransfer', {
+                value: { files: [{ name: 'a.png', size: 12, lastModified: 1, path: 'D:/drop/a.png' }] },
+                configurable: true,
+            });
+            dropTarget.dispatchEvent(event);
+            await flushMicrotasks();
+        });
+
+        expect(expandDroppedPaths).not.toHaveBeenCalled();
+        expect(container.textContent).toContain('正在加载');
+
+        await act(async () => {
+            runIdle({ didTimeout: false, timeRemaining: () => 10 });
+            await flushMicrotasks();
+        });
+        expect(expandDroppedPaths).toHaveBeenCalledTimes(1);
+
+        await act(async () => { root.unmount(); await flushMicrotasks(); });
+    });
+
     it('并发拖入的目录扫描即使较晚完成也会合并完整结果', async () => {
         let resolveFirst!: (value: any) => void;
         let resolveSecond!: (value: any) => void;

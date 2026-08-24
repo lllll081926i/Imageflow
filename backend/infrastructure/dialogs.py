@@ -109,8 +109,51 @@ def _build_filetypes(options: dict[str, Any]) -> list[tuple[str, str]]:
     return filetypes or [("Images", default_pattern)]
 
 
+def _build_webview_filetypes(options: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        f"{name} ({';'.join(pattern.split())})"
+        for name, pattern in _build_filetypes(options)
+    )
+
+
+_NO_WEBVIEW_WINDOW = object()
+
+
+def _run_webview_file_dialog(options: dict[str, Any], *, directory_only: bool = False):
+    try:
+        import webview
+
+        window = webview.active_window() or (webview.windows[0] if webview.windows else None)
+        if window is None:
+            return _NO_WEBVIEW_WINDOW
+        can_choose_files = bool(options.get("canChooseFiles", True))
+        can_choose_directories = bool(options.get("canChooseDirectories", False))
+        if directory_only or (can_choose_directories and not can_choose_files):
+            dialog_type = webview.FileDialog.FOLDER
+            file_types: tuple[str, ...] = ()
+        elif not can_choose_files:
+            return []
+        else:
+            dialog_type = webview.FileDialog.OPEN
+            file_types = _build_webview_filetypes(options)
+        selected = window.create_file_dialog(
+            dialog_type,
+            directory=str(options.get("defaultDirectory") or options.get("directory") or ""),
+            allow_multiple=bool(options.get("allowsMultipleSelection", False)),
+            file_types=file_types,
+        )
+        return list(selected or [])
+    except Exception:
+        return _NO_WEBVIEW_WINDOW
+
+
 def open_file_dialog(options: dict[str, Any] | None = None):
     options = options or {}
+    native_result = _run_webview_file_dialog(options)
+    if native_result is not _NO_WEBVIEW_WINDOW:
+        if bool(options.get("allowsMultipleSelection", False)):
+            return native_result
+        return native_result[0] if native_result else ""
 
     def run(_root):
         from tkinter import filedialog
@@ -133,6 +176,9 @@ def open_file_dialog(options: dict[str, Any] | None = None):
 
 def open_directory_dialog(options: dict[str, Any] | None = None):
     options = options or {}
+    native_result = _run_webview_file_dialog(options, directory_only=True)
+    if native_result is not _NO_WEBVIEW_WINDOW:
+        return native_result[0] if native_result else ""
 
     def run(_root):
         from tkinter import filedialog

@@ -1,11 +1,17 @@
 import os
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from backend.packaging.inno import render_inno_script
-from backend.packaging.release_builder import build_pyinstaller_command, ensure_frontend_dist
+from backend.packaging.release_builder import (
+    APPIMAGE_BUILD_ASSETS,
+    build_pyinstaller_command,
+    ensure_frontend_dist,
+    finalize_bundle_metadata,
+)
 from backend.packaging.release_config import ReleasePaths, create_release_paths, validate_windows_build_host
 
 
@@ -19,6 +25,23 @@ class ReleaseBuilderTests(unittest.TestCase):
             self.assertEqual(paths.installer_exe.name, "ImageFlow-setup-1.0.11-windows-amd64.exe")
             self.assertEqual(paths.inno_script.name, "ImageFlow-setup.iss")
             self.assertEqual(paths.pyinstaller_dist_dir.name, "ImageFlow")
+
+    def test_create_release_paths_covers_all_native_package_formats(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            macos = create_release_paths(root, "2.3.0", system_name="Darwin", machine="arm64")
+            linux = create_release_paths(root, "2.3.0", system_name="Linux", machine="aarch64")
+            windows_arm = create_release_paths(root, "2.3.0", system_name="Windows", machine="ARM64")
+
+            self.assertEqual(macos.portable_archive.name, "ImageFlow-portable-2.3.0-macos-arm64.zip")
+            self.assertEqual(macos.installer_exe.name, "ImageFlow-setup-2.3.0-macos-arm64.pkg")
+            self.assertEqual(macos.pyinstaller_dist_dir.name, "ImageFlow.app")
+            self.assertEqual(linux.portable_archive.name, "ImageFlow-portable-2.3.0-linux-arm64.tar.gz")
+            self.assertEqual(linux.installer_exe.name, "ImageFlow-setup-2.3.0-linux-arm64.deb")
+            self.assertEqual(linux.linux_rpm.name, "ImageFlow-setup-2.3.0-linux-arm64.rpm")
+            self.assertEqual(linux.linux_appimage.name, "ImageFlow-portable-2.3.0-linux-arm64.AppImage")
+            self.assertEqual(windows_arm.installer_exe.name, "ImageFlow-setup-2.3.0-windows-arm64.exe")
+            self.assertEqual(len(APPIMAGE_BUILD_ASSETS["arm64"]["tool_sha256"]), 64)
 
     def test_ensure_frontend_dist_raises_when_build_output_is_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -93,6 +116,21 @@ class ReleaseBuilderTests(unittest.TestCase):
             self.assertIn(f"{paths.project_root / 'ico.png'}{os.pathsep}.", command)
             self.assertIn(str(icon_path), command)
 
+    def test_windows_arm64_skips_native_packages_without_arm_wheels(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_dist = root / "frontend" / "dist"
+            frontend_dist.mkdir(parents=True)
+            (frontend_dist / "index.html").write_text("<html></html>", encoding="utf-8")
+            (root / "VERSION").write_text("2.3.0\n", encoding="utf-8")
+            paths = create_release_paths(root, "2.3.0", system_name="Windows", machine="ARM64")
+
+            command_text = " ".join(build_pyinstaller_command(paths, None))
+
+            self.assertNotIn("--collect-all mozjpeg_lossless_optimization", command_text)
+            self.assertNotIn("--collect-all oxipng", command_text)
+            self.assertIn("--collect-all imagequant", command_text)
+
     def test_render_inno_script_uses_release_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -116,8 +154,31 @@ class ReleaseBuilderTests(unittest.TestCase):
 
             self.assertIn('AppName=ImageFlow', script)
             self.assertIn('AppVersion=1.0.11', script)
+            self.assertIn('AppVerName=ImageFlow', script)
+            self.assertIn('AppPublisher=lllll081926i', script)
+            self.assertIn('UninstallDisplayName=ImageFlow', script)
+            self.assertIn('VersionInfoProductName=ImageFlow', script)
+            self.assertIn('AppCopyright=Copyright (c) 2026 lllll081926i', script)
             self.assertIn(f'SourceDir={paths.pyinstaller_dist_dir.resolve().as_posix()}', script)
             self.assertIn('OutputBaseFilename=ImageFlow-setup-1.0.11-windows-amd64', script)
+
+    def test_finalize_macos_bundle_metadata_populates_system_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = create_release_paths(root, "2.3.0", system_name="Darwin", machine="arm64")
+            plist_path = paths.pyinstaller_dist_dir / "Contents" / "Info.plist"
+            plist_path.parent.mkdir(parents=True)
+            with plist_path.open("wb") as file:
+                plistlib.dump({"CFBundleExecutable": "ImageFlow"}, file)
+
+            finalize_bundle_metadata(paths)
+
+            with plist_path.open("rb") as file:
+                metadata = plistlib.load(file)
+            self.assertEqual(metadata["CFBundleDisplayName"], "ImageFlow")
+            self.assertEqual(metadata["CFBundleShortVersionString"], "2.3.0")
+            self.assertEqual(metadata["CFBundleIdentifier"], "io.github.lllll081926i.imageflow")
+            self.assertIn("lllll081926i", metadata["NSHumanReadableCopyright"])
 
     def test_validate_windows_build_host_rejects_non_windows(self):
         with mock.patch("backend.packaging.release_config.platform.system", return_value="Linux"):
@@ -132,14 +193,22 @@ class ReleaseBuilderTests(unittest.TestCase):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
-    def test_ci_publishes_assets_when_github_release_is_published(self):
+    def test_ci_publishes_all_native_assets_from_a_version_tag(self):
         workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
 
-        self.assertIn("  release:\n    types: [published]", workflow)
-        self.assertIn("github.event_name == 'release'", workflow)
-        self.assertIn("github.event.release.tag_name", workflow)
-        self.assertIn("generate_release_notes: ${{ github.event_name != 'release' }}", workflow)
+        for platform_name in (
+            "windows-amd64", "windows-arm64", "macos-amd64", "macos-arm64", "linux-amd64", "linux-arm64"
+        ):
+            self.assertIn(f"platform: {platform_name}", workflow)
+        for extension in ("*.zip", "*.tar.gz", "*.AppImage", "*.exe", "*.pkg", "*.deb", "*.rpm"):
+            self.assertIn(extension, workflow)
+        self.assertIn("generate_release_notes: true", workflow)
+        self.assertIn("SHA256SUMS-*.txt", workflow)
+        self.assertIn('if [ "${#assets[@]}" -ne 22 ]', workflow)
+        self.assertIn("sha256sum --check SHA256SUMS-*.txt", workflow)
+        self.assertIn("draft: true", workflow)
+        self.assertIn('gh release edit "$RELEASE_TAG" --draft=false --latest', workflow)
 
     def test_ci_limits_release_write_permission_to_publish_job(self):
         workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
@@ -147,7 +216,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn(
             "  test-and-build:\n"
-            "    runs-on: windows-2025\n"
+            "    name: Test and build (${{ matrix.platform }})\n"
+            "    runs-on: ${{ matrix.runner }}\n"
             "    permissions:\n"
             "      contents: read",
             workflow,

@@ -13,7 +13,6 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
     const listRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const [activeTop, setActiveTop] = useState(0);
-    const [activeHeight, setActiveHeight] = useState(48);
 
     const activeIndex = useMemo(() => FEATURES.findIndex(f => f.id === active), [active]);
     const isValidActive = activeIndex !== -1;
@@ -25,10 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
 
         // Ensure we calculate offset relative to the scrolling container
         const top = btn.offsetTop;
-        const height = btn.offsetHeight;
-        
         setActiveTop(top);
-        setActiveHeight(height);
     }, [active, collapsed, activeIndex]);
 
     return (
@@ -46,20 +42,19 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                         isValidActive ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
                     }`}
                     style={{
-                        height: activeHeight,
+                        height: 48,
                         transform: `translateY(${activeTop}px)`,
-                        transitionProperty: 'transform, height, opacity',
-                        transitionDuration: '520ms, 520ms, 300ms',
-                        transitionTimingFunction: 'cubic-bezier(0.22, 1.28, 0.36, 1), cubic-bezier(0.22, 1.28, 0.36, 1), ease',
                     }}
                 />
                 
                 {FEATURES.map((item) => (
                     <button
                         key={item.id}
+                        type="button"
                         ref={el => { itemRefs.current[item.id] = el; }}
                         onClick={() => setActive(item.id)}
                         title={collapsed ? item.title : undefined}
+                        aria-current={active === item.id ? 'page' : undefined}
                         className={`w-full flex items-center h-12 rounded-xl text-sm font-medium spring-tap-sm group relative z-10 ${collapsed ? 'justify-center px-0' : 'px-3'} ${
                             active === item.id
                                 ? 'bg-transparent'
@@ -85,8 +80,11 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
             {/* Footer / Toggle & Settings */}
             <div className="p-3 border-t border-gray-200 dark:border-white/5 space-y-1">
                 <button
+                    type="button"
                     onClick={() => setCollapsed(!collapsed)}
                     title={collapsed ? '展开侧边栏' : undefined}
+                    aria-expanded={!collapsed}
+                    aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
                     className={`w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors spring-tap-sm group ${collapsed ? 'justify-center px-0' : 'px-3'}`}
                 >
                     <div className="w-6 h-6 flex items-center justify-center shrink-0">
@@ -98,8 +96,10 @@ const Sidebar: React.FC<SidebarProps> = ({ active, setActive }) => {
                 </button>
 
                 <button
+                    type="button"
                     onClick={() => setActive('settings')}
                     title={collapsed ? '全局设置' : undefined}
+                    aria-current={active === 'settings' ? 'page' : undefined}
                     className={`w-full flex items-center h-10 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors spring-tap-sm ${collapsed ? 'justify-center px-0' : 'px-3'}`}
                 >
                     <div className="w-6 h-6 flex items-center justify-center shrink-0">

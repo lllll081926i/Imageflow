@@ -1,368 +1,266 @@
 <p align="center">
-  <img src="./ico.png" width="120" alt="ImageFlow Logo" />
+  <img src="./ico.png" width="112" alt="ImageFlow 标志" />
 </p>
 
 <h1 align="center">ImageFlow</h1>
 
 <p align="center">
-  一款面向桌面端的图像处理工作台：11 个工具页覆盖转换、压缩、切图、拼接、水印、色板、GIF 与 PDF。
+  一套快速、克制、跨平台的桌面图像处理工作台。
+  <br />
+  11 个完整工具页，覆盖转换、压缩、调整、切图、拼接、水印、取色、GIF、PDF 与富文本制图。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/pywebview-6.2-0f172a?style=for-the-badge&logo=python" alt="pywebview" />
-  <img src="https://img.shields.io/badge/uv-managed-111827?style=for-the-badge&logo=python" alt="uv" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=111827" alt="React" />
-  <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?style=for-the-badge&logo=python&logoColor=ffdd54" alt="Python" />
-  <img src="https://img.shields.io/badge/License-MIT-16a34a?style=for-the-badge" alt="MIT" />
+  <a href="https://github.com/lllll081926i/Imageflow/releases/latest"><img src="https://img.shields.io/github/v/release/lllll081926i/Imageflow?style=flat-square&label=Release&color=2563eb" alt="最新版本" /></a>
+  <a href="https://github.com/lllll081926i/Imageflow/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lllll081926i/Imageflow/ci.yml?branch=main&style=flat-square&label=Build" alt="构建状态" /></a>
+  <img src="https://img.shields.io/badge/Windows-x64%20%7C%20ARM64-2563eb?style=flat-square" alt="Windows" />
+  <img src="https://img.shields.io/badge/macOS-Intel%20%7C%20Apple%20Silicon-111827?style=flat-square" alt="macOS" />
+  <img src="https://img.shields.io/badge/Linux-x64%20%7C%20ARM64-f59e0b?style=flat-square" alt="Linux" />
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-16a34a?style=flat-square" alt="MIT License" /></a>
+</p>
+
+<p align="center">
+  <a href="#下载">下载</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#功能矩阵">功能矩阵</a> ·
+  <a href="#自动更新">自动更新</a> ·
+  <a href="#开发与构建">开发与构建</a>
 </p>
 
 ---
 
-## 项目定位
+## 界面预览
 
-ImageFlow 当前采用 **纯 Python 后端 + React 前端 + pywebview 宿主** 架构：
-- **backend/main.py**：桌面应用入口，负责窗口启动与宿主生命周期。
-- **backend/api/**：统一对前端暴露的桌面 API，保持原有调用面兼容。
-- **backend/application/**：任务管理、批处理、预览与执行编排。
-- **backend/engines/**：图像能力引擎，负责转换、压缩、分割、水印、拼接、色板、富文本、GIF、PDF 等核心处理。
-- **React**：macOS 风格界面，弹簧动效体系与可开关的毛玻璃材质。
-- **pywebview**：提供桌面窗口、原生对话框与拖拽桥接。
+<table>
+  <tr>
+    <td width="50%"><img src="./docs/screenshot/imageflow-converter.png" alt="ImageFlow 格式转换界面" /></td>
+    <td width="50%"><img src="./docs/screenshot/imageflow-watermark.png" alt="ImageFlow 批量水印界面" /></td>
+  </tr>
+  <tr>
+    <td align="center">格式转换：输出格式、质量、尺寸与元数据控制</td>
+    <td align="center">批量水印：样式预设、实时预览与精细参数</td>
+  </tr>
+</table>
 
-适用场景：
-- 批量格式转换、压缩、尺寸调整
-- 切图产出（宫格 / 自定义行列）与长图拼接
-- 批量加水印、色彩提取、富文本制图
-- 动图和文档产出（GIF、PDF）
+ImageFlow 使用统一的桌面设计语言：清晰的三栏工作区、原生文件选择、即时参数反馈、平滑的分段切换与按钮状态动效。界面支持浅色、深色、跟随系统、透明材质和减弱动态效果。
 
----
+## 下载
 
-## 功能页总览（v2.2）
+前往 [Releases](https://github.com/lllll081926i/Imageflow/releases/latest) 下载当前版本。安装后的应用名称始终显示为 `ImageFlow`，版本号只写入系统包元数据和文件属性。
 
-| 页面 | 能力要点 | 预设 |
-|---|---|---|
-| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO 输出；SVG 光栅化；缩放三模式；EXIF 保留 | — |
-| 图片压缩 | JPEG(MozJPEG)/PNG(pngquant+OxiPNG)/WEBP；智能档 + 目标体积 + **自定义质量**；元数据剥离 | — |
-| 尺寸调整 | 固定比例 / 长边 / 短边，批量 LANCZOS | ✅ |
-| 宫格切图 | 四 / 九 / 十六宫格，实时分割预览 | — |
-| 图片布局 | 自定义行×列（1–50）；优先正方形（舍弃余料）/ 完整覆盖两种模式；批量 | ✅ |
-| 长图拼接 | 纵向 / 横向；统一宽高、间距、背景色；单张加边框；上限 16000px / 256MP | ✅ |
-| 批量水印 | 字体 / 字号（像素或占宽）/ 颜色 / 不透明度 / 旋转 / 九宫格 / 平铺 / 描边 / 投影；实时预览 | ✅ 样式预设 |
-| 色彩提取 | 主题色 + 十色色板；导出色板图或拼接在原图下方 | — |
-| 转 PDF | 多图合并、15 种纸张、网格拼版、加密 | — |
-| GIF 工具 | 帧导出（PNG/JPG/WEBP/BMP/TIFF）、倒放、变速、压缩、缩放、互转 APNG/WEBP | — |
-| 富文本制图 | 标题/正文/列表/引用/图片块；6 套内置主题；画布样式随心定制；实时预览 | ✅ 模板 |
+| 系统 | 架构 | 推荐安装版 | 免安装版 |
+| --- | --- | --- | --- |
+| Windows 10 / 11 | x64 | `.exe` | `.zip` |
+| Windows 11 on ARM | ARM64 | `.exe` | `.zip` |
+| macOS | Intel x64 | `.pkg` | `.zip` |
+| macOS | Apple Silicon ARM64 | `.pkg` | `.zip` |
+| Debian / Ubuntu 及衍生版 | x64 / ARM64 | `.deb` | `.AppImage` 或 `.tar.gz` |
+| Fedora / RHEL / Rocky / AlmaLinux / SUSE 及衍生版 | x64 / ARM64 | `.rpm` | `.AppImage` 或 `.tar.gz` |
 
-全局能力：批量并发可调、输出命名模板、冲突策略（重命名/覆盖/跳过）、失败重试、完成卡片一键打开目录、后台运行（托盘）、外观（透明效果 / 减弱动态）、窗口记忆。
+文件名中的 `amd64` 表示 x64，`arm64` 表示 ARM64。每个平台同时发布 `SHA256SUMS-<platform>.txt`，可用于独立验证下载内容。
 
----
+### 安装版与免安装版
 
-## 图解架构
+- 安装版会写入系统应用目录和卸载信息，并支持在设置页确认后自动下载和启动后续更新。
+- Windows 与 macOS 的压缩包、Linux 的 `.tar.gz` 和 `.AppImage` 均属于免安装版。检查到新版本时只会打开官方 Release 页面，由用户手动下载替换。
+- AppImage 首次运行前需要赋予执行权限：`chmod +x ImageFlow-*.AppImage`。
+
+## 为什么使用 ImageFlow
+
+- 一个应用完成常见图像工作，不需要在多个网站和工具之间来回切换。
+- 文件始终在本机处理，不上传到第三方服务器。
+- 批量任务支持并发、取消、失败隔离、冲突策略和统一输出命名。
+- 大图、动图和批量缩略图都有内存与像素预算，避免无边界占用。
+- 原生支持 Windows、macOS、Linux 的 x64 与 ARM64，不使用跨平台伪编译产物。
+
+## 功能矩阵
+
+| 工具 | 核心能力 |
+| --- | --- |
+| 格式转换 | JPG、PNG、WebP、AVIF、TIFF、BMP、ICO；SVG 光栅化；比例、固定尺寸、长边缩放；EXIF 保留 |
+| 图片压缩 | MozJPEG、pngquant、OxiPNG、WebP；智能档、自定义质量、目标体积、元数据剥离 |
+| 尺寸调整 | 固定比例、长边、短边；批量 LANCZOS 重采样；常用预设 |
+| 宫格切图 | 四宫格、九宫格、十六宫格；居中裁切；实时分割预览 |
+| 图片布局 | 自定义 1–50 行列；正方形裁切或完整覆盖；批量输出 |
+| 长图拼接 | 横向、纵向；统一尺寸、间距、背景、边框；输出像素预算保护 |
+| 批量水印 | 字体、字号、颜色、透明度、旋转、九宫格、平铺、描边、投影；实时预览与样式预设 |
+| 色彩提取 | 主题色与十色色板；导出色板图；与原图拼接输出 |
+| 转 PDF | 多图合并、15 种纸张、方向、边距、网格拼版与加密 |
+| GIF 工具 | 帧导出、倒放、变速、压缩、缩放；GIF、APNG、WebP 动图互转；透明度与帧时长保持 |
+| 富文本制图 | 标题、正文、列表、引用、图片块；6 套主题；画布与排版参数；实时预览 |
+
+全局能力包括输出目录、命名模板、同名冲突策略、并发上限、完成后打开目录、后台托盘、窗口状态记忆、自动检查更新和无障碍动态偏好。
+
+## 体验与性能
+
+### 流畅交互
+
+- 分段控件、开关、按钮、侧栏和状态变化使用统一的弹簧与淡入动效。
+- 完整适配 `prefers-reduced-motion`，也可在设置中主动关闭动态效果。
+- 文件拖入时只做轻量类型判断，目录展开与缩略图工作让出当前渲染帧，避免拖放瞬间卡顿。
+- 缩略图按可见性调度并限制并发，重复请求共享进行中的任务与内存缓存。
+
+### 启动与运行时
+
+- 后端引擎按需加载，启动阶段不预加载图像处理模块。
+- 前端按工具页拆分生产包，设置页和详情页延迟加载。
+- 批处理使用受控进程池，避免逐文件反复创建进程。
+- GIF 帧、预览图、缩略图与最终输出均有尺寸、像素或内存预算。
+- 取消任务后不再写入幽灵结果；较旧任务结束时不会覆盖新任务状态。
+
+## 自动更新
+
+ImageFlow 将安装版与免安装版的更新策略明确分开。
 
 ```mermaid
 flowchart LR
-    UI[React + TypeScript 前端] --> Bridge[Desktop Runtime Shim]
-    Bridge --> Host[pywebview Host]
-    Host --> API[backend/api/DesktopAPI]
-    API --> App[application 层<br/>task_manager / image_ops / preview]
-    App --> Engines[backend/engines]
-    Engines --> Libs[Pillow + ReportLab + 压缩库]
-    Libs --> IO[本地文件读写]
+    Check[检查 GitHub Release] --> Kind{当前分发类型}
+    Kind -->|安装版| Asset[匹配系统与 CPU 架构]
+    Asset --> Proxy[继承系统或环境代理]
+    Proxy --> Verify[校验大小与 SHA-256]
+    Verify --> Launch[启动原生安装器]
+    Kind -->|免安装版| Browser[用系统浏览器打开官方 Release]
 ```
+
+- 自动检查使用 6 小时持久缓存和 ETag 条件请求，避免每次进入设置页消耗 GitHub 匿名 API 配额。
+- 手动“立即检查”会强制刷新；遇到 `403` 或 `429` 限流时可回退到最近一次可信缓存。
+- 下载继承操作系统代理和 `HTTP_PROXY`、`HTTPS_PROXY` 等环境代理设置。
+- 用户确认后，后端会重新获取发布元数据，防止检查与下载之间版本被替换。
+- 仅接受官方仓库的 HTTPS Release 地址，严格匹配当前系统、架构和包类型。
+- 安装器下载到用户缓存目录，声明大小与 GitHub Release 资产 SHA-256 均通过后才会执行。
+
+## 架构
+
+ImageFlow 采用 React + TypeScript 前端、pywebview 桌面宿主和纯 Python 图像后端。平台能力收敛在基础设施层，业务引擎不依赖具体窗口系统。
 
 ```mermaid
-sequenceDiagram
-    participant User as 用户
-    participant FE as 前端
-    participant Host as pywebview Host
-    participant Py as Python Backend
-    participant FS as 文件系统
-
-    User->>FE: 选择文件 + 设置参数
-    FE->>Host: 调用桌面绑定方法
-    Host->>Py: 调用 DesktopAPI / application
-    Py->>FS: 读取/处理/写入图片
-    FS-->>Py: 输出结果
-    Py-->>Host: 响应(success/error)
-    Host-->>FE: 结果 + 原生能力回传
-    FE-->>User: 展示处理状态与产物
+flowchart LR
+    UI[React + TypeScript] --> Runtime[Desktop Runtime]
+    Runtime --> Host[pywebview Host]
+    Host --> API[DesktopAPI]
+    API --> Application[任务编排与批处理]
+    Application --> Engines[图像处理引擎]
+    Engines --> Native[Pillow / ReportLab / 原生压缩库]
+    Native --> Files[本地文件系统]
 ```
 
----
+| 层 | 目录 | 职责 |
+| --- | --- | --- |
+| 界面 | `frontend/` | 页面、组件、动效、状态与桌面绑定类型 |
+| 桌面 API | `backend/api/` | 稳定的前后端调用契约、输入规范化与错误信封 |
+| 应用层 | `backend/application/` | 任务生命周期、并发、取消和批处理编排 |
+| 引擎层 | `backend/engines/` | 无界面依赖的图像、GIF、PDF 与渲染能力 |
+| 基础设施 | `backend/infrastructure/` | 设置、更新、原生对话框、窗口、托盘与平台适配 |
+| 发布 | `backend/packaging/` | PyInstaller、EXE、PKG、DEB、RPM、AppImage 与校验清单 |
 
-## 功能矩阵（图文版）
+## 跨平台发布
 
-| 模块 | 主要能力 | 关键实现 |
-|---|---|---|
-| 格式转换 | JPG/PNG/WEBP/AVIF/TIFF/BMP/ICO/SVG 等；缩放/长边/固定尺寸；可选保留 EXIF | `backend/engines/converter.py` |
-| 图片压缩 | 多档压缩策略；可指定目标体积 | `backend/engines/compressor.py` |
-| 转 PDF | 多图合并 PDF；页面尺寸、方向、边距 | `backend/engines/pdf_generator.py` |
-| GIF 工具 | 导出、倒放、调帧率、压缩、缩放、互转 | `backend/engines/gif_splitter.py` |
-| 全局设置 | 路径、命名模板、并发、自动检查更新、窗口记忆 | `backend/infrastructure/settings_store.py` |
+PyInstaller 不是交叉编译器，因此每个产物都在对应系统和 CPU 架构的 GitHub Hosted Runner 上原生构建。
 
-## 技术栈与依赖
-
-### 前端
-- React `19.x`
-- TypeScript `5.x`
-- Vite `6.x`
-- Tailwind CSS `4.x`
-
-### 后端
-- pywebview `6.x`
-- uv（Python 依赖与运行管理）
-
-### Python 图像栈
-- Python `>=3.10`
-- Pillow
-- reportlab
-- resvg-py（SVG 光栅化）
-- mozjpeg-lossless-optimization / imagequant / pyoxipng（压缩增强）
-
----
-
-## 目录结构
-
-```text
-Imageflow/
-├── frontend/                    # React + Vite UI
-│   ├── components/              # 核心界面组件
-│   ├── runtime/                 # 桌面宿主运行时兼容层
-│   ├── types/                   # 前后端绑定与模型定义
-│   └── ...
-├── backend/                     # 纯 Python 后端
-│   ├── api/                     # 前端可调用 API
-│   ├── application/             # 应用编排与任务管理
-│   ├── domain/                  # 领域路径与规则
-│   ├── infrastructure/          # 对话框、设置、窗口控制
-│   ├── host/                    # pywebview 宿主接线
-│   ├── engines/                 # 图像能力引擎
-│   ├── testdata/                # 测试数据
-│   ├── tests/                   # 后端与引擎回归测试
-│   └── main.py                  # pywebview 应用入口
-├── docs/                        # 架构与需求文档
-├── pyproject.toml               # Python依赖（uv）
-└── README.md
+```mermaid
+flowchart TB
+    Tag[推送 v* 标签] --> Matrix[6 目标构建矩阵]
+    Matrix --> WX[Windows x64]
+    Matrix --> WA[Windows ARM64]
+    Matrix --> MX[macOS Intel]
+    Matrix --> MA[macOS Apple Silicon]
+    Matrix --> LX[Linux x64]
+    Matrix --> LA[Linux ARM64]
+    WX & WA & MX & MA & LX & LA --> Gate[测试、构建、产物与 SHA-256 门禁]
+    Gate --> Draft[创建并上传完整 Release]
+    Draft --> Publish[全部资产成功后发布]
 ```
 
----
+单次版本发布会生成 22 个资产：
 
-## 快速开始
+- Windows：2 个架构 × 安装版、便携版、校验清单，共 6 个。
+- macOS：2 个架构 × 安装版、便携版、校验清单，共 6 个。
+- Linux：2 个架构 × DEB、RPM、AppImage、tar.gz、校验清单，共 10 个。
 
-### 1) 环境准备
+任一平台的测试、打包或资产校验失败都会阻止正式发布。
 
-- Node.js（建议 LTS）
-- Python `3.10+`
-- uv
+## 开发与构建
 
-### 2) 安装依赖
+### 环境
+
+- Node.js 20 或更高版本
+- Python 3.10–3.13
+- [uv](https://docs.astral.sh/uv/)
+
+Linux 开发环境还需要 GTK 3、WebKitGTK 4.1、PyGObject 的系统构建依赖。
+
+### 安装与启动
 
 ```bash
-# 前端依赖
+uv sync
 cd frontend
 npm install
-
-# Python 依赖（推荐）
 cd ..
-uv sync
-```
-
-### 3) 启动开发
-
-```bash
-# 根目录一条命令启动开发模式
 uv run imageflow
 ```
 
-该命令会自动启动 Vite 前端开发服务器和 pywebview 桌面宿主。前端页面支持 Vite HMR，`backend/**/*.py`（除 `engines/` 独立模块）变更后会自动重启 Python 宿主。
+开发启动器会运行 Vite 和 pywebview；前端支持 HMR，后端模块变化后会自动重启桌面宿主。
 
-> 等价旧命令：`npm run dev`（Node 版启动器，行为一致）。
-
-### 4) 构建发布
+### 本机发布构建
 
 ```bash
-# 同步 Python 运行与打包依赖
 uv sync --group build
-
-# 构建便携版 zip 和 Inno Setup 6 安装版
 npm run build:release
 ```
 
-发布产物输出到 `artifacts/release/`：
+该命令只构建当前系统和当前 CPU 架构的原生产物，输出到 `artifacts/release/`。完整 6 目标版本由 GitHub Actions 矩阵生成。
 
-| 产物 | 文件名格式 | 说明 |
-|---|---|---|
-| 便携版 | `ImageFlow-portable-<version>-windows-amd64.zip` | 解压后直接运行 `ImageFlow.exe` |
-| 安装版 | `ImageFlow-setup-<version>-windows-amd64.exe` | Inno Setup 6 安装器 |
-
-也可以单独构建：
+可单独构建：
 
 ```bash
-# 仅构建便携版
 npm run build:portable
-
-# 仅构建安装版
 npm run build:installer
 ```
 
-安装版构建依赖 Inno Setup 6。若 `ISCC.exe` 不在系统 `PATH` 中，可设置：
+Windows 安装包需要 Inno Setup 6.3 或更高版本；Linux 发布构建需要 `dpkg-deb`、`rpmbuild` 与 AppImage 构建工具。AppImage 构建器和运行时使用固定版本与固定 SHA-256 下载。
+
+### 质量检查
 
 ```bash
-export INNO_SETUP_ISCC="C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+npm run test:all
+npm run build:frontend
+uv run python -m compileall backend
+git diff --check
 ```
 
-本地只验证发布态运行时，可先执行 `npm run build:frontend`，再运行：
+后端测试覆盖 API、任务管理、路径安全、内存预算、各图像引擎、更新安全和发布打包。前端测试覆盖桌面运行时、批处理、GIF 参数与错误映射、设置契约和错误边界。
 
-```bash
-uv run python -m backend.main
-```
+## 配置
 
----
+| 变量 | 说明 |
+| --- | --- |
+| `IMAGEFLOW_PREVIEW_MAX_BYTES` | 单个前端预览的文件大小上限 |
+| `IMAGEFLOW_MAX_CONCURRENCY` | 覆盖默认批处理并发数 |
+| `IMAGEFLOW_SETTINGS_FILE` | 覆盖设置 JSON 路径，父目录必须存在 |
+| `IMAGEFLOW_FRONTEND_URL` | 开发模式使用的前端地址 |
+| `IMAGEFLOW_DEBUG_TRACEBACK=1` | 调试模式允许错误响应携带 traceback |
+| `IMAGEFLOW_GITHUB_REPO` | 覆盖更新检查仓库，默认 `lllll081926i/Imageflow` |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Linux 或显式环境代理；Windows 与 macOS 也会读取系统代理 |
 
-## 支持格式（当前代码实现）
+默认设置文件位于：
 
-### 普通处理输入（转换、压缩、PDF、GIF 工具、布局、水印、色板）
-- `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `heic`, `heif`, `ico`, `tiff`, `tif`, `svg`（SVG 仅转换/预览光栅化）
+- Windows：`%APPDATA%/imageflow/settings.json`
+- macOS / Linux：`~/.config/imageflow/settings.json`
 
-### 转换输出（转换模块）
-- `jpg`, `jpeg`, `png`, `webp`, `bmp`, `tiff`, `tif`, `ico`, `avif`
+## 输出命名
 
-### GIF 帧导出格式
-- `png`, `jpg`, `webp`, `bmp`, `tiff`
-
----
-
-## 并发与性能设计
-
-- 默认并发按 CPU 自动推导（Windows 上限 `4`，其他平台上限 `8`），可在设置中调节 `1-32`。
-- `backend/application/image_ops.py` 基于 `ProcessPoolExecutor` 调度多进程执行。
-- 批处理取消为协作式：已开始的单项会执行完毕，未开始的项会被跳过并标记为已取消。
-- 大图预览支持阈值控制，防止前端内存飙升。
-
----
-
-## 配置说明
-
-### 环境变量
-
-| 变量名 | 说明 |
-|---|---|
-| `IMAGEFLOW_PREVIEW_MAX_BYTES` | 预览文件大小阈值（字节） |
-| `IMAGEFLOW_PROFILE=1` | 打开 Python 侧性能/能力检测日志 |
-| `IMAGEFLOW_SETTINGS_FILE` | 测试或特殊环境覆盖设置文件路径，必须指向已存在目录下的 `.json` 文件 |
-| `IMAGEFLOW_FRONTEND_URL` | 开发模式下指定 pywebview 加载的前端地址 |
-| `IMAGEFLOW_DEBUG_TRACEBACK=1` | 调试模式下允许后端错误响应包含 traceback |
-
-### 全局设置（UI）
-
-| 字段 | 默认值 | 说明 |
-|---|---|---|
-| `max_concurrency` | 按 CPU 推导（Windows 最多 `4`，其他平台最多 `8`） | 并发数，范围 `1-32`，可用 `IMAGEFLOW_MAX_CONCURRENCY` 覆盖默认值 |
-| `output_prefix` | `IF` | 输出前缀 |
-| `output_template` | `{prefix}{basename}` | 输出命名模板 |
-| `preserve_folder_structure` | `true` | 保留原目录层级 |
-| `conflict_strategy` | `rename` | 冲突处理策略：`rename` 自动重命名 / `overwrite` 直接覆盖 / `skip` 跳过同名 |
-| `open_output_folder_on_complete` | `false` | 完成后自动打开输出目录 |
-| `ui_transparency` | `true` | 毛玻璃/亚克力材质（关闭回退纯色，更省电） |
-| `ui_reduced_motion` | `false` | 减弱动态效果（关闭所有弹簧动画） |
-| `background_running` | `false` | 后台运行：点关闭隐藏到系统托盘 |
-
-设置文件位置：`os.UserConfigDir()/imageflow/settings.json`  
-Windows 常见路径示例：`C:/Users/<用户名>/AppData/Roaming/imageflow/settings.json`
-
----
-
-## 输出命名模板
-
-`output_template` 支持占位符（模板展开在前端 `frontend/components/DetailView.tsx` 侧完成，后端仅存储该设置）：
-
-| 占位符 | 说明 | 示例 |
-|---|---|---|
-| `{prefix}` | 输出前缀（会自动追加下划线） | `IF_` |
-| `{basename}` | 原文件名（不带扩展名） | `photo_001` |
-| `{op}` | 操作类型 | `convert` |
-| `{date:YYYYMMDD}` | 日期格式化 | `20260220` |
-| `{time:HHmmss}` | 时间格式化 | `235959` |
-| `{seq:3}` | 序号补零 | `001` |
-
-示例模板：
+输出模板支持 `{prefix}`、`{basename}`、`{op}`、`{date:YYYYMMDD}`、`{time:HHmmss}`、`{seq:3}` 等占位符。例如：
 
 ```text
 {prefix}{basename}_{op}_{date:YYYYMMDD}_{seq:3}
 ```
 
----
+同名文件可以选择自动重命名、直接覆盖或跳过。批处理会提前解析整组输出路径，避免并发任务产生相互冲突的文件名。
 
-## 测试与质量检查
+## 贡献
 
-```bash
-# Python 单元测试（含 application + engines，因 engines 已是包）
-uv run python -m unittest discover -s backend/tests -v
-# 等价：
-npm run test:backend
+欢迎提交 Issue 与 Pull Request。提交前请执行全量测试、类型检查、生产构建和 `git diff --check`，并为行为变化补充回归测试。
 
-# pytest（dev 依赖组）
-uv run pytest backend/tests -q
+## 作者与许可
 
-# 仅引擎回归
-uv run python -m unittest discover -s backend/tests/engines -v
-# 等价：
-npm run test:backend:engines
-
-# 发布配置回归测试
-uv run python -m unittest backend.tests.test_release_builder -v
-
-# 前端测试 / 类型检查 / 构建
-npm run test:frontend
-npm run typecheck:frontend
-npm run build:frontend
-```
-
----
-
-## 常见问题（FAQ）
-
-### 1. 启动时找不到 Python
-- 先执行 `uv sync` 创建 `.venv`
-- 从仓库根目录使用 `uv run python -m backend.main` 或 `npm run dev` 启动，确保使用 uv 管理的 Python 环境
-
-### 2. 找不到 Python 脚本目录
-- 检查 `backend/engines` 是否完整
-- 先执行 `uv sync`，确保 `.venv` 和依赖已同步
-
-### 3. 打包后界面空白或资源缺失
-- 先执行 `cd frontend && npm run build`
-- 再执行 `uv run python -m backend.main`
-
-### 4. 批量任务速度不稳定
-- 调整 `max_concurrency`（通常 4-16 更稳）
-- 关闭不必要的大图预览，降低内存压力
-
----
-
-## 开发文档
-
-- **设计系统（样式与动效契约）：`docs/DESIGN.md`**
-- 后端架构：`docs/BACKEND_ARCHITECTURE.md`
-- 后端说明：`docs/BACKEND_README.md`
-- 压缩方案：`docs/image-compression.md`
-- 综合需求：`docs/ImageFlow 综合需求文档.md`
-- 开发指南：`docs/ImageFlow_Development_Guide_Final.md`
-- 迁移设计：`docs/superpowers/specs/2026-04-17-python-backend-migration-design.md`
-- 迁移计划：`docs/superpowers/plans/2026-04-17-python-backend-migration.md`
-
----
-
-## 贡献建议
-
-欢迎提交 Issue / PR。推荐流程：
-
-1. Fork 并创建特性分支
-2. 补充对应测试（优先 Python 处理脚本测试）
-3. 提交前执行构建与测试
-4. PR 中附上改动说明和验证步骤
-
----
-
-## License
-
-本项目采用 **MIT License**，详见 `LICENSE`。
+ImageFlow 由 [lllll081926i](https://github.com/lllll081926i) 维护，基于 [MIT License](./LICENSE) 发布。

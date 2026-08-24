@@ -6,6 +6,7 @@ import {
     summarizeBatchProgress,
     type BatchItemResult,
 } from './batchHelpers';
+import { runSequentialToolBatch } from './detail/batchRunners';
 
 describe('formatBytes', () => {
     it('formats bytes across unit boundaries', () => {
@@ -215,5 +216,52 @@ describe('summarizeBatchProgress', () => {
 
     it('never reports negative success counts', () => {
         expect(summarizeBatchProgress(2, 1, 5, false, '水印')).toContain('成功 0/2');
+    });
+});
+
+describe('runSequentialToolBatch', () => {
+    it('跳过冲突项、记录单项失败并继续处理后续文件', async () => {
+        const files = ['skip.png', 'bad.png', 'ok.png'];
+        const failures: Array<[string, unknown]> = [];
+        const progress: number[] = [];
+        const result = await runSequentialToolBatch({
+            files,
+            cancelRequestedRef: { current: false },
+            setCancelled: () => undefined,
+            resolveOutput: async (file) => file === 'skip.png' ? '' : `out/${file}`,
+            execute: async (file) => file === 'bad.png'
+                ? { success: false, error: 'disk full' }
+                : { success: true },
+            onFailure: (file, reason) => failures.push([file, reason]),
+            onProgress: (completed) => progress.push(completed),
+        });
+
+        expect(result).toEqual({ completed: 3, succeeded: 1, failed: 1, skipped: 1, cancelled: false });
+        expect(failures).toEqual([['bad.png', 'disk full']]);
+        expect(progress).toEqual([1, 2, 3]);
+    });
+
+    it('收到取消响应后不再启动后续项目', async () => {
+        const started: string[] = [];
+        const cancelledRef = { current: false };
+        const result = await runSequentialToolBatch({
+            files: ['one.png', 'cancel.png', 'never.png'],
+            cancelRequestedRef: cancelledRef,
+            setCancelled: (value) => { cancelledRef.current = value; },
+            resolveOutput: async (file) => `out/${file}`,
+            execute: async (file) => {
+                started.push(file);
+                return file === 'cancel.png'
+                    ? { success: false, error: '[PY_CANCELLED] operation cancelled' }
+                    : { success: true };
+            },
+            onFailure: () => undefined,
+            onProgress: () => undefined,
+        });
+
+        expect(started).toEqual(['one.png', 'cancel.png']);
+        expect(result.cancelled).toBe(true);
+        expect(result.completed).toBe(1);
+        expect(result.succeeded).toBe(1);
     });
 });

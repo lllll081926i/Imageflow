@@ -29,6 +29,12 @@ type UpdateCheckResult = {
     release_notes?: string;
     checked?: boolean;
     error?: string;
+    distribution_kind?: 'installed' | 'portable' | 'development';
+    platform?: string;
+    update_action?: 'install' | 'open_release';
+    installer_available?: boolean;
+    proxy_used?: boolean;
+    cached?: boolean;
 };
 
 const Section: React.FC<{
@@ -65,6 +71,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
     const [message, setMessage] = useState('');
     const [appVersion, setAppVersion] = useState('');
     const [updateBusy, setUpdateBusy] = useState(false);
+    const [installBusy, setInstallBusy] = useState(false);
     const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
 
     const maxConcurrency = useMemo(
@@ -93,8 +100,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
         setUpdateBusy(true);
         if (!silent) setMessage('');
         try {
-            const res = (await app.CheckForUpdates({ timeout_seconds: 8 })) as UpdateCheckResult;
-            setUpdateInfo(res || null);
+            const res = (await app.CheckForUpdates({ timeout_seconds: 8, force: !silent })) as UpdateCheckResult;
+            if (!silent || res?.checked || !res?.error) setUpdateInfo(res || null);
             if (res?.current_version) setAppVersion(String(res.current_version));
             if (!silent) {
                 if (res?.update_available) {
@@ -174,12 +181,59 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
         }
     };
 
-    const openReleasePage = () => {
+    const openReleasePage = async () => {
         const url = updateInfo?.release_url || 'https://github.com/lllll081926i/Imageflow/releases';
         try {
+            const app = getAppBindings() as any;
+            if (app?.OpenReleasePage) {
+                const result = await app.OpenReleasePage({ url });
+                if (result?.success === false) throw new Error(result?.error || '系统浏览器未能打开发布页');
+                return;
+            }
             window.open(url, '_blank', 'noopener,noreferrer');
-        } catch {
-            setMessage('无法打开发布页');
+        } catch (error: any) {
+            setMessage(error?.message ? `无法打开发布页：${error.message}` : '无法打开发布页');
+        }
+    };
+
+    const handleUpdate = async () => {
+        if (!updateInfo?.update_available) return;
+        if (updateInfo.update_action !== 'install') {
+            await openReleasePage();
+            return;
+        }
+
+        const version = String(updateInfo.latest_version || '').trim();
+        const confirmed = window.confirm(
+            `确认更新到 ImageFlow v${version}？\n\n软件将使用系统或环境中已配置的本地代理下载安装包，完成校验后启动安装程序。`,
+        );
+        if (!confirmed) return;
+
+        const app = getAppBindings() as any;
+        if (!app?.DownloadAndInstallUpdate) {
+            setMessage('当前桌面宿主不支持自动安装，请前往发布页更新');
+            await openReleasePage();
+            return;
+        }
+
+        setInstallBusy(true);
+        setMessage(`正在安全下载并校验 v${version}…`);
+        try {
+            const result = await app.DownloadAndInstallUpdate({ expected_version: version, timeout_seconds: 180 });
+            if (!result?.success) throw new Error(result?.error || '更新失败');
+            if (result.action === 'installer_started') {
+                setMessage('安装程序已启动，请按系统提示完成更新');
+                showToast('安装程序已启动', 'success');
+            } else if (result.action === 'release_page') {
+                setMessage('已在系统浏览器中打开发布页');
+            } else {
+                setMessage(result?.message || '当前已是最新版本');
+            }
+        } catch (error: any) {
+            setMessage(error?.message ? `更新失败：${error.message}` : '更新失败');
+            showToast('更新失败，请重试或前往发布页', 'error');
+        } finally {
+            setInstallBusy(false);
         }
     };
 
@@ -360,7 +414,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                             action={(
                                 <button
                                     type="button"
-                                    disabled={updateBusy || loading}
+                                    disabled={updateBusy || installBusy || loading}
                                     onClick={() => void runUpdateCheck(false)}
                                     className="px-3 py-2 rounded-xl text-sm border border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-200 hover:border-[#007AFF] hover:text-[#007AFF] transition-colors disabled:opacity-50"
                                 >
@@ -390,10 +444,15 @@ const SettingsView: React.FC<SettingsViewProps> = ({ themePreference, onThemeCha
                                             <span className="text-[#007AFF] text-xs font-medium">有可用更新</span>
                                             <button
                                                 type="button"
-                                                onClick={openReleasePage}
-                                                className="px-3 py-1.5 rounded-lg bg-[#007AFF] text-white text-xs font-semibold hover:bg-[#005ED0]"
+                                                disabled={installBusy}
+                                                onClick={() => void handleUpdate()}
+                                                className="spring-tap-sm px-3 py-1.5 rounded-lg bg-[#007AFF] text-white text-xs font-semibold hover:bg-[#005ED0] transition-all duration-300 disabled:opacity-60 disabled:cursor-wait"
                                             >
-                                                打开发布页
+                                                {installBusy
+                                                    ? '正在准备更新…'
+                                                    : updateInfo.update_action === 'install'
+                                                        ? '下载并安装'
+                                                        : '打开发布页'}
                                             </button>
                                         </div>
                                     )}

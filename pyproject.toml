@@ -1,18 +1,28 @@
 [project]
 name = "imageflow-backend"
-version = "2.2.2"
+version = "2.3.0"
+description = "Cross-platform image processing desktop application"
+authors = [{ name = "lllll081926i" }]
+license = "MIT"
+readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
   "pillow>=10.0.0",
   "reportlab>=4.0.0",
   "resvg-py>=0.4.0",
   "pillow-heif>=0.13.0",
-  "mozjpeg-lossless-optimization>=1.1.0",
+  "mozjpeg-lossless-optimization>=1.1.0; sys_platform != 'win32' or platform_machine != 'ARM64'",
   "imagequant>=1.0.0",
-  "pyoxipng>=1.0.0",
-  "pywebview>=5.3",
+  "pyoxipng>=1.0.0; sys_platform != 'win32' or platform_machine != 'ARM64'",
+  "pywebview>=5.3; sys_platform != 'linux'",
+  "pywebview[gtk]>=5.3; sys_platform == 'linux'",
   "pystray>=0.19",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lllll081926i/Imageflow"
+Repository = "https://github.com/lllll081926i/Imageflow"
+Issues = "https://github.com/lllll081926i/Imageflow/issues"
 
 [project.scripts]
 imageflow = "scripts.dev:main"

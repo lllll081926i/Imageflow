@@ -265,6 +265,9 @@ def _probe_animated_path_cached(input_path: str) -> dict[str, Any]:
 _THUMBNAIL_CACHE_LOCK = Lock()
 _THUMBNAIL_CACHE: OrderedDict[tuple[str, int, int, int], dict[str, Any]] = OrderedDict()
 _THUMBNAIL_CACHE_MAX = 256
+_THUMBNAIL_CACHE_MAX_BYTES = 32 * 1024 * 1024
+_THUMBNAIL_CACHE_MAX_ENTRY_BYTES = 8 * 1024 * 1024
+_THUMBNAIL_CACHE_BYTES = 0
 _THUMBNAIL_SOURCE_SUFFIXES = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp",
     ".avif", ".heic", ".heif", ".ico", ".tiff", ".tif",
@@ -273,6 +276,30 @@ _HEIF_MAIN_REGISTERED = False
 _DISK_CACHE_WRITE_COUNTER = {"n": 0}
 _DISK_CACHE_KEEP_FILES = 800
 _DISK_CACHE_PRUNE_EVERY = 128
+
+
+def _thumbnail_payload_bytes(value: dict[str, Any]) -> int:
+    data_url = value.get("data_url")
+    return len(data_url) if isinstance(data_url, str) else 0
+
+
+def _remember_thumbnail_cache(key: tuple[str, int, int, int], value: dict[str, Any]) -> None:
+    global _THUMBNAIL_CACHE_BYTES
+    entry_bytes = _thumbnail_payload_bytes(value)
+    if entry_bytes <= 0 or entry_bytes > _THUMBNAIL_CACHE_MAX_ENTRY_BYTES:
+        return
+    previous = _THUMBNAIL_CACHE.pop(key, None)
+    if previous is not None:
+        _THUMBNAIL_CACHE_BYTES -= _thumbnail_payload_bytes(previous)
+    _THUMBNAIL_CACHE[key] = value
+    _THUMBNAIL_CACHE_BYTES += entry_bytes
+    while _THUMBNAIL_CACHE and (
+        len(_THUMBNAIL_CACHE) > _THUMBNAIL_CACHE_MAX
+        or _THUMBNAIL_CACHE_BYTES > _THUMBNAIL_CACHE_MAX_BYTES
+    ):
+        _, evicted = _THUMBNAIL_CACHE.popitem(last=False)
+        _THUMBNAIL_CACHE_BYTES -= _thumbnail_payload_bytes(evicted)
+    _THUMBNAIL_CACHE_BYTES = max(0, _THUMBNAIL_CACHE_BYTES)
 
 
 def _thumbnail_disk_dir() -> Path | None:
@@ -668,10 +695,7 @@ class DesktopAPI:
             value = _load_or_render_thumbnail(key or ("", 0, 0, max_edge), suffix)
             if key is not None and value.get("width"):
                 with _THUMBNAIL_CACHE_LOCK:
-                    _THUMBNAIL_CACHE[key] = value
-                    _THUMBNAIL_CACHE.move_to_end(key)
-                    if len(_THUMBNAIL_CACHE) > _THUMBNAIL_CACHE_MAX:
-                        _THUMBNAIL_CACHE.popitem(last=False)
+                    _remember_thumbnail_cache(key, value)
             return {"success": True, **value}
         except FileNotFoundError:
             return {"success": False, "error": "[NOT_FOUND] file not found"}
@@ -680,18 +704,46 @@ class DesktopAPI:
 
 
     def get_app_version(self) -> dict:
-        from backend.infrastructure.app_version import read_local_version
-        return {"success": True, "version": read_local_version()}
+        from backend.infrastructure.app_version import read_distribution_info, read_local_version
+
+        distribution = read_distribution_info()
+        return {
+            "success": True,
+            "version": read_local_version(),
+            "distribution_kind": distribution["kind"],
+            "platform": distribution["platform"],
+        }
 
     def check_for_updates(self, payload: dict | None = None) -> dict:
         from backend.infrastructure.app_version import check_for_updates as do_check
         timeout = 8.0
+        force = False
         if isinstance(payload, dict):
             try:
                 timeout = float(payload.get("timeout_seconds") or 8.0)
             except (TypeError, ValueError):
                 timeout = 8.0
-        return do_check(timeout_seconds=timeout)
+            force = bool(payload.get("force", False))
+        return do_check(timeout_seconds=timeout, force=force)
+
+    def download_and_install_update(self, payload: dict | None = None) -> dict:
+        from backend.infrastructure.app_version import download_and_install_update as do_update
+
+        expected_version = ""
+        timeout = 120.0
+        if isinstance(payload, dict):
+            expected_version = str(payload.get("expected_version") or "").strip()
+            try:
+                timeout = float(payload.get("timeout_seconds") or 120.0)
+            except (TypeError, ValueError):
+                timeout = 120.0
+        return do_update(expected_version=expected_version, timeout_seconds=max(30.0, min(timeout, 600.0)))
+
+    def open_release_page(self, payload: dict | None = None) -> dict:
+        from backend.infrastructure.app_version import open_release_page
+
+        url = str(payload.get("url") or "").strip() if isinstance(payload, dict) else ""
+        return open_release_page(url or None)
 
 
     def open_path(self, payload: dict | None = None) -> dict:
@@ -799,6 +851,8 @@ _PASCAL_ALIASES = {
     "GetSettings": "get_settings",
     "GetAppVersion": "get_app_version",
     "CheckForUpdates": "check_for_updates",
+    "DownloadAndInstallUpdate": "download_and_install_update",
+    "OpenReleasePage": "open_release_page",
     "OpenPath": "open_path",
     "SaveSettings": "save_settings",
     "UpdateRecentPaths": "update_recent_paths",

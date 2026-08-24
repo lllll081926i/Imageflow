@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 export type ToastKind = 'success' | 'error' | 'info';
@@ -38,20 +38,23 @@ const KIND_DOT: Record<ToastKind, string> = {
 
 export const ToastHost: React.FC = () => {
     const [items, setItems] = useState<ToastItem[]>([]);
+    const timersRef = useRef<number[]>([]);
 
     useEffect(() => {
         const listener: ToastListener = (toast) => {
             setItems((prev) => [...prev.slice(-3), toast]);
-            window.setTimeout(() => {
+            timersRef.current.push(window.setTimeout(() => {
                 setItems((prev) => prev.map((item) => (item.id === toast.id ? { ...item, leaving: true } : item)));
-            }, VISIBLE_MS);
-            window.setTimeout(() => {
+            }, VISIBLE_MS));
+            timersRef.current.push(window.setTimeout(() => {
                 setItems((prev) => prev.filter((item) => item.id !== toast.id));
-            }, VISIBLE_MS + EXIT_MS);
+            }, VISIBLE_MS + EXIT_MS));
         };
         listeners.add(listener);
         return () => {
             listeners.delete(listener);
+            timersRef.current.forEach((timer) => window.clearTimeout(timer));
+            timersRef.current = [];
         };
     }, []);
 
@@ -60,7 +63,7 @@ export const ToastHost: React.FC = () => {
             {items.map((toast) => (
                 <div
                     key={toast.id}
-                    role="status"
+                    role={toast.kind === 'error' ? 'alert' : 'status'}
                     className={`spring-pop material-overlay border rounded-xl px-3.5 py-2 shadow-lg flex items-center gap-2 max-w-[320px] ${KIND_STYLES[toast.kind]} transition-all duration-200 ${toast.leaving ? 'overlay-exit' : ''}`}
                 >
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${KIND_DOT[toast.kind]}`} />

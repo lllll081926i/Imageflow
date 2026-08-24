@@ -7,14 +7,35 @@ export type ThumbnailTarget = {
     size?: number;
 };
 
-type CacheEntry = { dataUrl: string };
+type CacheEntry = { dataUrl: string; byteSize: number };
 
-const THUMB_CACHE_MAX = 600;
+const THUMB_CACHE_MAX = 320;
+const THUMB_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const THUMB_CACHE_MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_INFLIGHT = 4;
 const cache = new Map<string, CacheEntry>();
 const pending = new Map<string, Promise<string | null>>();
 const inflight: string[] = [];
 const queue: Array<{ key: string; run: () => void }> = [];
+let cacheBytes = 0;
+
+type IdleCapableWindow = Window & {
+    requestIdleCallback?: (
+        callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+        options?: { timeout: number },
+    ) => number;
+    cancelIdleCallback?: (handle: number) => void;
+};
+
+function scheduleThumbnailFetch(callback: () => void): () => void {
+    const idleWindow = window as IdleCapableWindow;
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+        const handle = idleWindow.requestIdleCallback(callback, { timeout: 180 });
+        return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+    const handle = window.setTimeout(callback, 32);
+    return () => window.clearTimeout(handle);
+}
 
 function cacheKey(file: ThumbnailTarget, maxEdge: number): string {
     const mtime = Number(file.mod_time) || 0;
@@ -22,12 +43,30 @@ function cacheKey(file: ThumbnailTarget, maxEdge: number): string {
     return `${file.input_path}|${mtime}|${size}|${maxEdge}`;
 }
 
-function rememberCache(key: string, entry: CacheEntry) {
-    if (cache.has(key)) cache.delete(key);
+function estimateDataUrlBytes(dataUrl: string): number {
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return dataUrl.length * 2;
+    const payloadLength = Math.max(0, dataUrl.length - comma - 1);
+    return Math.ceil(payloadLength * 0.75);
+}
+
+function rememberCache(key: string, dataUrl: string) {
+    const byteSize = estimateDataUrlBytes(dataUrl);
+    if (byteSize > THUMB_CACHE_MAX_ENTRY_BYTES) return;
+    const previous = cache.get(key);
+    if (previous) {
+        cacheBytes -= previous.byteSize;
+        cache.delete(key);
+    }
+    const entry: CacheEntry = { dataUrl, byteSize };
     cache.set(key, entry);
-    if (cache.size > THUMB_CACHE_MAX) {
+    cacheBytes += byteSize;
+    while (cache.size > THUMB_CACHE_MAX || cacheBytes > THUMB_CACHE_MAX_BYTES) {
         const oldest = cache.keys().next().value;
-        if (oldest !== undefined) cache.delete(oldest);
+        if (oldest === undefined) break;
+        const evicted = cache.get(oldest);
+        if (evicted) cacheBytes -= evicted.byteSize;
+        cache.delete(oldest);
     }
 }
 
@@ -35,6 +74,7 @@ function pumpQueue() {
     while (inflight.length < MAX_INFLIGHT && queue.length > 0) {
         const next = queue.shift();
         if (!next) break;
+        inflight.push(next.key);
         next.run();
     }
 }
@@ -44,7 +84,8 @@ function requestThumbnail(key: string, loader: () => Promise<string | null>): Pr
     if (existingPending) return existingPending;
     const promise = new Promise<string | null>((resolve) => {
         const run = () => {
-            loader()
+            Promise.resolve()
+                .then(loader)
                 .then((value) => resolve(value))
                 .catch(() => resolve(null))
                 .finally(() => {
@@ -60,6 +101,19 @@ function requestThumbnail(key: string, loader: () => Promise<string | null>): Pr
     pumpQueue();
     return promise;
 }
+
+// Narrow test seam for the process-wide scheduler. Keeping this here lets the
+// concurrency contract be verified without mounting hundreds of React rows.
+export const __thumbnailSchedulerForTests = {
+    request: requestThumbnail,
+    reset() {
+        cache.clear();
+        cacheBytes = 0;
+        pending.clear();
+        inflight.splice(0, inflight.length);
+        queue.splice(0, queue.length);
+    },
+};
 
 async function fetchThumbnailDataUrl(path: string, maxEdge: number): Promise<string | null> {
     const bindings = getAppBindings() as any;
@@ -95,17 +149,24 @@ export function useThumbnail(file: ThumbnailTarget | null, maxEdge = 56): string
         setDataUrl('');
         const path = file.input_path;
         const edge = maxEdge;
-        void requestThumbnail(key, async () => {
-            const value = await fetchThumbnailDataUrl(path, edge);
-            if (value) rememberCache(key, { dataUrl: value });
-            return value;
-        }).then((value) => {
-            if (!cancelled && value && currentKeyRef.current === key) {
-                setDataUrl(value);
-            }
+        // Thumbnail decoding/bridge traffic is deliberately started after the
+        // dropped-file list has painted, preventing the first visible rows from
+        // competing with the drop interaction itself.
+        const cancelScheduledFetch = scheduleThumbnailFetch(() => {
+            if (cancelled) return;
+            void requestThumbnail(key, async () => {
+                const value = await fetchThumbnailDataUrl(path, edge);
+                if (value) rememberCache(key, value);
+                return value;
+            }).then((value) => {
+                if (!cancelled && value && currentKeyRef.current === key) {
+                    setDataUrl(value);
+                }
+            });
         });
         return () => {
             cancelled = true;
+            cancelScheduledFetch();
         };
     }, [key, file?.input_path, maxEdge]);
 
@@ -121,18 +182,13 @@ export function usePreviewImage(path: string | null, maxEdge = 1024): string {
             return;
         }
         const key = `${path}|preview|${maxEdge}`;
-        const cached = cache.get(key);
-        if (cached) {
-            setDataUrl(cached.dataUrl);
-            return;
-        }
         let cancelled = false;
         setDataUrl('');
-        void requestThumbnail(key, async () => {
-            const value = await fetchThumbnailDataUrl(path, maxEdge);
-            if (value) rememberCache(key, { dataUrl: value });
-            return value;
-        }).then((value) => {
+        // Large previews deliberately bypass the long-lived thumbnail cache:
+        // reopening is still fast through the backend disk cache, while an
+        // overwritten file at the same path cannot show a stale preview and
+        // multiple 1024px base64 images do not occupy the renderer heap.
+        void requestThumbnail(key, () => fetchThumbnailDataUrl(path, maxEdge)).then((value) => {
             if (!cancelled && value) setDataUrl(value);
         });
         return () => {

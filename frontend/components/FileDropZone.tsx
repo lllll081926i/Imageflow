@@ -68,6 +68,24 @@ type RuntimeDropMarker = {
     expiresAt: number;
 };
 
+type IdleCapableWindow = Window & {
+    requestIdleCallback?: (
+        callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+        options?: { timeout: number },
+    ) => number;
+};
+
+const yieldBeforeDropScan = () => new Promise<void>((resolve) => {
+    const requestIdle = (window as IdleCapableWindow).requestIdleCallback;
+    if (typeof requestIdle !== 'function') {
+        resolve();
+        return;
+    }
+    // Let the renderer commit the drag-state exit and loading message before
+    // path expansion/list construction competes for the UI thread.
+    requestIdle(() => resolve(), { timeout: 48 });
+});
+
 const normalizePath = (p: string) => p.replace(/\\/g, '/');
 const pathKey = (p: string) => normalizePath(p).toLowerCase();
 const basename = (p: string) => normalizePath(p).split('/').pop() || p;
@@ -537,11 +555,32 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
             } : {}),
         };
     };
-    const snapshotSignature = useCallback((r: ExpandDroppedPathsResult | null) => {
-        if (!r) return '';
-        return `${r.has_directory ? 'd' : 'f'}#${r.truncated ? `t${r.max_files || ''}` : 'full'}#${r.files.length}#${
-            r.files.map((f) => `${f.input_path}|${f.size}|${f.mod_time}|${f.source_root}|${f.relative_path}|${f.is_from_dir_drop ? 'd' : 'f'}`).join(';')
-        }`;
+    const snapshotsEqual = useCallback((left: ExpandDroppedPathsResult | null, right: ExpandDroppedPathsResult | null) => {
+        if (left === right) return true;
+        if (!left || !right) return false;
+        if (
+            left.has_directory !== right.has_directory
+            || Boolean(left.truncated) !== Boolean(right.truncated)
+            || left.max_files !== right.max_files
+            || left.files.length !== right.files.length
+        ) {
+            return false;
+        }
+        for (let index = 0; index < left.files.length; index += 1) {
+            const a = left.files[index];
+            const b = right.files[index];
+            if (
+                a.input_path !== b.input_path
+                || a.size !== b.size
+                || a.mod_time !== b.mod_time
+                || a.source_root !== b.source_root
+                || a.relative_path !== b.relative_path
+                || a.is_from_dir_drop !== b.is_from_dir_drop
+            ) {
+                return false;
+            }
+        }
+        return true;
     }, []);
 
     const mergeAndPublishResult = useCallback((incoming: ExpandDroppedPathsResult) => {
@@ -556,7 +595,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
         }
         // Skip redundant publishes (e.g. background enrich that adds nothing new):
         // identical snapshots would just re-render the whole tree for nothing.
-        if (snapshotSignature(mergedSnapshot) === snapshotSignature(previewResultRef.current)) {
+        if (snapshotsEqual(mergedSnapshot, previewResultRef.current)) {
             return;
         }
         previewResultRef.current = mergedSnapshot;
@@ -564,7 +603,7 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
             setPreviewResult(mergedSnapshot);
             onPathsExpanded?.(mergedSnapshot);
         });
-    }, [acceptedExtensionSet, onPathsExpanded, snapshotSignature]);
+    }, [acceptedExtensionSet, onPathsExpanded, snapshotsEqual]);
     const markRuntimeDropAsHandled = useCallback((paths: string[]) => {
         if (paths.length === 0) {
             runtimeDropMarkerRef.current = null;
@@ -652,12 +691,18 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
         const hasResolved = Boolean(resolvedPaths && resolvedPaths.length > 0);
         beginSelectionStatus(hasResolved ? '正在加载...' : '正在解析文件路径...');
         try {
+            await yieldBeforeDropScan();
             // Fast path: known absolute paths — paint list immediately, refine in background.
             if (hasResolved && resolvedPaths) {
-                const quick = buildLocalExpandResult(files, resolvedPaths);
-                if (quick.files.length > 0) {
-                    mergeAndPublishResult(quick);
-                    setSelectionStatus('');
+                // A very large optimistic list would be built and rendered a
+                // second time after host expansion. Skip that duplicate work;
+                // the loading feedback is already visible after the idle yield.
+                if (files.length <= 64) {
+                    const quick = buildLocalExpandResult(files, resolvedPaths);
+                    if (quick.files.length > 0) {
+                        mergeAndPublishResult(quick);
+                        setSelectionStatus('');
+                    }
                 }
                 // Background enrich via host (size/mod_time accuracy for dirs); ignore failures.
                 try {
@@ -679,9 +724,11 @@ const FileDropZoneImpl: React.FC<FileDropZoneProps> = ({
                 : await resolveSelectedFilePaths(files);
             if (normalizedPaths.length > 0) {
                 // Optimistic list before host expand
-                const quick = buildLocalExpandResult(files, normalizedPaths);
-                if (quick.files.length > 0) {
-                    mergeAndPublishResult(quick);
+                if (files.length <= 64) {
+                    const quick = buildLocalExpandResult(files, normalizedPaths);
+                    if (quick.files.length > 0) {
+                        mergeAndPublishResult(quick);
+                    }
                 }
                 setSelectionStatus('正在扫描文件...');
             }

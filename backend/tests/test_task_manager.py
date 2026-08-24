@@ -162,6 +162,63 @@ class TaskManagerTests(unittest.TestCase):
         image_ops._pool_disabled = True
         image_ops.reset_process_pool_for_tests()
 
+    def test_pool_cancel_waits_for_running_job_and_cancels_only_queued_job(self):
+        image_ops._pool_disabled = False
+        image_ops.reset_process_pool_for_tests()
+        manager = TaskManager()
+        task_id = manager.begin_task("batch")
+
+        class FakeFuture:
+            def __init__(self, value, can_cancel):
+                self.value = value
+                self.can_cancel = can_cancel
+                self.result_called = False
+
+            def cancel(self):
+                return self.can_cancel
+
+            def result(self, timeout=None):
+                self.result_called = True
+                return self.value
+
+        running = FakeFuture({"success": True, "value": 1}, can_cancel=False)
+        queued = FakeFuture({"success": True, "value": 2}, can_cancel=True)
+        futures = [running, queued]
+
+        class FakePool:
+            def submit(self, *_args):
+                return futures.pop(0)
+
+        wait_calls = {"count": 0}
+
+        def fake_wait(pending, timeout=None, return_when=None):
+            wait_calls["count"] += 1
+            if wait_calls["count"] == 1:
+                manager.cancel_task(task_id)
+                return set(), set(pending)
+            self.assertEqual(set(pending), {running})
+            return {running}, set()
+
+        try:
+            with mock.patch.object(image_ops, "_get_pool", return_value=FakePool()):
+                with mock.patch.object(image_ops, "wait", side_effect=fake_wait):
+                    results = image_ops.execute_engine_batch(
+                        "converter",
+                        [{"value": 1}, {"value": 2}],
+                        AppSettings(max_concurrency=1),
+                        manager,
+                        task_id=task_id,
+                    )
+        finally:
+            manager.finish_task(task_id)
+            image_ops._pool_disabled = True
+            image_ops.reset_process_pool_for_tests()
+
+        self.assertTrue(running.result_called)
+        self.assertEqual(results[0], {"success": True, "value": 1})
+        self.assertFalse(results[1]["success"])
+        self.assertIn("[PY_CANCELLED]", results[1]["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

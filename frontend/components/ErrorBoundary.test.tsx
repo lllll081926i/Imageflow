@@ -5,6 +5,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
 import ErrorBoundary from './ErrorBoundary';
+import DetailView from './DetailView';
+import SettingsView from './SettingsView';
+import { FEATURES } from '../constants';
 
 function Boom(): React.ReactElement {
     throw new Error('render exploded');
@@ -22,6 +25,9 @@ describe('ErrorBoundary', () => {
 
     afterEach(() => {
         document.body.innerHTML = '';
+        if (typeof localStorage?.clear === 'function') localStorage.clear();
+        delete (window as { runtime?: unknown }).runtime;
+        delete (window as { pywebview?: unknown }).pywebview;
         vi.restoreAllMocks();
     });
 
@@ -99,6 +105,59 @@ describe('ErrorBoundary', () => {
         });
         expect(host.textContent).toContain('recovered');
         errorSpy.mockRestore();
+
+        await act(async () => {
+            root.unmount();
+        });
+    });
+
+    it('11 个工具页与设置页都能独立渲染并提供可操作入口', async () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const root = createRoot(host);
+
+        for (const feature of FEATURES) {
+            await act(async () => {
+                root.render(
+                    <ErrorBoundary title="页面渲染出错">
+                        <DetailView key={feature.id} id={feature.id} isActive={false} />
+                    </ErrorBoundary>,
+                );
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            expect(host.textContent, `${feature.title} 不应进入错误边界`).not.toContain('页面渲染出错');
+            expect(
+                host.querySelector(`[data-feature-id="${feature.id}"][aria-label="${feature.title}"]`),
+                `${feature.title} 应暴露正确的页面区域语义`,
+            ).toBeTruthy();
+            if (feature.id === 'richtext') {
+                expect(
+                    host.querySelector('textarea, [contenteditable="true"]'),
+                    `${feature.title} 应提供文字编辑入口`,
+                ).toBeTruthy();
+            } else {
+                expect(
+                    host.querySelector('[style*="--if-drop-target"]'),
+                    `${feature.title} 应提供文件拖放入口`,
+                ).toBeTruthy();
+            }
+            expect(host.querySelectorAll('button').length, `${feature.title} 应提供操作控件`).toBeGreaterThan(0);
+        }
+
+        await act(async () => {
+            root.render(
+                <ErrorBoundary title="页面渲染出错">
+                    <SettingsView themePreference="system" onThemeChange={vi.fn()} />
+                </ErrorBoundary>,
+            );
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(host.textContent).toContain('全局设置');
+        expect(host.textContent).not.toContain('页面渲染出错');
+        expect(host.querySelectorAll('button').length).toBeGreaterThan(0);
 
         await act(async () => {
             root.unmount();

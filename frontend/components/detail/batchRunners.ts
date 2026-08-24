@@ -213,6 +213,80 @@ export type RunDoneSummary = {
     skipped: number;
 };
 
+export type SequentialToolBatchResult = {
+    completed: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+    cancelled: boolean;
+};
+
+/**
+ * Shared runner for tools whose backend API currently accepts one image at a
+ * time. It centralizes skip/cancel/failure accounting and guarantees that one
+ * bad item does not abort the rest of the batch.
+ */
+export async function runSequentialToolBatch<TFile, TResult extends { success?: boolean; error?: unknown; error_code?: unknown }>(options: {
+    files: TFile[];
+    cancelRequestedRef: { current: boolean };
+    setCancelled: (value: boolean) => void;
+    resolveOutput: (file: TFile, sequence: number) => Promise<string>;
+    execute: (file: TFile, outputPath: string) => Promise<TResult | null | undefined>;
+    onFailure: (file: TFile, reason: unknown) => void;
+    onProgress: (completed: number, total: number) => void;
+}): Promise<SequentialToolBatchResult> {
+    const { files, cancelRequestedRef, setCancelled, resolveOutput, execute, onFailure, onProgress } = options;
+    let completed = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    const markCancelled = () => {
+        cancelRequestedRef.current = true;
+        setCancelled(true);
+    };
+
+    for (let index = 0; index < files.length; index += 1) {
+        if (cancelRequestedRef.current) break;
+        const file = files[index];
+        try {
+            const outputPath = await resolveOutput(file, index + 1);
+            if (!outputPath) {
+                skipped += 1;
+                completed += 1;
+                onProgress(completed, files.length);
+                continue;
+            }
+            const response = await execute(file, outputPath);
+            if (!response?.success) {
+                const reason = response?.error || response?.error_code || '处理失败';
+                if (isCancellationError(reason)) {
+                    markCancelled();
+                    break;
+                }
+                failed += 1;
+                onFailure(file, reason);
+            }
+        } catch (error) {
+            if (isCancellationError(error) || cancelRequestedRef.current) {
+                markCancelled();
+                break;
+            }
+            failed += 1;
+            onFailure(file, error);
+        }
+        completed += 1;
+        onProgress(completed, files.length);
+    }
+
+    return {
+        completed,
+        succeeded: Math.max(0, completed - failed - skipped),
+        failed,
+        skipped,
+        cancelled: cancelRequestedRef.current,
+    };
+}
+
 export async function runCompressBatch(options: {
     ctx: BatchRunnerContext;
     level: number;

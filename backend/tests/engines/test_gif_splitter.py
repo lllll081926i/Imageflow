@@ -387,6 +387,39 @@ class GifSplitterTests(unittest.TestCase):
             first_frame = img.convert("RGB")
             self.assertEqual(first_frame.getpixel((0, 0)), (0, 255, 0))
 
+    def test_reverse_gif_uses_disposal_aware_frame_extraction(self):
+        gif_path = self._make_transparent_gif()
+        output_path = self._path("sample_reverse_disposal.gif")
+        original_simple = gif_splitter.GIFTool._extract_gif_frames
+        original_disposal = gif_splitter.GIFTool._extract_gif_frames_with_disposal
+        calls = []
+
+        def reject_simple(*_args, **_kwargs):
+            raise AssertionError("reverse must not use disposal-blind extraction")
+
+        def track_disposal(self, gif):
+            calls.append(True)
+            return original_disposal(self, gif)
+
+        gif_splitter.GIFTool._extract_gif_frames = reject_simple
+        gif_splitter.GIFTool._extract_gif_frames_with_disposal = track_disposal
+        try:
+            result = handle_request({
+                "action": "reverse",
+                "input_path": gif_path,
+                "output_path": output_path,
+            })
+        finally:
+            gif_splitter.GIFTool._extract_gif_frames = original_simple
+            gif_splitter.GIFTool._extract_gif_frames_with_disposal = original_disposal
+
+        self.assertTrue(result.get("success"), result)
+        self.assertEqual(calls, [True])
+        with Image.open(output_path) as reversed_gif:
+            self.assertEqual(getattr(reversed_gif, "n_frames", 1), 4)
+            for frame in ImageSequence.Iterator(reversed_gif):
+                self.assertEqual(frame.convert("RGBA").getpixel((0, 0))[3], 0)
+
     def test_change_speed_success(self):
         gif_path = self._make_gif()
         output_path = self._path("sample_speed.gif")

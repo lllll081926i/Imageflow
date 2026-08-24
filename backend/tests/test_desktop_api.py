@@ -210,6 +210,41 @@ class DesktopAPITests(unittest.TestCase):
         self.assertFalse(missing["success"])
         self.assertIn("NOT_FOUND", missing["error"])
 
+    def test_thumbnail_memory_cache_enforces_entry_and_total_byte_budgets(self):
+        with desktop_api._THUMBNAIL_CACHE_LOCK:
+            previous_cache = desktop_api._THUMBNAIL_CACHE.copy()
+            previous_bytes = desktop_api._THUMBNAIL_CACHE_BYTES
+            previous_max = desktop_api._THUMBNAIL_CACHE_MAX
+            previous_max_bytes = desktop_api._THUMBNAIL_CACHE_MAX_BYTES
+            previous_entry_bytes = desktop_api._THUMBNAIL_CACHE_MAX_ENTRY_BYTES
+            desktop_api._THUMBNAIL_CACHE.clear()
+            desktop_api._THUMBNAIL_CACHE_BYTES = 0
+            desktop_api._THUMBNAIL_CACHE_MAX = 10
+            desktop_api._THUMBNAIL_CACHE_MAX_BYTES = 18
+            desktop_api._THUMBNAIL_CACHE_MAX_ENTRY_BYTES = 12
+
+        try:
+            first_key = ("D:/first.png", 1, 1, 56)
+            second_key = ("D:/second.png", 2, 2, 56)
+            oversized_key = ("D:/oversized.png", 3, 3, 56)
+            with desktop_api._THUMBNAIL_CACHE_LOCK:
+                desktop_api._remember_thumbnail_cache(first_key, {"data_url": "a" * 10})
+                desktop_api._remember_thumbnail_cache(second_key, {"data_url": "b" * 10})
+                desktop_api._remember_thumbnail_cache(oversized_key, {"data_url": "c" * 13})
+
+                self.assertNotIn(first_key, desktop_api._THUMBNAIL_CACHE)
+                self.assertIn(second_key, desktop_api._THUMBNAIL_CACHE)
+                self.assertNotIn(oversized_key, desktop_api._THUMBNAIL_CACHE)
+                self.assertEqual(desktop_api._THUMBNAIL_CACHE_BYTES, 10)
+        finally:
+            with desktop_api._THUMBNAIL_CACHE_LOCK:
+                desktop_api._THUMBNAIL_CACHE.clear()
+                desktop_api._THUMBNAIL_CACHE.update(previous_cache)
+                desktop_api._THUMBNAIL_CACHE_BYTES = previous_bytes
+                desktop_api._THUMBNAIL_CACHE_MAX = previous_max
+                desktop_api._THUMBNAIL_CACHE_MAX_BYTES = previous_max_bytes
+                desktop_api._THUMBNAIL_CACHE_MAX_ENTRY_BYTES = previous_entry_bytes
+
     def test_get_thumbnail_rejects_unsupported_extensions(self):
         app = create_app()
         text_path = (Path(self.temp_dir.name) / "note.txt").resolve()

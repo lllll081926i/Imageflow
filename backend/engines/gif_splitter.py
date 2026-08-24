@@ -122,15 +122,33 @@ class GIFTool:
             with Image.open(input_path) as gif:
                 if gif.format != "GIF":
                     raise ValueError("Input file is not a GIF")
-                frames, durations, gif_loop = self._extract_gif_frames(gif)
+                frames, durations, gif_loop, disposals = self._extract_gif_frames_with_disposal(gif)
             frames.reverse()
             durations.reverse()
+            disposals.reverse()
+
+            if target == "gif":
+                quantized_frames = []
+                for frame in frames:
+                    try:
+                        quantized_frames.append(self._quantize_rgba_frame(frame, 255))
+                    finally:
+                        frame.close()
+                frames = quantized_frames
 
             loop_value = gif_loop if loop is None else loop
             self._ensure_parent_dir(output_path)
             frame_count = len(frames)
             try:
-                self._save_processed_animation(frames, output_path, durations, loop_value, target)
+                self._save_processed_animation(
+                    frames,
+                    output_path,
+                    durations,
+                    loop_value,
+                    target,
+                    disposals=disposals,
+                    optimize=True,
+                )
             finally:
                 for frame in frames:
                     frame.close()

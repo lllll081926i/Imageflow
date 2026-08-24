@@ -80,7 +80,13 @@ import type { models } from '../types/backend-models';
 import { ConverterSettings } from './detail/ConverterSettingsPanel';
 import { CompressorSettings } from './detail/CompressorSettingsPanel';
 import { PdfSettings } from './detail/PdfSettingsPanel';
-import { runConvertBatch, runCompressBatch, type CompressBatchStats, type RunDoneSummary } from './detail/batchRunners';
+import {
+    runConvertBatch,
+    runCompressBatch,
+    runSequentialToolBatch,
+    type CompressBatchStats,
+    type RunDoneSummary,
+} from './detail/batchRunners';
 
 const DEFAULT_IMAGE_INPUT_EXTENSIONS = [
     '.jpg',
@@ -142,6 +148,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const [outputDir, setOutputDir] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [cancelRequested, setCancelRequested] = useState(false);
+    const [isExpandingPaths, setIsExpandingPaths] = useState(false);
     const cancelRequestedRef = useRef(false);
     const processingLockRef = useRef(false);
     const processingRunIdRef = useRef(0);
@@ -150,6 +157,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
         expansionCountRef.current = expanding
             ? expansionCountRef.current + 1
             : Math.max(0, expansionCountRef.current - 1);
+        setIsExpandingPaths(expansionCountRef.current > 0);
     }, []);
     const {
         progress,
@@ -1649,64 +1657,33 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 const gridSizeMap: Record<string, number> = { '四宫格': 2, '九宫格': 3, '十六宫格': 4 };
                 const sizeN = gridSizeMap[gridSize] ?? 3;
                 const fmt = (gridFormat || 'PNG').toLowerCase();
-                let failed = 0;
-                let skipped = 0;
-                let seq = 1;
-                for (const f of files) {
-                    if (cancelRequestedRef.current) break;
-                    const outputDir = await resolveToolOutputPath(f, {
+                const batch = await runSequentialToolBatch({
+                    files,
+                    cancelRequestedRef,
+                    setCancelled: setCancelRequested,
+                    resolveOutput: (f, seq) => resolveToolOutputPath(f, {
                         ext: '', suffix: '_grid', op: 'grid', seq,
-                    });
-                    if (!outputDir) {
-                        skipped++;
-                        completed++;
-                        seq++;
-                        setProgress((completed / files.length) * 100);
-                        continue;
-                    }
-                    try {
-                        const res = await appAny.CutImageGrid({
+                    }),
+                    execute: (f, outputDir) => appAny.CutImageGrid!({
                             input_path: normalizePath(f.input_path),
                             output_dir: outputDir,
                             grid_size: sizeN,
                             output_format: fmt,
-                        });
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                            failed++;
-                            reportTaskFailure('宫格切图', f.input_path, res?.error || res?.error_code, '切图失败');
-                        }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(`Failed to cut grid ${f.input_path}:`, err);
-                        failed++;
-                        reportTaskFailure('宫格切图', f.input_path, err, '切图失败');
-                    }
-                    completed++;
-                    seq++;
-                    setProgress((completed / files.length) * 100);
-                }
-                setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed - skipped);
-                const extraParts = [failed > 0 ? `失败 ${failed}` : '', skipped > 0 ? `跳过 ${skipped}` : ''].filter(Boolean);
+                    }),
+                    onFailure: (f, reason) => reportTaskFailure('宫格切图', f.input_path, reason, '切图失败'),
+                    onProgress: (done, total) => setProgress((done / total) * 100),
+                });
+                setProgress(batch.cancelled ? (batch.completed / files.length) * 100 : 100);
+                setRunSummary({ total: files.length, failed: batch.failed, skipped: batch.skipped, outputDir: outDir });
+                const extraParts = [batch.failed > 0 ? `失败 ${batch.failed}` : '', batch.skipped > 0 ? `跳过 ${batch.skipped}` : ''].filter(Boolean);
                 const extra = extraParts.length ? `（${extraParts.join('，')}）` : '';
-                if (cancelled || failed > 0 || skipped > 0) {
-                    setLastMessage(cancelled
-                        ? `切图已停止：成功 ${success}/${files.length} 项${extra}`
-                        : `切图失败：成功 ${success}/${files.length} 项${extra}`);
+                if (batch.cancelled || batch.failed > 0 || batch.skipped > 0) {
+                    setLastMessage(batch.cancelled
+                        ? `切图已停止：成功 ${batch.succeeded}/${files.length} 项${extra}`
+                        : `切图失败：成功 ${batch.succeeded}/${files.length} 项${extra}`);
                 } else {
                     const tilesPerImage = sizeN * sizeN;
-                    setLastMessage(`切图完成：${files.length} 张 → ${success * tilesPerImage} 块`);
+                    setLastMessage(`切图完成：${files.length} 张 → ${batch.succeeded * tilesPerImage} 块`);
                 }
                 return;
             }
@@ -1717,24 +1694,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 const fmtLc = (splitParams.format || 'PNG').toLowerCase();
-                let failed = 0;
-                let skipped = 0;
-                let seq = 1;
                 let tiles = 0;
-                for (const f of files) {
-                    if (cancelRequestedRef.current) break;
-                    const outputDir = await resolveToolOutputPath(f, {
+                const batch = await runSequentialToolBatch({
+                    files,
+                    cancelRequestedRef,
+                    setCancelled: setCancelRequested,
+                    resolveOutput: (f, seq) => resolveToolOutputPath(f, {
                         ext: '', suffix: '_split', op: 'split', seq,
-                    });
-                    if (!outputDir) {
-                        skipped++;
-                        completed++;
-                        seq++;
-                        setProgress((completed / files.length) * 100);
-                        continue;
-                    }
-                    try {
-                        const res = await appAny.SplitImage({
+                    }),
+                    execute: async (f, outputDir) => {
+                        const res = await appAny.SplitImage!({
                             input_path: normalizePath(f.input_path),
                             output_dir: outputDir,
                             rows: splitParams.rows,
@@ -1742,40 +1711,21 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             mode: splitParams.mode,
                             output_format: fmtLc,
                         });
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                            failed++;
-                            reportTaskFailure('图片布局', f.input_path, res?.error || res?.error_code, '分割失败');
-                        } else {
+                        if (res?.success) {
                             tiles += Number(res.tile_count) || 0;
                         }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(`Failed to split ${f.input_path}:`, err);
-                        failed++;
-                        reportTaskFailure('图片布局', f.input_path, err, '分割失败');
-                    }
-                    completed++;
-                    seq++;
-                    setProgress((completed / files.length) * 100);
-                }
-                setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed - skipped);
-                if (!cancelled && failed === 0 && skipped === 0) setLastMessage(`分割完成：${files.length} 张 → ${tiles} 块`);
-                else if (failed > 0 || skipped > 0 || cancelled) {
-                    setLastMessage(cancelled
-                        ? `分割已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
-                        : `分割失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
+                        return res;
+                    },
+                    onFailure: (f, reason) => reportTaskFailure('图片布局', f.input_path, reason, '分割失败'),
+                    onProgress: (done, total) => setProgress((done / total) * 100),
+                });
+                setProgress(batch.cancelled ? (batch.completed / files.length) * 100 : 100);
+                setRunSummary({ total: files.length, failed: batch.failed, skipped: batch.skipped, outputDir: outDir });
+                if (!batch.cancelled && batch.failed === 0 && batch.skipped === 0) setLastMessage(`分割完成：${files.length} 张 → ${tiles} 块`);
+                else if (batch.failed > 0 || batch.skipped > 0 || batch.cancelled) {
+                    setLastMessage(batch.cancelled
+                        ? `分割已停止：成功 ${batch.succeeded}/${files.length}${batch.skipped ? `（跳过 ${batch.skipped}）` : ''}`
+                        : `分割失败：成功 ${batch.succeeded}/${files.length}（失败 ${batch.failed}${batch.skipped ? `，跳过 ${batch.skipped}` : ''}）`);
                 }
                 return;
             }
@@ -1786,23 +1736,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     return;
                 }
                 const style: WatermarkStyle = wmParams;
-                let failed = 0;
-                let skipped = 0;
-                let seq = 1;
-                for (const f of files) {
-                    if (cancelRequestedRef.current) break;
-                    const outputPath = await resolveToolOutputPath(f, {
+                const batch = await runSequentialToolBatch({
+                    files,
+                    cancelRequestedRef,
+                    setCancelled: setCancelRequested,
+                    resolveOutput: (f, seq) => resolveToolOutputPath(f, {
                         ext: 'png', suffix: '_wm', op: 'watermark', seq,
-                    });
-                    if (!outputPath) {
-                        skipped++;
-                        completed++;
-                        seq++;
-                        setProgress((completed / files.length) * 100);
-                        continue;
-                    }
-                    try {
-                        const res = await appAny.AddWatermark({
+                    }),
+                    execute: (f, outputPath) => appAny.AddWatermark!({
                             action: 'apply',
                             input_path: normalizePath(f.input_path),
                             output_path: outputPath,
@@ -1821,38 +1762,16 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                             stroke_width: style.strokeWidth,
                             stroke_color: style.strokeColor,
                             shadow: style.shadow,
-                        });
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                            failed++;
-                            reportTaskFailure('批量水印', f.input_path, res?.error || res?.error_code, '水印失败');
-                        }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(`Watermark failed ${f.input_path}:`, err);
-                        failed++;
-                        reportTaskFailure('批量水印', f.input_path, err, '水印失败');
-                    }
-                    completed++;
-                    seq++;
-                    setProgress((completed / files.length) * 100);
-                }
-                setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed - skipped);
-                if (!(cancelled || failed > 0 || skipped > 0)) setLastMessage(`水印完成：成功 ${success}/${files.length}`);
-                else setLastMessage(cancelled
-                    ? `水印已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
-                    : `水印失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
+                    }),
+                    onFailure: (f, reason) => reportTaskFailure('批量水印', f.input_path, reason, '水印失败'),
+                    onProgress: (done, total) => setProgress((done / total) * 100),
+                });
+                setProgress(batch.cancelled ? (batch.completed / files.length) * 100 : 100);
+                setRunSummary({ total: files.length, failed: batch.failed, skipped: batch.skipped, outputDir: outDir });
+                if (!(batch.cancelled || batch.failed > 0 || batch.skipped > 0)) setLastMessage(`水印完成：成功 ${batch.succeeded}/${files.length}`);
+                else setLastMessage(batch.cancelled
+                    ? `水印已停止：成功 ${batch.succeeded}/${files.length}${batch.skipped ? `（跳过 ${batch.skipped}）` : ''}`
+                    : `水印失败：成功 ${batch.succeeded}/${files.length}（失败 ${batch.failed}${batch.skipped ? `，跳过 ${batch.skipped}` : ''}）`);
                 return;
             }
 
@@ -1861,12 +1780,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     setLastMessage('后端未接入尺寸调整接口');
                     return;
                 }
-                let failed = 0;
                 const SAFE_OUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff']);
-                let skipped = 0;
-                let seq = 1;
-                for (const f of files) {
-                    if (cancelRequestedRef.current) break;
+                const batch = await runSequentialToolBatch({
+                    files,
+                    cancelRequestedRef,
+                    setCancelled: setCancelRequested,
+                    resolveOutput: (f, seq) => {
                     const origExt = extname(f.input_path) || 'png';
                     let outExt: string;
                     if (resizeParams.format === 'auto') {
@@ -1874,55 +1793,26 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     } else {
                         outExt = resizeParams.format.toLowerCase();
                     }
-                    const outputPath = await resolveToolOutputPath(f, {
+                        return resolveToolOutputPath(f, {
                         ext: outExt, suffix: '_resized', op: 'resize', seq,
-                    });
-                    if (!outputPath) {
-                        skipped++;
-                        completed++;
-                        seq++;
-                        setProgress((completed / files.length) * 100);
-                        continue;
-                    }
-                    try {
-                        const res = await appAny.ResizeImage({
+                        });
+                    },
+                    execute: (f, outputPath) => appAny.ResizeImage!({
                             input_path: normalizePath(f.input_path),
                             output_path: outputPath,
                             mode: resizeParams.mode,
                             value: resizeParams.value,
                             output_format: resizeParams.format === 'auto' ? undefined : resizeParams.format.toLowerCase(),
-                        });
-                        if (!res?.success) {
-                            if (isCancellationError(res?.error)) {
-                                cancelRequestedRef.current = true;
-                                setCancelRequested(true);
-                                break;
-                            }
-                            failed++;
-                            reportTaskFailure('尺寸调整', f.input_path, res?.error || res?.error_code, '调整失败');
-                        }
-                    } catch (err) {
-                        if (isCancellationError(err) || cancelRequestedRef.current) {
-                            cancelRequestedRef.current = true;
-                            setCancelRequested(true);
-                            break;
-                        }
-                        console.error(`Resize failed ${f.input_path}:`, err);
-                        failed++;
-                        reportTaskFailure('尺寸调整', f.input_path, err, '调整失败');
-                    }
-                    completed++;
-                    seq++;
-                    setProgress((completed / files.length) * 100);
-                }
-                setProgress(100);
-                setRunSummary({ total: files.length, failed, skipped, outputDir: outDir });
-                const cancelled = cancelRequestedRef.current;
-                const success = Math.max(0, files.length - failed - skipped);
-                if (!(cancelled || failed > 0 || skipped > 0)) setLastMessage(`尺寸调整完成：成功 ${success}/${files.length}`);
-                else setLastMessage(cancelled
-                    ? `已停止：成功 ${success}/${files.length}${skipped ? `（跳过 ${skipped}）` : ''}`
-                    : `失败：成功 ${success}/${files.length}（失败 ${failed}${skipped ? `，跳过 ${skipped}` : ''}）`);
+                    }),
+                    onFailure: (f, reason) => reportTaskFailure('尺寸调整', f.input_path, reason, '调整失败'),
+                    onProgress: (done, total) => setProgress((done / total) * 100),
+                });
+                setProgress(batch.cancelled ? (batch.completed / files.length) * 100 : 100);
+                setRunSummary({ total: files.length, failed: batch.failed, skipped: batch.skipped, outputDir: outDir });
+                if (!(batch.cancelled || batch.failed > 0 || batch.skipped > 0)) setLastMessage(`尺寸调整完成：成功 ${batch.succeeded}/${files.length}`);
+                else setLastMessage(batch.cancelled
+                    ? `已停止：成功 ${batch.succeeded}/${files.length}${batch.skipped ? `（跳过 ${batch.skipped}）` : ''}`
+                    : `失败：成功 ${batch.succeeded}/${files.length}（失败 ${batch.failed}${batch.skipped ? `，跳过 ${batch.skipped}` : ''}）`);
                 return;
             }
 
@@ -2045,7 +1935,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                 return;
             }
 
-            setLastMessage('该功能暂未接入');
+            setLastMessage('当前工具不支持此处理操作');
         } catch (e: any) {
             console.error(e);
             reportBatchTaskFailure(feature.title, currentRunFiles.length > 0 ? currentRunFiles : (dropResult?.files || []), e, '处理失败');
@@ -2112,7 +2002,9 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     <span className="text-gray-500 dark:text-gray-400 font-mono text-xs">{inputCount}</span>
                 </div>
                 <button
+                    type="button"
                     onClick={handleSelectOutputDir}
+                    disabled={isProcessing}
                     className="shrink-0 px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-all text-[13px] font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-[#2C2C2E]"
                 >
                     选择输出位置
@@ -2128,6 +2020,8 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             )}
             {lastMessage && (
                 <div
+                    role="status"
+                    aria-live="polite"
                     className="text-xs text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 break-all"
                     style={clampTwoLinesStyle}
                 >
@@ -2160,7 +2054,7 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     const renderActionContent = (compact = false) => (
         <>
             {!isProcessing && runSummary && runSummary.total > 0 && (
-                <div className="text-xs rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 space-y-1.5 spring-enter">
+                <div role="status" aria-live="polite" className="text-xs rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 space-y-1.5 spring-enter">
                     <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-gray-700 dark:text-gray-200">处理完成</span>
                         <span className="text-gray-500 dark:text-gray-400">
@@ -2182,12 +2076,14 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
                     )}
                     <div className="flex items-center gap-2 pt-0.5">
                         <button
+                            type="button"
                             onClick={() => void handleOpenOutputDir()}
                             className="spring-tap-sm flex-1 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-[11px] font-medium text-gray-700 dark:text-gray-200 hover:bg-white dark:hover:bg-white/10 transition-colors"
                         >
                             打开目录
                         </button>
                         <button
+                            type="button"
                             onClick={() => { void handleStartProcessing(); }}
                             className="spring-tap-sm flex-1 py-1.5 rounded-lg bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD] text-[11px] font-medium text-white shadow-sm shadow-blue-500/25 transition-colors"
                         >
@@ -2201,11 +2097,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
             )}
             {id !== 'palette' && (
                 <button
+                    type="button"
                     onClick={isProcessing ? requestCancelProcessing : () => { void handleStartProcessing(); }}
-                    disabled={isProcessing && cancelRequested}
-                    className={`spring-tap-sm w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 text-white transition-all duration-300 ${isProcessing ? (cancelRequested ? 'bg-gray-400 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-600') : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]'}`}
+                    disabled={(isProcessing && cancelRequested) || (!isProcessing && isExpandingPaths)}
+                    className={`spring-tap-sm w-full ${compact ? 'py-3' : 'py-3.5'} rounded-xl font-semibold shadow-lg flex items-center justify-center gap-2 text-white transition-all duration-300 ${(isProcessing && cancelRequested) || (!isProcessing && isExpandingPaths) ? 'bg-gray-400 cursor-not-allowed shadow-none' : isProcessing ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20' : 'bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD] shadow-blue-500/25'}`}
                 >
-                    <Icon name={isProcessing ? 'Close' : 'ArrowRight'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : '开始处理'}
+                    <Icon name={isProcessing ? 'Close' : 'ArrowRight'} size={18} /> {isProcessing ? (cancelRequested ? '停止中...' : '停止处理') : isExpandingPaths ? '正在读取文件...' : '开始处理'}
                 </button>
             )}
         </>
@@ -2253,7 +2150,12 @@ const DetailView: React.FC<DetailViewProps> = ({ id, isActive = true, onTaskFail
     );
 
     return (
-        <div className="imageflow-detail-page imageflow-detail-page--standard min-h-full flex flex-col p-1">
+        <div
+            className="imageflow-detail-page imageflow-detail-page--standard min-h-full flex flex-col p-1"
+            data-feature-id={feature.id}
+            role="region"
+            aria-label={feature.title}
+        >
             <div className="imageflow-detail-layout imageflow-detail-layout--standard flex-1 gap-6 min-h-0">
                 {id === 'grid' ? (
                     <div className="h-full min-h-0 flex flex-col gap-3 min-w-0">

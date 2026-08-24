@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_APP_SETTINGS, getAppBindings, normalizeAppSettings, pushRecentPath } from './app-api';
+import { __thumbnailSchedulerForTests } from '../components/thumbnails';
 
 type MutableWindow = Window & {
     pywebview?: { api?: unknown };
@@ -40,5 +41,43 @@ describe('normalizeAppSettings', () => {
 
         expect(normalized.recent_input_dirs).toEqual(['D:\\Input', 'E:/Other']);
         expect(pushRecentPath(['D:\\Input'], 'd:/input///')).toEqual(['d:/input']);
+    });
+});
+
+describe('thumbnail request scheduler', () => {
+    afterEach(() => {
+        __thumbnailSchedulerForTests.reset();
+    });
+
+    it('同一时刻最多执行四个缩略图解码请求', async () => {
+        let active = 0;
+        let maxActive = 0;
+        const releases: Array<() => void> = [];
+        const requests = Array.from({ length: 9 }, (_, index) => (
+            __thumbnailSchedulerForTests.request(`thumb-${index}`, async () => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+                await new Promise<void>((resolve) => releases.push(resolve));
+                active -= 1;
+                return `data:image/webp;base64,${index}`;
+            })
+        ));
+
+        await Promise.resolve();
+        expect(active).toBe(4);
+        expect(maxActive).toBe(4);
+
+        let released = 0;
+        while (released < requests.length) {
+            while (releases.length === 0) {
+                await Promise.resolve();
+            }
+            const batch = releases.splice(0);
+            released += batch.length;
+            batch.forEach((release) => release());
+            await Promise.resolve();
+        }
+        await Promise.all(requests);
+        expect(maxActive).toBe(4);
     });
 });

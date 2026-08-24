@@ -37,7 +37,6 @@
 .spring-tap {
     transition: transform var(--if-motion-fast) var(--if-spring-snappy),
         box-shadow var(--if-motion-fast) ease;
-    will-change: transform;
 }
 
 .spring-tap:hover {
@@ -51,7 +50,6 @@
 
 .spring-tap-sm {
     transition: transform var(--if-motion-fast) var(--if-spring-snappy);
-    will-change: transform;
 }
 
 .spring-tap-sm:active {
@@ -66,7 +64,6 @@
 .spring-lift {
     transition: transform var(--if-motion-base) var(--if-spring-soft),
         box-shadow var(--if-motion-base) ease;
-    will-change: transform;
 }
 
 .spring-lift:hover {
@@ -84,7 +81,6 @@
 
 .spring-enter {
     animation: if-spring-enter var(--if-motion-base) var(--if-spring-snappy) both;
-    will-change: transform, opacity;
 }
 
 @keyframes if-spring-enter {
@@ -106,7 +102,6 @@
 .spring-pop {
     animation: if-spring-pop var(--if-motion-base) var(--if-spring-snappy) both;
     transform-origin: center;
-    will-change: transform, opacity;
 }
 
 @keyframes if-spring-pop {
@@ -127,12 +122,10 @@
 /* Slide-in used by page transitions; direction set via data attribute. */
 .spring-page-forward {
     animation: if-spring-page-forward var(--if-motion-slow) var(--if-spring-gentle) both;
-    will-change: transform, opacity;
 }
 
 .spring-page-backward {
     animation: if-spring-page-backward var(--if-motion-slow) var(--if-spring-gentle) both;
-    will-change: transform, opacity;
 }
 
 @keyframes if-spring-page-forward {
@@ -166,7 +159,6 @@
 
 .spring-stagger > * {
     animation: if-spring-enter var(--if-motion-base) var(--if-spring-snappy) both;
-    will-change: transform, opacity;
 }
 
 .spring-stagger > *:nth-child(1) { animation-delay: 0ms; }
@@ -195,7 +187,7 @@
 /* ---------------------------------------------------------------- */
 
 .spring-progress-fill {
-    transition: width var(--if-motion-base) var(--if-spring-gentle);
+    transition: transform var(--if-motion-base) var(--if-spring-gentle);
 }
 
 /* Switch thumb: springy slide between states. */
@@ -210,18 +202,14 @@
 
 /* Sidebar active indicator: glides between items with a soft spring. */
 .spring-indicator {
-    transition: top var(--if-motion-slow) var(--if-spring-soft),
-        height var(--if-motion-slow) var(--if-spring-soft),
-        width var(--if-motion-slow) var(--if-spring-soft);
+    transition: transform var(--if-motion-slow) var(--if-spring-soft),
+        opacity var(--if-motion-base) ease;
 }
 
 /* Segmented control pill: springy glide. The control moves the pill via
  * transform: translateX, so transform MUST be in the transition list. */
 .spring-segment-pill {
-    transition: transform var(--if-motion-base) var(--if-spring-snappy),
-        left var(--if-motion-base) var(--if-spring-snappy),
-        width var(--if-motion-base) var(--if-spring-snappy);
-    will-change: transform;
+    transition: transform var(--if-motion-base) var(--if-spring-snappy);
 }
 
 /* Collapsible sections: height animation via grid-template-columns trick
@@ -254,15 +242,25 @@
 }
 
 /* Page exit: brief damped slide before the incoming view springs in. */
-.spring-page-exit {
-    animation: if-page-exit 130ms var(--if-ease-out-quiet) both;
-    will-change: transform, opacity;
+.spring-page-exit-forward {
+    animation: if-page-exit-forward 130ms var(--if-ease-out-quiet) both;
 }
 
-@keyframes if-page-exit {
+.spring-page-exit-backward {
+    animation: if-page-exit-backward 130ms var(--if-ease-out-quiet) both;
+}
+
+@keyframes if-page-exit-forward {
     to {
         opacity: 0;
         transform: translate3d(-10px, 0, 0);
+    }
+}
+
+@keyframes if-page-exit-backward {
+    to {
+        opacity: 0;
+        transform: translate3d(10px, 0, 0);
     }
 }
 
@@ -331,6 +329,14 @@
 /* ---------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
+    .imageflow-app-shell *,
+    .imageflow-app-shell *::before,
+    .imageflow-app-shell *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }
     .spring-tap,
     .spring-tap-sm,
     .spring-lift,
@@ -368,11 +374,21 @@ html.reduced-motion .spring-collapse {
     transition-duration: 0ms !important;
 }
 
+html.reduced-motion .imageflow-app-shell *,
+html.reduced-motion .imageflow-app-shell *::before,
+html.reduced-motion .imageflow-app-shell *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+}
+
 html.reduced-motion .overlay-exit,
 html.reduced-motion .bell-ring,
 html.reduced-motion .thumb-shimmer,
 html.reduced-motion .dropzone-orb,
 html.reduced-motion .progress-fill-done,
-html.reduced-motion .spring-page-exit {
+html.reduced-motion .spring-page-exit-forward,
+html.reduced-motion .spring-page-exit-backward {
     animation: none !important;
 }

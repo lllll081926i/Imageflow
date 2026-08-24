@@ -67,7 +67,20 @@ def main() -> None:
         except Exception:
             pass
 
-    threading.Thread(target=_warm_runtime, name="imageflow-warmup", daemon=True).start()
+    warmup_started = threading.Event()
+
+    def _schedule_runtime_warmup() -> None:
+        # Start the delay only after WebView reports its document as loaded.
+        # Starting it before webview.start() made slow machines spawn workers
+        # while the first frame was still competing for CPU and disk I/O.
+        if warmup_started.is_set():
+            return
+        warmup_started.set()
+        threading.Thread(target=_warm_runtime, name="imageflow-warmup", daemon=True).start()
+
+    loaded_event = getattr(getattr(window, "events", None), "loaded", None)
+    if loaded_event is not None:
+        loaded_event += _schedule_runtime_warmup
     webview.start()
 
 

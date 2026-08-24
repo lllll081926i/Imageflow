@@ -12,6 +12,12 @@ const DetailView = React.lazy(() => import('./components/DetailView'));
 const SettingsView = React.lazy(() => import('./components/SettingsView'));
 
 const FEATURE_IDS = FEATURES.map((feature) => feature.id) as FeatureId[];
+const VIEW_ORDER: ViewState[] = [...FEATURE_IDS, 'settings'];
+const PAGE_EXIT_MS = 130;
+
+const viewDirection = (current: ViewState, next: ViewState): 'left' | 'right' => (
+    VIEW_ORDER.indexOf(next) >= VIEW_ORDER.indexOf(current) ? 'right' : 'left'
+);
 
 const isFeatureId = (view: ViewState): view is FeatureId => FEATURE_IDS.includes(view as FeatureId);
 
@@ -48,6 +54,7 @@ const App: React.FC = () => {
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const [bellShakeKey, setBellShakeKey] = useState(0);
     const closeNotificationTimerRef = useRef<number | null>(null);
+    const navigationTimerRef = useRef<number | null>(null);
     const notificationContainerRef = useRef<HTMLDivElement | null>(null);
     const pageTransitionRef = useRef<HTMLDivElement | null>(null);
     const isFeatureView = isFeatureId(activeView);
@@ -73,6 +80,10 @@ const App: React.FC = () => {
             if (closeNotificationTimerRef.current) {
                 window.clearTimeout(closeNotificationTimerRef.current);
                 closeNotificationTimerRef.current = null;
+            }
+            if (navigationTimerRef.current) {
+                window.clearTimeout(navigationTimerRef.current);
+                navigationTimerRef.current = null;
             }
             window.removeEventListener('dragover', preventDefault);
             window.removeEventListener('drop', preventDefault);
@@ -128,23 +139,36 @@ const App: React.FC = () => {
     };
 
     const handleNavigate = useCallback((view: ViewState) => {
-        setDirection('right');
+        setDirection(viewDirection(activeView, view));
         setActiveView(view);
-    }, []);
+    }, [activeView]);
 
     const navigateWithExit = useCallback((view: ViewState) => {
-        if (view === activeView) return;
+        if (navigationTimerRef.current) {
+            window.clearTimeout(navigationTimerRef.current);
+            navigationTimerRef.current = null;
+        }
         const container = pageTransitionRef.current;
+        if (view === activeView) {
+            container?.classList.remove('spring-page-exit-forward', 'spring-page-exit-backward');
+            return;
+        }
         const reduced = document.documentElement.classList.contains('reduced-motion');
         if (!container || reduced) {
             handleNavigate(view);
             return;
         }
-        container.classList.add('spring-page-exit');
-        window.setTimeout(() => {
-            container.classList.remove('spring-page-exit');
+        const exitClass = viewDirection(activeView, view) === 'left'
+            ? 'spring-page-exit-backward'
+            : 'spring-page-exit-forward';
+        container.classList.remove('spring-page-exit-forward', 'spring-page-exit-backward');
+        void container.offsetWidth;
+        container.classList.add(exitClass);
+        navigationTimerRef.current = window.setTimeout(() => {
+            navigationTimerRef.current = null;
+            container.classList.remove('spring-page-exit-forward', 'spring-page-exit-backward');
             handleNavigate(view);
-        }, 130);
+        }, PAGE_EXIT_MS);
     }, [activeView, handleNavigate]);
 
     const handleTaskFailure = useCallback((payload: { taskName: string; imageName: string; reason: string }) => {
@@ -268,6 +292,7 @@ const App: React.FC = () => {
                             aria-expanded={isNotificationOpen}
                             aria-haspopup="dialog"
                             aria-controls="notification-panel"
+                            aria-label={`任务通知，${failureNotifications.length} 条${hasUnreadNotifications ? '，有未读' : ''}`}
                             onClick={handleNotificationButtonClick}
                         >
                             <span key={bellShakeKey} className={hasUnreadNotifications ? 'bell-ring' : ''}>
@@ -281,6 +306,8 @@ const App: React.FC = () => {
                             id="notification-panel"
                             role="dialog"
                             aria-label="任务通知"
+                            aria-hidden={!isNotificationOpen}
+                            inert={!isNotificationOpen}
                             className={`material-overlay absolute right-0 top-10 w-[320px] max-h-[360px] overflow-hidden rounded-xl border border-gray-200/80 dark:border-white/10 shadow-xl z-[120] origin-top-right transition-all duration-150 ease-out ${isNotificationOpen ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto' : 'opacity-0 -translate-y-1 scale-95 pointer-events-none'}`}
                         >
                             <div className="px-3 py-2 border-b border-gray-100 dark:border-white/10 flex items-center justify-between gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">
@@ -321,6 +348,9 @@ const App: React.FC = () => {
                     </div>}
                     <button 
                         onClick={cycleTheme}
+                        type="button"
+                        aria-label={`切换主题，当前为${themePreference === 'system' ? '跟随系统' : resolvedTheme === 'light' ? '浅色' : '深色'}`}
+                        title="切换主题"
                         className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-200 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-all active:scale-90 cursor-pointer z-50"
                     >
                         <Icon name={themePreference === 'system' ? 'Monitor' : resolvedTheme === 'light' ? 'Moon' : 'Sun'} size={15} />

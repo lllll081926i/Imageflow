@@ -9,7 +9,8 @@ import { getAppBindings, resolveSelectedFilePaths } from '../types/app-api';
 export const Switch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; label?: string }> = memo(({ checked, onChange, label }) => (
     <button
         type="button"
-        aria-pressed={checked}
+        role="switch"
+        aria-checked={checked}
         aria-label={label || '切换开关'}
         onClick={() => onChange(!checked)}
         className="w-full flex items-center justify-between cursor-pointer group select-none text-left"
@@ -22,10 +23,11 @@ export const Switch: React.FC<{ checked: boolean; onChange: (checked: boolean) =
 ));
 
 export const SegmentedControl: React.FC<{ options: string[]; value: string; onChange: (val: string) => void }> = memo(({ options, value, onChange }) => {
-    const activeIndex = options.indexOf(value);
+    const activeIndex = Math.max(0, options.indexOf(value));
+    if (options.length === 0) return null;
     
     return (
-        <div className="relative flex bg-gray-100 dark:bg-black/20 p-1 rounded-xl isolate">
+        <div className="relative flex bg-gray-100 dark:bg-black/20 p-1 rounded-xl isolate" role="tablist">
             <div 
                 className="spring-segment-pill absolute top-1 bottom-1 bg-white dark:bg-[#636366] shadow-[0_1px_3px_0_rgba(0,0,0,0.1)] rounded-lg"
                 style={{
@@ -37,6 +39,9 @@ export const SegmentedControl: React.FC<{ options: string[]; value: string; onCh
             {options.map((opt) => (
                 <button
                     key={opt}
+                    type="button"
+                    role="tab"
+                    aria-selected={value === opt}
                     onClick={() => onChange(opt)}
                     className={`relative flex-1 min-w-0 py-1.5 text-sm font-medium z-10 transition-colors duration-200 select-none truncate px-1 ${
                         value === opt 
@@ -52,11 +57,12 @@ export const SegmentedControl: React.FC<{ options: string[]; value: string; onCh
 });
 
 export const StyledSlider: React.FC<{ label?: string; value: number; min?: number; max?: number; unit?: string; onChange: (val: number) => void; step?: number; className?: string }> = memo(({ label, value, min = 0, max = 100, unit = "", onChange, step = 1, className = "" }) => {
-    const percent = ((value - min) / (max - min)) * 100;
+    const range = max - min;
+    const percent = range > 0 ? Math.max(0, Math.min(100, ((value - min) / range) * 100)) : 0;
     const inputLabel = unit ? `${label ?? '数值'} (${unit})` : label ?? '数值';
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        let val = parseInt(e.target.value);
+        let val = Number(e.target.value);
         if (isNaN(val)) val = 0;
         // Allow temporary invalid input but clamp on blur or submit if needed
         // For now, clamp strictly to ensure valid state
@@ -90,7 +96,10 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
             </div>
             <div className="relative h-6 w-full flex items-center group">
                 <div className="absolute w-full h-1.5 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#007AFF] spring-progress-fill" style={{ width: `${percent}%` }} />
+                    <div
+                        className="h-full w-full origin-left bg-[#007AFF] spring-progress-fill"
+                        style={{ transform: `scaleX(${percent / 100})` }}
+                    />
                 </div>
                 <div 
                     className="absolute h-5 w-5 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.2)] border border-gray-100 rounded-full flex items-center justify-center pointer-events-none z-20 transition-transform duration-150 ease-out group-active:scale-110"
@@ -100,6 +109,7 @@ export const StyledSlider: React.FC<{ label?: string; value: number; min?: numbe
                 </div>
                 <input 
                     type="range" min={min} max={max} step={step} value={value} 
+                    aria-label={inputLabel}
                     onChange={(e) => onChange(Number(e.target.value))}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30" 
                 />
@@ -116,10 +126,17 @@ export const ProgressBar: React.FC<{ progress: number; label?: string }> = memo(
                 <span>{Math.round(progress)}%</span>
             </div>
         )}
-        <div className="h-2 w-full bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden">
+        <div
+            className="h-2 w-full bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden"
+            role="progressbar"
+            aria-label={label || '处理进度'}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(Math.min(100, Math.max(0, progress)))}
+        >
             <div 
                 className={`h-full bg-gradient-to-r from-[#007AFF] to-[#0055FF] spring-progress-fill rounded-full ${!progress || progress < 100 ? '' : 'progress-fill-done'}`}
-                style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                style={{ transform: `scaleX(${Math.min(100, Math.max(0, progress)) / 100})`, transformOrigin: 'left' }}
             />
         </div>
     </div>
