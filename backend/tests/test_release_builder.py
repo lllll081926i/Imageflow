@@ -19,7 +19,12 @@ class ReleaseBuilderTests(unittest.TestCase):
     def test_create_release_paths_builds_expected_artifact_names(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            paths = create_release_paths(project_root=root, version="1.0.11")
+            paths = create_release_paths(
+                project_root=root,
+                version="1.0.11",
+                system_name="Windows",
+                machine="AMD64",
+            )
 
             self.assertEqual(paths.portable_archive.name, "ImageFlow-portable-1.0.11-windows-amd64.zip")
             self.assertEqual(paths.installer_exe.name, "ImageFlow-setup-1.0.11-windows-amd64.exe")
