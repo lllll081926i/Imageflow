@@ -213,7 +213,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('if [ "${#assets[@]}" -ne 22 ]', workflow)
         self.assertIn("sha256sum --check SHA256SUMS-*.txt", workflow)
         self.assertIn("draft: true", workflow)
-        self.assertIn('gh release edit "$RELEASE_TAG" --draft=false --latest', workflow)
+        self.assertIn(
+            'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest',
+            workflow,
+        )
 
     def test_ci_limits_release_write_permission_to_publish_job(self):
         workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
