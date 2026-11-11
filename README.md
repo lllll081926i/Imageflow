@@ -1,266 +1,149 @@
-<p align="center">
-  <img src="./ico.png" width="112" alt="ImageFlow 标志" />
-</p>
+# ImageFlow Go
 
-<h1 align="center">ImageFlow</h1>
+Go + [MyGo](https://github.com/egoist/mygo) native UI + [Lobe MyGo](https://mygo.lobehub.com)
+组件的图像工作台重写版。窗口由 MyGo 在 GPU 上直接绘制，没有 webview、没有 HTML、没有 JavaScript。
 
-<p align="center">
-  一套快速、克制、跨平台的桌面图像处理工作台。
-  <br />
-  11 个完整工具页，覆盖转换、压缩、调整、切图、拼接、水印、取色、GIF、PDF 与富文本制图。
-</p>
+## 状态
 
-<p align="center">
-  <a href="https://github.com/lllll081926i/Imageflow/releases/latest"><img src="https://img.shields.io/github/v/release/lllll081926i/Imageflow?style=flat-square&label=Release&color=2563eb" alt="最新版本" /></a>
-  <a href="https://github.com/lllll081926i/Imageflow/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lllll081926i/Imageflow/ci.yml?branch=main&style=flat-square&label=Build" alt="构建状态" /></a>
-  <img src="https://img.shields.io/badge/Windows-x64%20%7C%20ARM64-2563eb?style=flat-square" alt="Windows" />
-  <img src="https://img.shields.io/badge/macOS-Intel%20%7C%20Apple%20Silicon-111827?style=flat-square" alt="macOS" />
-  <img src="https://img.shields.io/badge/Linux-x64%20%7C%20ARM64-f59e0b?style=flat-square" alt="Linux" />
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-16a34a?style=flat-square" alt="MIT License" /></a>
-</p>
-
-<p align="center">
-  <a href="#下载">下载</a> ·
-  <a href="#界面预览">界面预览</a> ·
-  <a href="#功能矩阵">功能矩阵</a> ·
-  <a href="#自动更新">自动更新</a> ·
-  <a href="#开发与构建">开发与构建</a>
-</p>
-
----
-
-## 界面预览
-
-<table>
-  <tr>
-    <td width="50%"><img src="./docs/screenshot/imageflow-converter.png" alt="ImageFlow 格式转换界面" /></td>
-    <td width="50%"><img src="./docs/screenshot/imageflow-watermark.png" alt="ImageFlow 批量水印界面" /></td>
-  </tr>
-  <tr>
-    <td align="center">格式转换：输出格式、质量、尺寸与元数据控制</td>
-    <td align="center">批量水印：样式预设、实时预览与精细参数</td>
-  </tr>
-</table>
-
-ImageFlow 使用统一的桌面设计语言：清晰的三栏工作区、原生文件选择、即时参数反馈、平滑的分段切换与按钮状态动效。界面支持浅色、深色、跟随系统、透明材质和减弱动态效果。
-
-## 下载
-
-前往 [Releases](https://github.com/lllll081926i/Imageflow/releases/latest) 下载当前版本。安装后的应用名称始终显示为 `ImageFlow`，版本号只写入系统包元数据和文件属性。
-
-| 系统 | 架构 | 推荐安装版 | 免安装版 |
-| --- | --- | --- | --- |
-| Windows 10 / 11 | x64 | `.exe` | `.zip` |
-| Windows 11 on ARM | ARM64 | `.exe` | `.zip` |
-| macOS | Intel x64 | `.pkg` | `.zip` |
-| macOS | Apple Silicon ARM64 | `.pkg` | `.zip` |
-| Debian / Ubuntu 及衍生版 | x64 / ARM64 | `.deb` | `.AppImage` 或 `.tar.gz` |
-| Fedora / RHEL / Rocky / AlmaLinux / SUSE 及衍生版 | x64 / ARM64 | `.rpm` | `.AppImage` 或 `.tar.gz` |
-
-文件名中的 `amd64` 表示 x64，`arm64` 表示 ARM64。每个平台同时发布 `SHA256SUMS-<platform>.txt`，可用于独立验证下载内容。
-
-### 安装版与免安装版
-
-- 安装版会写入系统应用目录和卸载信息，并支持在设置页确认后自动下载和启动后续更新。
-- Windows 与 macOS 的压缩包、Linux 的 `.tar.gz` 和 `.AppImage` 均属于免安装版。检查到新版本时只会打开官方 Release 页面，由用户手动下载替换。
-- AppImage 首次运行前需要赋予执行权限：`chmod +x ImageFlow-*.AppImage`。
-
-## 为什么使用 ImageFlow
-
-- 一个应用完成常见图像工作，不需要在多个网站和工具之间来回切换。
-- 文件始终在本机处理，不上传到第三方服务器。
-- 批量任务支持并发、取消、失败隔离、冲突策略和统一输出命名。
-- 大图、动图和批量缩略图都有内存与像素预算，避免无边界占用。
-- 原生支持 Windows、macOS、Linux 的 x64 与 ARM64，不使用跨平台伪编译产物。
-
-## 功能矩阵
-
-| 工具 | 核心能力 |
-| --- | --- |
-| 格式转换 | JPG、PNG、WebP、AVIF、TIFF、BMP、ICO；SVG 光栅化；比例、固定尺寸、长边缩放；EXIF 保留 |
-| 图片压缩 | MozJPEG、pngquant、OxiPNG、WebP；智能档、自定义质量、目标体积、元数据剥离 |
-| 尺寸调整 | 固定比例、长边、短边；批量 LANCZOS 重采样；常用预设 |
-| 宫格切图 | 四宫格、九宫格、十六宫格；居中裁切；实时分割预览 |
-| 图片布局 | 自定义 1–50 行列；正方形裁切或完整覆盖；批量输出 |
-| 长图拼接 | 横向、纵向；统一尺寸、间距、背景、边框；输出像素预算保护 |
-| 批量水印 | 字体、字号、颜色、透明度、旋转、九宫格、平铺、描边、投影；实时预览与样式预设 |
-| 色彩提取 | 主题色与十色色板；导出色板图；与原图拼接输出 |
-| 转 PDF | 多图合并、15 种纸张、方向、边距、网格拼版与加密 |
-| GIF 工具 | 帧导出、倒放、变速、压缩、缩放；GIF、APNG、WebP 动图互转；透明度与帧时长保持 |
-| 富文本制图 | 标题、正文、列表、引用、图片块；6 套主题；画布与排版参数；实时预览 |
-
-全局能力包括输出目录、命名模板、同名冲突策略、并发上限、完成后打开目录、后台托盘、窗口状态记忆、自动检查更新和无障碍动态偏好。
-
-## 体验与性能
-
-### 流畅交互
-
-- 分段控件、开关、按钮、侧栏和状态变化使用统一的弹簧与淡入动效。
-- 完整适配 `prefers-reduced-motion`，也可在设置中主动关闭动态效果。
-- 文件拖入时只做轻量类型判断，目录展开与缩略图工作让出当前渲染帧，避免拖放瞬间卡顿。
-- 缩略图按可见性调度并限制并发，重复请求共享进行中的任务与内存缓存。
-
-### 启动与运行时
-
-- 后端引擎按需加载，启动阶段不预加载图像处理模块。
-- 前端按工具页拆分生产包，设置页和详情页延迟加载。
-- 批处理使用受控进程池，避免逐文件反复创建进程。
-- GIF 帧、预览图、缩略图与最终输出均有尺寸、像素或内存预算。
-- 取消任务后不再写入幽灵结果；较旧任务结束时不会覆盖新任务状态。
-
-## 自动更新
-
-ImageFlow 将安装版与免安装版的更新策略明确分开。
-
-```mermaid
-flowchart LR
-    Check[检查 GitHub Release] --> Kind{当前分发类型}
-    Kind -->|安装版| Asset[匹配系统与 CPU 架构]
-    Asset --> Proxy[继承系统或环境代理]
-    Proxy --> Verify[校验大小与 SHA-256]
-    Verify --> Launch[启动原生安装器]
-    Kind -->|免安装版| Browser[用系统浏览器打开官方 Release]
-```
-
-- 自动检查使用 6 小时持久缓存和 ETag 条件请求，避免每次进入设置页消耗 GitHub 匿名 API 配额。
-- 手动“立即检查”会强制刷新；遇到 `403` 或 `429` 限流时可回退到最近一次可信缓存。
-- 下载继承操作系统代理和 `HTTP_PROXY`、`HTTPS_PROXY` 等环境代理设置。
-- 用户确认后，后端会重新获取发布元数据，防止检查与下载之间版本被替换。
-- 仅接受官方仓库的 HTTPS Release 地址，严格匹配当前系统、架构和包类型。
-- 安装器下载到用户缓存目录，声明大小与 GitHub Release 资产 SHA-256 均通过后才会执行。
-
-## 架构
-
-ImageFlow 采用 React + TypeScript 前端、pywebview 桌面宿主和纯 Python 图像后端。平台能力收敛在基础设施层，业务引擎不依赖具体窗口系统。
-
-```mermaid
-flowchart LR
-    UI[React + TypeScript] --> Runtime[Desktop Runtime]
-    Runtime --> Host[pywebview Host]
-    Host --> API[DesktopAPI]
-    API --> Application[任务编排与批处理]
-    Application --> Engines[图像处理引擎]
-    Engines --> Native[Pillow / ReportLab / 原生压缩库]
-    Native --> Files[本地文件系统]
-```
-
-| 层 | 目录 | 职责 |
+| 工具 | 状态 | 引擎 |
 | --- | --- | --- |
-| 界面 | `frontend/` | 页面、组件、动效、状态与桌面绑定类型 |
-| 桌面 API | `backend/api/` | 稳定的前后端调用契约、输入规范化与错误信封 |
-| 应用层 | `backend/application/` | 任务生命周期、并发、取消和批处理编排 |
-| 引擎层 | `backend/engines/` | 无界面依赖的图像、GIF、PDF 与渲染能力 |
-| 基础设施 | `backend/infrastructure/` | 设置、更新、原生对话框、窗口、托盘与平台适配 |
-| 发布 | `backend/packaging/` | PyInstaller、EXE、PKG、DEB、RPM、AppImage 与校验清单 |
+| 格式转换 | 完成 | JPG / PNG / WebP / AVIF / TIFF / BMP / ICO，比率 / 固定尺寸 / 长边缩放，EXIF 方向，SVG 输入，可选保留 EXIF / ICC / XMP |
+| 尺寸调整 | 完成 | 百分比 / 长边 / 短边 / 多尺寸预设，LANCZOS |
+| 图片裁剪 | 完成 | 9 种比例 + 自定义，九宫格取景，固定输出尺寸，圆角与外部填充色 |
+| 宫格切图 | 完成 | 2×2 ~ 5×5 |
+| 图片布局 | 完成 | 1–50 行列，正方形裁切或覆盖 |
+| 长图拼接 | 完成 | 横 / 竖，间距、背景、边框模式 |
+| 批量水印 | 完成 | 字体、字号、颜色、透明度、旋转、九宫格、平铺、描边、投影 |
+| 色彩提取 | 完成 | 加权中位切分，主题色 + 2–16 色可调色板 |
+| 图标生成 | 完成 | 16 档 PNG（16–1024）、`icon.ico`、`favicon.ico`、内嵌 PNG 的 `icon.svg`；内边距、圆角、透明或指定底色 |
+| 转 PDF | 完成 | 15 种纸张、方向、边距、网格拼版、AES-256 加密 |
+| GIF 工具 | 完成 | 帧导出、倒放、变速、压缩（质量→调色板档位）、缩放；GIF / APNG / WebP 互转；保留逐帧 dispose/blend 语义 |
+| 富文本制图 | 完成 | 标题、正文、列表、引用、配图；4 套配色主题；CJK 自动换行；画布与排版参数 |
+| 图片压缩 | 完成 | 独立侧边栏页面；OxiPNG / jpegli / libwebp / libavif；同格式防膨胀、原图保护、动图检查 |
 
-## 跨平台发布
+「图片压缩」使用专用编码器：JPG 使用 jpegli，PNG 使用 OxiPNG 9.1.5，
+WebP 使用 libwebp（Method 6），AVIF 使用 libavif（Speed 4、透明通道质量 100）。
+默认保留格式和像素尺寸，质量 80；PNG 始终无损，WebP 可选无损。
+同格式压缩未变小时输出原始文件副本；跨格式输出的体积可能增加。
+原格式 PNG 优化保留元数据；其他压缩重新编码保留 ICC，移除 EXIF / XMP；原始副本保留全部元数据。
+格式转换可选保留 EXIF / XMP（JPG、PNG、WebP）；ICC 支持 JPG、PNG、WebP、AVIF、TIFF。
+使用内置 Little CMS 2 WASM 将 RGB、CMYK、灰度 ICC 输入转换到 sRGB，无需安装系统色彩引擎；预览、缩略图、拼接、图标、富文本、色卡和 PDF 复用同一转换。
+PDF 图像嵌入 ICCBased 色彩配置，透明区域按白色纸面合成，输出采用原子写入。
+支持 PNG gAMA / cHRM / cICP 和 AVIF / HEIF NCLX 色彩描述；PQ / HLG HDR 输入映射为 SDR，AVIF 高位深输入保留 16 位处理精度，HEIF 精度受现有 8 位解码器限制。无效配置仍明确报错。
+压缩页拒绝动图，避免只保存第一帧；动图继续使用 GIF 工具。
+Windows x64 构建内置 OxiPNG，校验 SHA-256 后释放到用户缓存，无需联网安装。
+其他平台需安装 `oxipng` 并加入 PATH。依赖来源和许可证见 `internal/pngopt/README.md`。
 
-PyInstaller 不是交叉编译器，因此每个产物都在对应系统和 CPU 架构的 GitHub Hosted Runner 上原生构建。
+## 桌面能力
 
-```mermaid
-flowchart TB
-    Tag[推送 v* 标签] --> Matrix[6 目标构建矩阵]
-    Matrix --> WX[Windows x64]
-    Matrix --> WA[Windows ARM64]
-    Matrix --> MX[macOS Intel]
-    Matrix --> MA[macOS Apple Silicon]
-    Matrix --> LX[Linux x64]
-    Matrix --> LA[Linux ARM64]
-    WX & WA & MX & MA & LX & LA --> Gate[测试、构建、产物与 SHA-256 门禁]
-    Gate --> Draft[创建并上传完整 Release]
-    Draft --> Publish[全部资产成功后发布]
-```
-
-单次版本发布会生成 22 个资产：
-
-- Windows：2 个架构 × 安装版、便携版、校验清单，共 6 个。
-- macOS：2 个架构 × 安装版、便携版、校验清单，共 6 个。
-- Linux：2 个架构 × DEB、RPM、AppImage、tar.gz、校验清单，共 10 个。
-
-任一平台的测试、打包或资产校验失败都会阻止正式发布。
-
-## 开发与构建
-
-### 环境
-
-- Node.js 20 或更高版本
-- Python 3.10–3.13
-- [uv](https://docs.astral.sh/uv/)
-
-Linux 开发环境还需要 GTK 3、WebKitGTK 4.1、PyGObject 的系统构建依赖。
-
-### 安装与启动
-
-```bash
-uv sync
-cd frontend
-npm install
-cd ..
-uv run imageflow
-```
-
-开发启动器会运行 Vite 和 pywebview；前端支持 HMR，后端模块变化后会自动重启桌面宿主。
-
-### 本机发布构建
-
-```bash
-uv sync --group build
-npm run build:release
-```
-
-该命令只构建当前系统和当前 CPU 架构的原生产物，输出到 `artifacts/release/`。完整 6 目标版本由 GitHub Actions 矩阵生成。
-
-可单独构建：
-
-```bash
-npm run build:portable
-npm run build:installer
-```
-
-Windows 安装包需要 Inno Setup 6.3 或更高版本；Linux 发布构建需要 `dpkg-deb`、`rpmbuild` 与 AppImage 构建工具。AppImage 构建器和运行时使用固定版本与固定 SHA-256 下载。
-
-### 质量检查
-
-```bash
-npm run test:all
-npm run build:frontend
-uv run python -m compileall backend
-git diff --check
-```
-
-后端测试覆盖 API、任务管理、路径安全、内存预算、各图像引擎、更新安全和发布打包。前端测试覆盖桌面运行时、批处理、GIF 参数与错误映射、设置契约和错误边界。
-
-## 配置
-
-| 变量 | 说明 |
+| 能力 | 实现 |
 | --- | --- |
-| `IMAGEFLOW_PREVIEW_MAX_BYTES` | 单个前端预览的文件大小上限 |
-| `IMAGEFLOW_MAX_CONCURRENCY` | 覆盖默认批处理并发数 |
-| `IMAGEFLOW_SETTINGS_FILE` | 覆盖设置 JSON 路径，父目录必须存在 |
-| `IMAGEFLOW_FRONTEND_URL` | 开发模式使用的前端地址 |
-| `IMAGEFLOW_DEBUG_TRACEBACK=1` | 调试模式允许错误响应携带 traceback |
-| `IMAGEFLOW_GITHUB_REPO` | 覆盖更新检查仓库，默认 `lllll081926i/Imageflow` |
-| `HTTP_PROXY` / `HTTPS_PROXY` | Linux 或显式环境代理；Windows 与 macOS 也会读取系统代理 |
+| 无边框窗口 + **原生**标题栏 | `WindowOptions.Title`；应用不自绘标题栏，避免内部圆角与窗口圆角对不上 |
+| 窗口位置记忆 | `WindowOptions.StateKey`，设置页可关闭 |
+| 透明材质 | 不启用：界面为不透明阶梯表面，与 `docs/DESIGN.md` 第 4 条一致 |
+| 文件拖放 | `Window.OnFileDrop` + 拖放区 `DroppedFiles()` |
+| 图片预览切换 | 点击缩略图或文件行切换；预览区内使用 ← / ↑ 查看上一张，→ / ↓ 查看下一张。选中项高亮并自动滚入列表可见区域；后台解码拒绝过期结果 |
+| 系统文件 / 目录对话框 | `mygo.Dialog.Open` |
+| 打开输出目录 | `mygo.Shell.ShowItemInFolder` / `OpenPath` |
+| 托盘图标 + 隐藏到托盘 | `mygo.NewTray`，关窗按「后台运行」设置隐藏或退出 |
+| 单实例 | `App.RequestSingleInstanceLock` + `OnSecondInstance` 聚焦窗口 |
+| 自动更新 | `mygo.Updater.Check/Install`，设置页有入口与进度 |
+| 明暗主题 | `theme.Apply` + 自建 style tokens。Lobe 默认 accent 是近黑色，本应用每帧把 frame 主题改指品牌蓝 |
+| 减弱动效 | 设置页开关让 `motion()` 返回 `ElementTransition{Duration: -1}`，MyGo 将所有变化与 Enter/Exit 立即到位（零值过渡反而会动画全部属性） |
+| 保留目录结构 | 拖入文件夹后，输出目录按 `preserve_folder_structure` 重建子目录树 |
 
-默认设置文件位于：
+## 运行与验证
 
-- Windows：`%APPDATA%/imageflow/settings.json`
-- macOS / Linux：`~/.config/imageflow/settings.json`
-
-## 输出命名
-
-输出模板支持 `{prefix}`、`{basename}`、`{op}`、`{date:YYYYMMDD}`、`{time:HHmmss}`、`{seq:3}` 等占位符。例如：
-
-```text
-{prefix}{basename}_{op}_{date:YYYYMMDD}_{seq:3}
+```bash
+go test ./...            # 单元与集成测试
+go test ./... -race      # 竞态检测
+go build -o build/ImageFlow-dev.exe .
+./build/ImageFlow-dev.exe                          # 打开窗口
+./build/ImageFlow-dev.exe -hidden                  # 只驻留托盘
+./build/ImageFlow-dev.exe -open ./photos -tool 6   # 预载文件并停在批量水印页
+./build/ImageFlow-dev.exe -capture out.png         # 截图并退出（CI 用，不占单实例锁）
 ```
 
-同名文件可以选择自动重命名、直接覆盖或跳过。批处理会提前解析整组输出路径，避免并发任务产生相互冲突的文件名。
+`-capture` / `-open` / `-tool` / `-hidden` 是验证参数：打包产物可以无人值守地截图，
+用于确认界面与开发版一致。
 
-## 贡献
+发布构建：
 
-欢迎提交 Issue 与 Pull Request。提交前请执行全量测试、类型检查、生产构建和 `git diff --check`，并为行为变化补充回归测试。
+```bash
+# go tool 使用 go.mod 中锁定的 MyGo 版本，保证与开发/测试一致、产物可复现。
+go tool mygo build -skip-installer
+go tool mygo build -platform darwin/amd64,darwin/arm64,linux/amd64,linux/arm64,windows/arm64 -skip-installer -skip-dmg
+```
 
-## 作者与许可
+发布前需在 `mygo.json` 的 `updates` 中配置 `privateKey`（私钥文件路径），
+或把 **base64 编码的私钥内容**放进 `MYGO_UPDATER_PRIVATE_KEY` 环境变量；
+否则非 Linux 平台不会产出签名清单，客户端无法校验更新。
 
-ImageFlow 由 [lllll081926i](https://github.com/lllll081926i) 维护，基于 [MIT License](./LICENSE) 发布。
+命令行批处理（与 UI 走同一批引擎代码，用于脚本与 CI 验证）：
+
+```bash
+go run ./cmd/imageflow-batch -tool convert -format webp -quality 85 ./photos
+go run ./cmd/imageflow-batch -tool compress -quality 80 ./photos
+go run ./cmd/imageflow-batch -tool compress -format webp -lossless ./photos
+go run ./cmd/imageflow-batch -tool watermark -text "ImageFlow" ./photos
+go run ./cmd/imageflow-batch -tool richtext -theme dark -image cover.jpg ./photos
+go run ./cmd/imageflow-batch -tool gif -action probe ./photos
+go run ./cmd/imageflow-batch -tool gif -action export_frames -frame-start 0 -frame-end 3 ./photos
+```
+
+`-tool gif` 的动作由 `-action` 指定：`probe` `reverse` `change_speed` `compress` `resize` `export_frames`。
+
+支持的 `-tool`：`convert` `compress` `resize` `grid` `layout` `stitch` `watermark` `palette` `pdf` `gif` `richtext`。
+
+裁剪、图标生成与多尺寸预设由 UI 直接调用引擎，命令行批处理暂不暴露这三个工具。
+
+## 目录
+
+```
+main.go                     应用入口：单实例、托盘、更新、-capture/-open/-tool 验证参数
+cmd/imageflow-batch/        命令行批处理
+internal/ui/                界面：外壳、工具卡、输入卡、参数卡、13 个工具页、设置页、托盘与更新
+docs/DESIGN.md              界面样式契约（颜色、布局、圆角、动效）
+internal/engine/            引擎：转换、裁剪、拼接、水印、取色、PDF、GIF、富文本
+internal/codec/             编解码：jpegli / webp / avif / heic / ico / tiff / bmp
+internal/pngopt/            OxiPNG 调用、Windows x64 内置程序与许可证
+internal/svg/               SVG 安全校验与光栅化（resvg via wazero）
+internal/output/            尺寸预算与原子写入
+internal/paths/             路径规范化、目录展开、命名模板、冲突策略
+internal/settings/          设置持久化（原子写）
+internal/thumbs/            缩略图内存 + 磁盘双层缓存
+internal/batch/             并发批处理与协作式取消
+```
+
+## 界面
+
+布局与配色按 [docs/DESIGN.md](docs/DESIGN.md) 实现：
+
+- 工具卡 216 DIP（可收起 72），输入卡占剩余宽度，参数卡 420 DIP；窗口小于 1080 DIP 时工具卡自动折成图标条。
+- 单一品牌蓝 `#007AFF`，主操作与选中导航用 `#007AFF → #0055FF` 渐变加光晕。
+- 明暗双主题对等；表面色为不透明阶梯，避免半透明叠层把卡片边界糊掉。
+- 应用图标直接取自原项目 [`frontend/logo.svg`](../frontend/logo.svg)，
+  窗标题、设置页、托盘与安装包用同一份 SVG：`internal/brand` 是唯一来源，`cmd/imageflow-icon` 用它生成 `resources/icon.png`。小尺寸下使用裁掉边距的 `IconSVG`。
+- 动效：按压缩放是即时反馈，阴影淡变用 `Snappy` 弹簧；侧栏宽度、切页淡入、
+  选中指示滑动与淡出共用一条 `shellCurve`（`EaseInOut` 220 ms），
+  布局盒本身不参与过渡，保证中间卡片与侧栏同帧移动。
+  切页只做不透明度 `0.72 → 1` 的 `Enter` 淡入，不做位移、不做 `Exit` 副本；
+  设置页的「减弱动效」让所有变化立即到位。详见 `docs/DESIGN.md` 第 6 节。
+
+`internal/ui/testdata/` 中留有工具页、设置页与深色模式的渲染截图，
+由 `go test ./internal/ui/` 自动生成，可直接对比视觉回归。
+
+字体：水印与富文本的字体选择器列出本机实际安装的字体（`engine.AvailableFonts()`），
+新建面板默认取平台首选字体（Windows 是微软雅黑），不会因字母序落到 Arial。
+
+## 已知限制
+
+- OxiPNG 暂仅内置 Windows x64 版本；其他平台需要自行安装 OxiPNG。
+- 设置里的 `ui_transparency` 保留字段但不起作用：新界面不使用半透明材质，
+  否则卡片边界会糊掉（`docs/DESIGN.md` 第 4 条修正记录）。
+- 缩略图首次加载时解码整图再缩小，没有 JPEG 解码器降采样。
+- WebP 动图编码由 libwebp WASM 完成；帧内容完全相同的动图会被 libwebp 折叠为静图，这是 libwebp 的行为。
+- 自动更新的公钥写在 `mygo.json` 的 `updates` 里，私钥在
+  `%APPDATA%\imageflow\update-keys\mygo-update.key`（不进仓库）。发布时设
+  `MYGO_UPDATER_PRIVATE_KEY`，`mygo build` 会生成签名清单；把
+  `build/<platform>/` 下的 `update-*.json` 与 `*.tar.gz` 传到对应 tag 的 release。

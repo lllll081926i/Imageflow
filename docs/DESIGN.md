@@ -1,11 +1,11 @@
-# ImageFlow Design System
+# ImageFlow Go — 界面样式契约
 
-> 本文档是 ImageFlow 的**样式风格契约**。所有新界面、重构与第三方贡献必须遵循此处定义的
-> Token 与规则；修改本文档中任何 Token 前，必须同步更新 `frontend/index.css`、
-> `frontend/styles/motion.css` 及相关组件。
+本文件是 Go 重写版（`imageflow-go/`）的视觉契约，逐条对齐原项目
+[docs/DESIGN.md](../../docs/DESIGN.md)。改任何颜色、圆角、间距或动效前先改这里，
+再改 `internal/ui/style.go`。
 
-设计气质：**Apple 式的克制与灵动** —— 大留白、大圆角、毛玻璃层级、单一强调色，
-交互反馈使用弹簧物理（spring），拒绝生硬的线性动画。
+实现位置：`internal/ui/style.go`（tokens 与主题注入）、`internal/ui/controls.go`
+（组件模式）、`internal/ui/app.go`（外壳布局）。
 
 ---
 
@@ -13,222 +13,343 @@
 
 1. **内容优先**：控件退后，图片与结果前置。
 2. **单一强调色**：全应用只有一个品牌蓝，语义色仅用于状态反馈。
-3. **物理感动效**：所有可交互元素都有弹簧响应（按下回弹、悬浮上浮、入场过冲）。
-4. **明暗双主题对等**：每个颜色 Token 必须同时给出 light / dark 值。
-5. **尊重系统设置**：`prefers-reduced-motion` 下禁用全部动效。
+3. **物理感动效**：可交互元素有按压回弹，切换有颜色过渡。
+4. **明暗双主题对等**：每个 token 都有 light / dark 两套值。
+5. **尊重系统设置**：MyGo 的 `Theme.Preferences` 与 `prefers-reduced-motion` 由框架接管。
+
+Lobe MyGo 默认把 `Accent` 设成近黑色。`applyBrandTheme` 在每一帧把 frame 的
+`Accent / Focus / Background / Text / Border / Surface` 重新指向本文件的 token，
+所以滑块、开关、输入框焦点环都用品牌蓝，而不是灰黑。
 
 ---
 
 ## 2. 颜色 Tokens
 
-### 2.1 品牌色（唯一强调色）
+### 2.1 品牌色
 
 | Token | Light | Dark | 用途 |
-|---|---|---|---|
-| `primary` | `#007AFF` | `#0A84FF` | 主按钮、选中态、焦点环、进度条 |
-| `primary-deep` | `#0055FF` | — | 主按钮渐变终点 `to-[#0055FF]` |
-| `primary-hover` | `#0044DD` | — | 主按钮 hover 渐变终点 |
+| --- | --- | --- | --- |
+| `Brand` | `#007AFF` | `#0A84FF` | 选中态、进度、焦点、图标 |
+| `BrandDeep` | `#0055FF` | `#005ADC` | 渐变终点 |
+| `BrandHover` | `#0044DD` | `#409CFF` | 悬浮 |
+| `BrandGradientTo` | `#0055FF` | `#5856D6` | 主按钮 / 选中行的渐变终点 |
+| `BrandSoft` | `rgba(0,122,255,.10)` | `rgba(10,132,255,.16)` | 图标底座、提示底色 |
+| `BrandGlow` | `rgba(0,122,255,.25)` | `rgba(10,132,255,.35)` | 主按钮阴影 |
 
-主按钮固定使用渐变：`bg-gradient-to-r from-[#007AFF] to-[#0055FF]`。
+主按钮与选中导航项固定用渐变：`Gradient(Brand, BrandGradientTo, 90)`。
 
-### 2.2 中性色（表面层级）
+### 2.2 表面阶梯
 
-| 层级 | Light | Dark | 用途 |
-|---|---|---|---|
-| 页面背景 | `#F5F5F7` | `#1E1E1E` | 应用外壳背景（App.tsx `imageflow-app-shell`） |
-| 侧栏表面 | `rgba(255,255,255,0.8)` + glass | `rgba(28,28,30,0.8)` + glass | Sidebar 毛玻璃容器 |
-| 卡片表面 | `white` | `#2C2C2E` | 设置面板、仪表盘卡片 |
-| 控件凹陷面 | `gray-100` / `rgba(249,250,251,0.9)` | `black/20` / `white/10` | SegmentedControl 轨道、输入框底 |
-| 分隔线 | `gray-100/200` | `white/5` ~ `white/10` | 边框、分割线 |
-| 主文本 | `gray-900` | `white` | 标题 |
-| 次级文本 | `gray-600/700` | `gray-300` | 正文、标签 |
-| 弱文本 | `gray-400/500` | `gray-400/500` | 占位符、辅助说明 |
+| Token | Light | Dark | 用途 |
+| --- | --- | --- | --- |
+| `Shell` | `#F5F5F7` | `#1C1C1E` | 窗口底色、设置列底色 |
+| `Sidebar` | `#FFFFFF` | `#262628` | 左侧工具卡 |
+| `Card` | `#FFFFFF` | `#2C2C2E` | 工作台卡、参数卡 |
+| `CardHover` | `#FAFAFC` | `#363638` | 卡片悬浮 |
+| `Recessed` | `#F6F7F9` | `#222224` | 输入框、分段轨道、缩略图底 |
+| `Divider` | `#E7E8EC` | `#3C3C3F` | 分隔线、卡片描边 |
+| `DividerTop` | `#EEEFF2` | `#343437` | 更轻的分隔 |
 
-> Dark 模式下的焦点/强调边框使用 `rgba(10, 132, 255, 0.9)`（即 iOS dark 蓝
-> `#0A84FF`），见 index.css `.dark .imageflow-select-trigger` 规则。
+不允许使用带 alpha 的表面色叠在别的表面上：MyGo 的阴影与边框按 box 计算，
+半透明表面会让卡片边界糊掉（本轮踩过这个坑）。
 
-### 2.3 语义色（仅状态反馈）
+### 2.3 文本阶梯
 
-| 语义 | Light | Dark | 场景 |
-|---|---|---|---|
-| 成功 | `green-500/600` | 同色系 | 完成提示 |
-| 警告/进行中 | `amber-500` | 同色系 | 取消按钮、失败记录面板 |
-| 错误 | `red-500/600` | 同色系 | 失败状态、删除确认 |
+| Token | Light | Dark |
+| --- | --- | --- |
+| `Text` | `#111827` | `#F5F5F7` |
+| `TextSub` | `#4B5563` | `#AEAEB2` |
+| `TextDim` | `#9CA3AF` | `#7C7C80` |
 
-### 2.4 功能卡配色（Dashboard 图标底色）
+### 2.4 语义色
 
-每张功能卡有独立的浅色底 + 深色底组合（定义于 `frontend/constants.ts`
-的 `FEATURES[].bg / darkBg`），图标颜色跟随 Tailwind 色板（如 `text-blue-500`）。
-新增功能时从 Tailwind 默认色板选取，不引入新 hex。
+| Token | Light | Dark |
+| --- | --- | --- |
+| `Success` | `#22C55E` | `#30D158` |
+| `Warning` | `#F59E0B` | `#FF9F0A` |
+| `Danger` | `#EF4444` | `#FF453A` |
+
+### 2.5 工具色
+
+每个工具在自己的图标底座里有独立色相（照抄原 `constants.ts` 的
+`FEATURES[].color`）：
+
+| 工具 | 色 | 工具 | 色 |
+| --- | --- | --- | --- |
+| 格式转换 | `#3B82F6` | 色彩提取 | `#F97316` |
+| 尺寸调整 | `#06B6D4` | 转 PDF | `#D97706` |
+| 宫格切图 | `#A855F7` | GIF 工具 | `#EF4444` |
+| 图片布局 | `#8B5CF6` | 富文本制图 | `#6366F1` |
+| 长图拼接 | `#14B8A6` | 批量水印 | `#EC4899` |
+| 图片压缩 | `#22C55E` | | |
+
+图片压缩作为第 13 个独立工具追加到左侧侧边栏，保留既有工具索引。
+参数卡使用现有分段、开关、滑块和说明组件；格式为原格式 / JPG / PNG / WebP / AVIF。
+默认原格式、质量 80；PNG 隐藏质量滑块，WebP 可切换无损模式。
+文件行展示压缩结果，悬浮提示显示完整结果。
+
+底座取同色 12% alpha：`featureTintSoft`。
 
 ---
 
-## 3. 字体与排版
+## 3. 布局契约
 
-- 字体栈：系统字体栈（`system-ui, -apple-system, "Segoe UI", sans-serif`），
-  不引入外部字体文件。
-- 数字输入：`font-mono text-xs`（滑块数值框）。
-- 层级：
+窗口最小 `960 × 620`，默认 `1440 × 900`。
 
-| 层级 | 类 | 用途 |
-|---|---|---|
-| 页面标题 | `text-3xl font-bold tracking-tight` | Dashboard「欢迎回来」 |
-| 卡片标题 | `text-lg font-semibold` | 功能卡标题 |
-| 正文/标签 | `text-sm font-medium` | 表单标签、侧栏项 |
-| 辅助文本 | `text-xs font-medium` | 计数、说明文字 |
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 标题栏 48：Logo · ImageFlow ……………… 状态胶囊 · 最小化/最大化/关闭│
+├──────────┬─────────────────────────┬─────────────────────────┤
+│ 工具卡    │ 输入卡                   │ 参数卡                  │
+│ 216 DIP  │ 占剩余宽度               │ 420 DIP                 │
+│          │ ┌─────────────────────┐ │ 输出格式 / 尺寸 / 高级   │
+│ 工具箱    │ │ 输入项 4 · 转PDF 按钮 │ │                         │
+│ · 格式转换│ ├─────────────────────┤ │ 分段控件                │
+│ · 尺寸调整│ │ 预览区（有图时出现）   │ │ 滑块行                  │
+│ …        │ ├─────────────────────┤ │ 开关行                  │
+│          │ │ 虚线拖放区 + 文件行   │ │                         │
+│          │ └─────────────────────┘ ├─────────────────────────┤
+│ 全局设置  │                         │ 开始处理 / 进度          │
+└──────────┴─────────────────────────┴─────────────────────────┘
+```
+
+| 元素 | 尺寸 | 断言位置 |
+| --- | --- | --- |
+| 标题栏 | 高 48 | `TestShellGeometryAtDefaultSize` |
+| 工具卡 | 宽 216（收起后 72） | 同上 + `TestRailCollapses` |
+| 参数卡 | 宽 420 | 同上 |
+| 输入卡 | 其余宽度，至少 100 | 同上（含 960×620 最小尺寸） |
+| 卡片与卡片之间 | 16 DIP（左右下各 16） | 同上 |
+
+工具卡底部有「收起侧栏 / 展开侧栏」，与原版一致：收起后宽度动画到 72，
+全文字隐藏但每行保留 `Label`（读屏仍能访问），旁边的卡片跟着变宽。
+
+`layout_test.go` 会以 1440×900 与 960×620 两种尺寸渲染，断言上表里的数字，
+并断言两列是并排而不是堆叠，操作栏在参数卡内部下沿。改布局必须同步改测试。
 
 ---
 
 ## 4. 圆角与阴影
 
-### 4.1 圆角阶梯
+| 阶梯 | 值 | 用途 |
+| --- | --- | --- |
+| `RadiusCard` | 16 | 工具卡、工作台卡 |
+| `RadiusPanel` | 12 | 参数卡片、拖放区、空状态图标底 |
+| `RadiusControl` | 10 | 输入框、分段轨道、文件行、主按钮 |
+| `RadiusPill` | 7 | 分段药丸、图标底座、小按钮 |
+| 999 | 全圆 | 徽章、进度条、状态点 |
 
-| 阶梯 | Tailwind | 用途 |
-|---|---|---|
-| XL | `rounded-2xl` (16px) | 侧栏容器、功能卡、图标底座 |
-| 3XL | `rounded-3xl` (24px) | 设置面板等大型表面 |
-| L | `rounded-xl` (12px) | 按钮、输入框、下拉触发器、侧栏项 |
-| M | `rounded-lg` (8px) | 下拉选项、SegmentedControl 药丸、小按钮 |
-| Full | `rounded-full` | 开关、进度条、徽章 |
+阴影只有两档：
 
-### 4.2 阴影
-
-| 层级 | 值 | 用途 |
-|---|---|---|
-| 静态 | `shadow-sm` | 卡片默认 |
-| 悬浮 | `hover:shadow-xl` | 功能卡 hover |
-| 强调 | `shadow-lg shadow-blue-500/25` | 主按钮的品牌光晕 |
-| 浮层 | `0 14px 34px rgba(0,0,0,.16), 0 3px 10px rgba(0,0,0,.08)` | 下拉菜单（见 index.css） |
-| 滑块拇指 | `0 2px 4px rgba(0,0,0,.2)` | Switch/Slider 白色圆点 |
+- 卡片：`Shadow(0, 4, 18, 0, rgba(0,0,0,.06))`
+- 主按钮 / 选中导航：`Shadow(0, 3, 10, 0, BrandGlow)`
 
 ---
 
-## 5. 毛玻璃（Glassmorphism）
+## 5. 组件模式
 
-- 工具类：`.glass` = `backdrop-filter: blur(20px)`（index.css 定义）。
-- 仅用于**顶层容器**：Sidebar。浮层菜单使用更轻的
-  `blur(18px) saturate(160%)`。
-- 禁止嵌套毛玻璃（glass 内不再放 glass）。
-
----
-
-## 6. 动效系统（Spring Motion）
-
-完整实现见 `frontend/styles/motion.css`，本节为使用契约。
-
-### 6.1 Spring 缓动 Tokens
-
-| Token | 曲线 | 用途 |
-|---|---|---|
-| `--if-spring-snappy` | `cubic-bezier(0.34, 1.56, 0.64, 1)` | 按压回弹、开关滑块、药丸滑动 |
-| `--if-spring-soft` | `cubic-bezier(0.22, 1.28, 0.36, 1)` | 卡片上浮、侧栏指示器 |
-| `--if-spring-gentle` | `cubic-bezier(0.175, 0.885, 0.32, 1.08)` | 页面切换、进度条 |
-| `--if-ease-out-quiet` | `cubic-bezier(0.16, 1, 0.3, 1)` | 退出/折叠（无过冲） |
-
-### 6.2 时长 Tokens
-
-| Token | 值 | 用途 |
-|---|---|---|
-| `--if-motion-fast` | 180ms | 按压反馈 |
-| `--if-motion-base` | 320ms | 入场、开关、药丸 |
-| `--if-motion-slow` | 520ms | 页面切换、指示器滑动 |
-
-### 6.3 工具类速查
-
-| 类名 | 效果 | 应用位置 |
-|---|---|---|
-| `.spring-tap` | hover 放大 1.02 + 按下缩至 0.965 | 大型可点击块 |
-| `.spring-tap-sm` | 仅按下缩至 0.97 | 侧栏项、主按钮 |
-| `.spring-lift` | hover 上浮 -4px + 微放大 | Dashboard 卡片 |
-| `.spring-enter` | 入场：上移 12px→-2px 过冲→归位 | 页面内区块 |
-| `.spring-pop` | 原地弹出 0.92→1.02→1 | 菜单、对话框、徽章 |
-| `.spring-page-forward/backward` | 页面级弹簧滑入 | App.tsx 页面切换 |
-| `.spring-stagger`（父容器） | 子元素 45ms 级联入场（≤8 个） | Dashboard 卡片网格 |
-| `.spring-icon` | 父级 hover 时放大+微旋转 | 功能卡图标 |
-| `.spring-progress-fill` | 进度宽度弹簧过渡 | ProgressBar、Slider |
-| `.spring-switch-thumb` | 开关滑块弹性滑动 | Switch |
-| `.spring-indicator` | 侧栏选中指示器弹性滑动 | Sidebar |
-| `.spring-segment-pill` | 分段控件药丸弹性滑动 | SegmentedControl |
-| `.spring-collapse` | 折叠时淡出+上移 | 可折叠区块 |
-
-### 6.4 动效规则
-
-1. **只动 transform 和 opacity**，禁止动画 width/height/top/left 布局属性
-   （进度条宽度除外——它是唯一例外，且已用 will-change 优化）。
-2. **入场有过冲，出场无过冲**：进入用 spring 曲线，退出用 quiet 曲线。
-3. **按压必须有反馈**：所有可点击元素至少挂 `.spring-tap-sm` 或
-   `active:scale-*`。
-4. **级联不超过 8 级**，延迟步长 45ms，总入场时间 ≤ 700ms。
-5. **`prefers-reduced-motion: reduce` 下全部动效自动禁用**
-   （motion.css 底部统一守卫，勿在组件内重复处理）。
-
----
-
-## 7. 组件模式
-
-### 7.1 主按钮（Primary Action）
+### 5.1 分段控件（SegmentedControl）
 
 ```
-bg-gradient-to-r from-[#007AFF] to-[#0055FF] hover:to-[#0044DD]
-text-white rounded-xl font-semibold shadow-lg shadow-blue-500/25
-py-3~3.5 spring-tap-sm
+轨道：Recessed 底，圆角 12，内边距 3
+药丸：Card 底 + Divider 1px 描边，圆角 8，高 30
+选中：Text 600 字重；未选中：TextSub 500
 ```
 
-处理中的取消态：`bg-amber-500`；不可用态：`bg-gray-400 cursor-not-allowed`。
+**不要**用白色实心药丸：在深色模式下会变成白底白字（本轮踩过）。
 
-### 7.2 设置面板
+### 5.2 参数卡片（sectionCard）
 
 ```
-bg-white dark:bg-[#2C2C2E] rounded-3xl p-5 shadow-sm
-border border-gray-100 dark:border-white/5
-flex flex-col overflow-hidden h-full min-h-0
+Card 底 · 圆角 16 · 1px Divider 描边 · 内边距 16 · 组间距 12
+标题：12px / 600 / Text
 ```
 
-内部滚动区：`.imageflow-settings-scroll flex-1 min-h-0 overflow-y-auto no-scrollbar`。
+### 5.3 滑块行（sliderRow）
 
-### 7.3 表单控件行
+```
+标签 12px/500/TextSub      数值 11px/600/Text 装在 Recessed 小胶囊里
+滑轨：连续滑块（不用带刻度版本，那是"尺子"观感）
+```
 
-标签左对齐 `text-sm font-medium text-gray-700 dark:text-gray-300`，
-控件右对齐或独占一行；行间距 `space-y-3`；分组间距 `gap-4/5`。
+### 5.4 主操作（开始处理）
 
-### 7.4 下拉选择（CustomSelect）
+```
+高 46 · 圆角 12 · Gradient(Brand, BrandGradientTo, 90)
+白色 14px/600 文本 + Play 图标 · BrandGlow 阴影（0,6,16）
+进度条：高 5 · 全圆 · Recessed 轨道 + 品牌渐变填充
+运行中：Recessed 底 + TextDim 文本 + X 图标，点击即取消
+取消：ghostButton（描边胶囊），仅在空闲时出现
+```
 
-触发器最小高 44px、`rounded-xl`；菜单 `rounded-xl` + 浮层阴影 +
-`saturate` 毛玻璃；开合动画 260ms snappy spring（index.css
-`imageflow-select-menu-in`）。
+### 5.5 导航项
 
-### 7.5 空状态 / 拖放区
+| 状态 | 样式 |
+| --- | --- |
+| 选中 | 渐变填充 + 白字 600 + BrandGlow 阴影 + 图标底座 `rgba(255,255,255,.22)` |
+| 悬浮 | `Recessed` 底 |
+| 常态 | 透明 + 32×32 图标底座 `featureTintPlate`（浅色 15% / 深色 25% 色相）+ 图标 `featureTint` |
 
-居中虚线边框 + 弱文本引导；拖入悬停时边框转 `primary` 并轻微放大
-（FileDropZone 的 `--if-drop-target` 机制）。
+行高 48、左右内边距 8、图标底座与文字间距 11。图标底座是本系统与普通文字菜单的区别：
+去掉后侧栏会变成一列纯文本。
+
+### 5.6 拖放区
+
+空列表：`Recessed` 底 + 虚线 `Divider` 描边 + 居中圆形 `BrandSoft` 图标底。
+有文件：**改实线描边**——虚线围着可滚动列表会读成「还没填的占位」。
+拖入中：`BrandSoft` 底 + 实线 `Brand` 描边。
+
+文件行：高 62、内边距 7/9、缩略图 48、名称 + 格式徒标、第二行「尺寸 · 大小」、
+右侧固定 84 DIP 状态列，悬浮时整行 `Recessed`。
+
+### 5.7 参数分组标题
+
+`sectionCard` 的标题前有一条 3×11 的品牌色竖条，与标题同基线。
+没有这条竖条时，一组组控件会读成一整张长表单。
+
+### 5.8 控件状态与反馈
+
+- 按钮使用可键盘聚焦的 `ButtonBase`：常态描边 / 品牌渐变，悬浮提高边界或渐变亮度，
+  按压轻微缩放，禁用使用 `Recessed + TextDim` 且不再响应点击，加载用旋转指示与文字双编码。
+- 输入框、数字框、多行框与选择器统一 38 DIP 高、10 DIP 圆角：常态 `Recessed + Divider`，
+  悬浮提高描边对比，聚焦用品牌描边与 2 DIP 柔光环，错误用 `Danger` 描边 / 柔光环，
+  禁用只读灰化并显示禁止指针。颜色与文字同时表达状态，不只依赖颜色。
+- 开关、分段与滑块保留 Lobe 的紧凑尺寸和中性填充，只强化悬浮、按压、键盘焦点；
+  不用大面积品牌色制造额外噪声。
+- 设置页宽屏（窗口 ≥1200 DIP）为左右独立双列，窄屏为单列；命名、位置、行为、更新、关于
+  保持独立分组，底部保存栏固定。窄窗口缩小页边距，保存栏换成两行，避免按钮挤压状态文字。
+- 添加文件、批处理完成 / 失败、保存输出目录等 `App.Status` 在操作栏中有可见出口；
+  成功、警告、失败由图标、文字和语义色共同表达。
 
 ---
 
-## 8. 布局体系
+## 6. 动效
 
-- **双栏工作台**（≥900px）：左侧输入区 `1.45fr` + 右侧设置面板
-  `minmax(26rem, 0.9fr)`（`.imageflow-detail-layout--standard`）。
-- **窄窗单列**（<900px）：自然文档流，页面整体滚动。
-- 断点只有两个：`899px`（单列）与 `900px`（双栏）、`1119px`
-  （美化类宽控制面提前降级为纵向）。
-- 全局禁止横向滚动：所有容器 `min-w-0`。
+| 用途 | 值 |
+| --- | --- |
+| 按压回弹 | 即时 `Scale(0.99)` + `Snappy` 弹簧 `180ms` / `Bounce .08` 的阴影淡变（`springTap`） |
+| 卡片内换内容 | `EaseOut` 曲线 `200ms`，`Y: 4 → 0` + 淡入（`springSoft`） |
+| 切页 | 共享 `shellCurve`：`EaseInOut` `220ms`，仅不透明度 `0.72 → 1`（`pageSwap`） |
+| 分段控件滑块 | `EaseOut` 曲线 `180ms`（`segmentSlide`） |
+| 侧栏收起 / 展开 | 共享 `shellCurve`：`EaseInOut` `220ms` 宽度动画 216 ↔ 72 |
+| 选中指示、标签、底部高亮 | 与宽度同帧渐变，或共享 `shellCurve` 淡入淡出；不另设曲线 |
+| 加载指示 | `Linear` 曲线 `900ms` 循环；减弱动效时静止，以文字表达加载状态 |
+
+**MyGo 语义陷阱（必须记住）**：`ElementTransition` 若一个属性标志都不设，
+框架按「全部属性」处理 —— 位置、尺寸、颜色、阴影都会动画，而不是「不做过渡」。
+本系统的所有预设都显式设 `Shadows: true`，含义是「布局盒不参与过渡」：
+父 `Row` 每帧把动画后的侧栏宽度喂给布局，子元素必须用同一帧的新几何，
+不能用自己的曲线再缓动一次。否则中间卡片会在收起途中落后侧栏 150 DIP 以上。
+`Enter` / `Exit` 由 `Motion` 驱动，与属性标志无关，所以淡入淡出照常生效。
+
+不给颜色加过渡：`Colors: true` 会从零色开始插值，深色主题首帧会闪白。
+
+减弱动效必须返回 `ElementTransition{Duration: -1}`，而不是零值过渡：
+零值等价于「全部属性 + 默认 200ms 动画」，反而更慢。负时长是 MyGo 文档定义的
+「所有变化、Enter、Exit 立即到位」。
+
+切页只做 `Enter`，不做 `Exit`：两页装着同一套卡片，退出副本会在原页面上再画
+一份标题与标签，半途的重影反而像卡顿。淡入起点是 `0.72` 而非 `0`：从全透明起步
+会让整个内容区先空几帧，读起来像窗口刷新了一遍。
+
+侧栏行的身份必须稳定：选中指示常驻（设置页只淡出，不移除子元素），每个工具行、
+底部项都带固定 `Key`。MyGo 未加 Key 的子元素按「父 ID + 子序号」识别身份，
+移除列表第一个子元素会把后面 13 行全部重编号，整列被当成新元素重建。
 
 ---
 
-## 9. 无障碍与国际化
+## 7. 无障碍
 
-- 所有交互控件必须有可访问名（`aria-label` / 可见文本）。
-- Switch 使用 `aria-pressed`；CustomSelect 实现 listbox 语义与键盘导航。
-- 中文为唯一 UI 语言；文案简洁、动词开头（如「开始转换」「清空失败列表」）。
-- 焦点可见性：`focus-visible` 显示 `primary` 色 3px 半透明焦点环
-  （参考 `.imageflow-select-trigger:focus-visible`）。
+- 每个可点击元素都给 `Label(...)`，作为可访问名与悬浮提示来源。
+- 状态用「颜色 + 文字」双编码：文件行用状态胶囊，文字写「已完成 / 失败 / 已跳过」。
+- 文本对比度：`TextSub` 在 `Card` 上为 7:1 以上，`TextDim` 仅用于辅助说明。
 
 ---
 
-## 10. Token 变更流程
+## 8. 本轮修正记录
 
-1. 修改 `frontend/styles/motion.css`（动效）或 `frontend/index.css`（视觉）。
-2. 全文检索旧值并同步组件内的硬编码副本（Tailwind 任意值语法
-   `[#007AFF]` 等）。
-3. 运行 `npm run typecheck && npm test && npm run build` 验证。
-4. 更新本文档对应表格，并在变更描述中注明「Design System 同步」。
+| # | 问题 | 修正 |
+| --- | --- | --- |
+| 1 | 初版把工具行、卡片、参数都堆成一列，没有三栏结构 | 重写外壳：标题栏 48 + 工具卡 232 + 输入卡 + 参数卡 420 |
+| 2 | Lobe 默认 accent 是近黑色，滑块开关全是灰黑 | `applyBrandTheme` 每帧注入品牌蓝 |
+| 3 | 深色模式分段药丸是纯白底 | 药丸改 `Card` + 描边，深色下自动变灰 |
+| 4 | 深色模式表面用半透明叠层，卡片边界糊掉 | 表面色改不透明阶梯 |
+| 5 | 按钮/药丸在深色首页闪白一帧 | `Transition` 只动 Size/Position，不再动 Colors |
+| 6 | 滑块带刻度，像尺子 | 改连续滑块 + 数值吸附 |
+| 7 | 宫格 2×2 被选中却提示 9 块 | 索引基准从 2 起 |
+| 8 | 文件行没有缩略图、格式徽章、大小 | 补齐三项 + 状态胶囊 |
+| 9 | 标题字色用主蓝，与品牌渐变不搭 | 改渐变终点色 |
+| 10 | 预览图在卡片边缘被裁 | 用 Padding 包裹的 `Row`，不用 `Margin` |
+| 11 | 没有深色截图回归 | 新增 `TestDarkModeRenders` + `TestDarkToolPageHasNoWhiteBlocks` |
+| 12 | 布局数字没有保护 | 新增 `layout_test.go`，两种尺寸断言几何 |
+| 13 | 设置页的「减弱动效」开关不生效 | `motion()` 在预设处返回零值过渡，根视图每帧写入开关状态 |
+| 14 | 预览只在输入卡里出现，工具的说明文字从未渲染 | `Tool.PreviewCaption` 取代死代码 `Tool.Preview`，同一处渲染 |
+| 15 | 侧栏图标没有底座，读起来像一列纯文字菜单 | 32×32 色相底座 `featureTintPlate`，选中时白 22% |
+| 16 | 参数分组没有分界，一张长表单 | `sectionCard` 标题前加 3×11 品牌色竖条 |
+| 17 | 预览固定 300 高，图片小、留白大 | 预览 `Grow(1)` + `Fit(Contain)`，只占满可用高度、不裁切 |
+| 18 | 有文件后拖放区仍是虚线 | 有文件时改实线描边 |
+| 19 | 文件行悬浮变成浮起卡片 | 改成 `Recessed` 整行高亮 + 固定 84 DIP 状态列 |
+| 20 | 空列表时主按钮是亮蓝，点了只弹提示 | 空列表时主按钮置灰（`Recessed` + `TextDim`），取消按钮也随之隐藏 |
+| 21 | 选中药丸只靠字重区分 | 选中格补 1px 描边 + `Shadow(0,1,3,.10)` |
+| 22 | 输入项数量是灰色数字，读不出是个计数器 | 改成 `Recessed` 胶囊计数器 |
+| 23 | 窗口标题只有图标，与托盘图标不成一套 | 换成同形渐变方块标志 + 文字 |
+| 24 | Lobe 默认控件圆角 8 与本系统 12 不一致 | `applyBrandTheme` 同步 `base.Radius`、语义色、`AccentText` |
+| 25 | 应用 logo 是重画的近仿品 | 直接用原项目 `frontend/logo.svg`，窗口/设置页/托盘三处同一张图，`resources/icon.png` 也用同一 SVG 重新渲染 |
+| 26 | 没有收起侧栏，窄窗口下三栏拥挤 | 工具卡底部加「收起侧栏」，宽度弹簧到 76，文字隐藏但 Label 保留 |
+| 27 | 切换工具页是硬切，看不出在换页 | 预览区与参数面板按工具 `Key` 重新挂载，带 `Y:6→0` + 淡入 |
+| 28 | 侧栏收起时宽度只重绘不重排，兄弟卡「卡住再跳」 | 把 `AnimateTo("rail-width")` 放到父 `Row` 上，每帧喂给布局；340 ms / bounce .04 |
+| 29 | 窄窗口（<1080 DIP）三栏挤成一团 | 自动折成 76 DIP 图标条，不依赖手点收起 |
+| 30 | 中间宽度下侧栏文字换行闪动 | `showLabels := width > 196` + 全部 `NoWrap()` |
+| 31 | 切页是 10 DIP 位移，大块内容像窗口在跳 | 改 `{Y:4, Opacity:0.4}` + 220 ms 溶解式，只做 Enter |
+| 32 | 原生标题栏与自绘标题栏圆角永远对不上 | 去掉自绘标题栏，改用系统原生标题栏 |
+| 33 | 卡片圆角 24 比窗口圆角还大 | 收紧为 Card 16 / Panel 12 / Control 10 / Pill 7 |
+| 34 | 框架认为窗口非活动时把填充控件降级成灰色 | `InactiveAccent` 钉成品牌蓝 |
+| 35 | 虚线框 3:1 且圆角处稀疏，像断线 | 自绘 `dashedFrame`，沿周长等分 5/4 |
+| 36 | 色块是「框套框」，色值小一圈且偏移 | 色块改为 58×38 与输入框等高，不再包第三层边框 |
+| 37 | 色块十六进制输入框每帧被重置成占位符 | `colorTextFor` 按颜色地址缓存绑定，半途输入可保留 |
+| 38 | 设置页保存提示常驻不消失 | 2.4 s 自淡出的「已保存」提示 |
+| 39 | 图标生成、GIF 工具与富文本制图共用品牌蓝底座 | `featureTint` 补到 12 项，每工具一色 |
+| 40 | 图标生成的填充色字段在 0 内边距时无意义 | 只有内边距或圆角大于 0 时才出现；透明背景显示为胶囊而不是 `#000000` |
+| 41 | GIF 工具的循环次数与输出格式在「导出帧」下无意义 | 导出帧只显示目标文件夹说明 |
+| 42 | PDF 预览副标题泄漏内部枚举 `single` | 副标题改用面板同款中文标签 |
+| 43 | 水印边距 0 被当成「未设置」 | 面板用 `initialised` 只播种一次默认值，引擎把负值当未设置 |
+| 44 | 边框宽度 0 被当成「未设置」 | 同上：0 是合法值，只保留上限夹取 |
+| 45 | 界面里到处是一行说明文字，像未收敛的草稿 | 移除所有 `hint(...)`，开关的第二行解释也去掉；只保留放不下的告警 |
+| 46 | 输入卡上沿离虚线框太远，看着空 | 空列表时顶部内边距 16→4，虚线框上移 12 DIP |
+| 47 | 切页像“先冲后停”的一跳 | 弹簧换 `EaseOut` 曲线 260 ms，`Y: 8` + 透明度 `0.35 → 1` |
+| 48 | 切页时两页重叠重影 | 去掉 `Exit` 副本，只做 `Enter` |
+| 49 | 侧栏收起是弹簧，边缘会抖 | 换 `EaseInOut` 320 ms |
+| 50 | 分段滑块弹簧会冲出格子 | 换 `EaseOut` 220 ms |
+| 51 | 侧栏整列不齐：`ButtonBase` 默认按各自行内容宽度整组居中，文字长短不一，图标各在不同 x | 有标签时显式 `Justify(Start)` + 统一 `PaddingX(8)`/`Gap(11)`，收起时居中；所有行钉在同一条左轴线 |
+| 52 | 选中行的图标底座放大 +2，把文字顶右移 | 底座固定 32×32，状态只换底色；底部两项图标同占 32 槽位，与工具行轴线重合 |
+| 53 | 切页仍有 4 DIP 位移，大块内容像窗口在跳 | 只剩不透明度 `0.72 → 1`，`EaseOut` 160 ms 纯淡入 |
+| 54 | PDF 边距 0 被引擎当「未设置」强改为 36（面板允许 0 且只播种一次默认） | 负值才是未设置哨兵；另加四分之一短边上限防止可用区翻转 |
+| 55 | `Session.Settings` 三处无锁读（关窗、自动更新、输出目录）与后台 `SetSettings` 并发写竞态 | 统一走 `SettingsSnapshot()`；`pickOutputDirectory` 同修 |
+| 56 | `AddPaths` 内联探测循环与 `loadMetaRows` 完全重复，新文件被探测两次 | 删除内联循环 |
+| 57 | 侧栏 232 DIP 右侧留白过多 | 收到 216；内容区右侧空 16 DIP |
+| 58 | 展开/收起时图标先居中再跳位 | 行内边距在两种状态固定为 8，图标只随宽度平移，只有文字出现或消失 |
+| 59 | 设置页顶部多一个「返回工具」 | 删除；侧栏「全局设置」改成开关，再点一次即回工具页 |
+| 60 | 「关于」在右列，仓库入口无处可点 | 挪到左列，整行可点，打开 GitHub 仓库 |
+| 61 | 图标在 16/32 px 下偏小 | `brand.IconSVG` 裁掉原文档 9% 边距（viewBox `96 96 832 832`），标题栏、托盘、安装包三处统一用裁剪版 |
+| 62 | 切页动画看不出区别（历史中间态，已被 65–70 取代） | 位移 0→18 DIP + 不透明度 0.55→1，`EaseOut` 260 ms |
+| 63 | 托盘、任务栏、安装包、界面四处图标各画一遍 | 统一到 `internal/brand`，`cmd/imageflow-icon` 从同一份 SVG 生成 `resources/icon.png` |
+| 64 | 自动更新未配置 | `mygo.json` 增加 `updates`（仓库 + 公钥 + tagPrefix），构建产出签名清单 |
+| 65 | 侧栏收起时中间卡片落后 150+ DIP，与侧栏动画完全不匹配 | `pageSwap` 等预设未设属性标志，被 MyGo 当作「动画全部属性」，把父行每帧算好的几何又缓动一遍；统一显式 `Shadows: true`，布局盒改为同帧跟随 |
+| 66 | 点「全局设置」时侧边栏整列刷新一遍 | 选中指示原本只在工具页构建，设置页移除列表第一个子元素后 13 行按位置重编号全部重建；指示改为常驻淡出，每行加固定 `Key` |
+| 67 | 侧栏展开/收起、切页、指示滑动三条曲线各走各的（180/200/260/320 ms） | 统一到共享 `shellCurve`（`EaseInOut` 220 ms）；标签随动画宽度同帧渐变，不再在阈值处硬切 |
+| 68 | 点设置第一帧中间内容区整块空白 | 切页淡入起点 `0 → 0.72`，避免空帧被误读成刷新 |
+| 69 | 选中指示渐隐时，行内图标/文字与底部高亮瞬间换色，一帧内出现两块蓝色 | 三者共用同一淡出值：`mixColor` 渐变图标、文字、底座；底部高亮用 Absolute 遮罩 + `AnimateTo` 接同一曲线 |
+| 70 | `motion()` 在减弱动效时返回零值过渡，反而更慢 | 改为 `ElementTransition{Duration: -1}`（MyGo 定义的「立即到位」） |
+| 71 | 全量审查：半透明像素转 JPEG 明显偏暗 | `codec.flatten` 对 `RGBA()` 返回的预乘值又乘一次 alpha；改用 `NRGBAModel` 取直值后只混合一次 |
+| 72 | 多点文件名（如 `photo.2024.jpg`）输出无扩展名、整行失败 | `BuildOutputPath` 把 `.2024` 误当扩展名；仅当后缀与目标格式一致才保留，否则追加 |
+| 73 | 两个 worker 写同一新路径时文件交错、失败方删掉成功方结果 | `Commit` 目标不存在时直接 `os.Create`（Stat→Create TOCTOU）；统一改走 `Atomic` 临时文件 + rename |
+| 74 | 取消后仍报「完成」，取消行状态空白 | `runBatch` 未统计 `batch.Cancelled`；补计数、写 `已取消` 行状态与状态栏文案 |
+| 75 | 12 个工具的 `Run` 闭包在 worker 里直接读 `t.*`，与 UI 线程控件写入竞态 | 全部在 UI 线程把参数快照成局部值（照 `CropTool.Run` 既有范式）；`Stitch/PDF` 同样处理 |
+| 76 | 拼接/PDF 绕开编排：`planned` 跨批次污染、停止处理无效、无重入保护 | 新增 `beginWholeList`/`endWholeList` 统一重置与收尾；`Start()` 用 `a.mu` 做原子占位 |
+| 77 | 富文本配图对话框在后台 goroutine 直接写输入框绑定字段 | 结果入 `pendingPicker`，由 `applyPendingSettings` 在 UI 线程回灌 |
+| 78 | 连续保存时旧定时器提前清掉新提示 | `flashSettingsSaved` 复用单个 `*time.Timer` 并用 `savedUntil` 守卫 |
+| 79 | 更新装完不重启（开启后台运行时 OnClose 拦截）、安装失败不可见、检查/安装并发 | `Relaunch` 前置 `quitting`；失败清 `Version` 置 `Failed`；`Busy`/`Installing` 拆开并加重入保护 |
+| 80 | SVG 畸形 XML 被当作校验通过，中段外链属性逃过检查 | `checkHrefAttributes` 对非 EOF 解析错误返回 err 而非 nil |
+| 81 | EXIF 测试 fixture 恒为 orientation 0，「6→1」从未验证 | 修正 value 字段写入并回读源断言；取消测试的恒真 AND 断言改为实质校验 |
+| 82 | CLI `-tool pdf2` 静默成功、临时输出目录不可见、`imageflow-icon` 失败残留临时 PNG | 白名单提前校验、打印临时目录、删死分支；`imageflow-icon` 改 `run() int` 让 defer 生效 |
+| 83 | 圆角表/注释写 24/16/12/8，实际 16/12/10/7；修正记录编号 54–61 重复 | 以代码为准同步表格与注释，编号重排为 54–83；生成的 `testdata/*.png` 加入 `.gitignore` |

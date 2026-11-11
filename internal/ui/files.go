@@ -1,0 +1,355 @@
+package ui
+
+import (
+	"fmt"
+	"image"
+	"os"
+
+	"github.com/egoist/mygo"
+	myui "github.com/egoist/mygo/ui"
+	"github.com/lobehub/lobe-mygo/pkg/lucide"
+
+	"github.com/lllll081926i/imageflow-go/internal/batch"
+	"github.com/lllll081926i/imageflow-go/internal/codec"
+	"github.com/lllll081926i/imageflow-go/internal/paths"
+	"github.com/lllll081926i/imageflow-go/internal/settings"
+)
+
+// fileRow draws one input row: thumbnail, name, format badge and size, status.
+// Hover swaps the hairline for a tinted selection so the row reads as a list
+// item rather than as a floating card, and the status column stays aligned by
+// giving it a fixed width.
+func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
+	c.Key("input-file-" + item.Path)
+	row := myui.Row(c).FillWidth().Height(62).Gap(11).Padding(7, 9, 7, 9).
+		AlignItems(myui.Center).Radius(st.RadiusControl).Transition(motion(springSoft)).
+		Focusable().Cursor(myui.CursorPointer).Label("预览 " + item.Name).
+		OnClick(func() { a.selectPreview(item.Path) })
+	if a.selectedPreviewPath() == item.Path {
+		row.Background(st.BrandSoft).Border(1, st.Brand)
+		a.previewMu.Lock()
+		reveal := a.previewRevealPath == item.Path
+		if reveal {
+			a.previewRevealPath = ""
+		}
+		a.previewMu.Unlock()
+		if reveal {
+			row.ScrollIntoView()
+		}
+	} else if row.Hovered() {
+		row.Background(st.Recessed)
+	}
+	row.Children(func() {
+		a.thumbBox(c, st, item)
+		myui.Column(c).Grow(1).Gap(3).Children(func() {
+			myui.Row(c).FillWidth().Gap(6).AlignItems(myui.Center).Children(func() {
+				myui.Text(c, truncate(item.Name, 24)).FontSize(13).
+					FontWeight(500).TextColor(st.Text).SingleLine()
+				if item.Format != "" {
+					myui.Row(c).PaddingX(5).PaddingY(1).Radius(4).
+						Background(st.Recessed).Children(func() {
+						myui.Text(c, item.Format).FontSize(9).FontWeight(600).
+							TextColor(st.TextDim)
+					})
+				}
+			})
+			meta := fmt.Sprintf("%d × %d", item.Width, item.Height)
+			if item.Size > 0 {
+				meta += "  ·  " + humanSize(item.Size)
+			}
+			myui.Text(c, meta).FontSize(11).TextColor(st.TextDim).SingleLine()
+		})
+		if item.Status != "" {
+			myui.Column(c).Width(84).Gap(3).AlignItems(myui.End).Children(func() {
+				statusPill(c, statusLabel(item.Status), statusColor(item.Status, st))
+				if item.Message != "" {
+					myui.Text(c, truncate(item.Message, 14)).FontSize(10).
+						TextColor(statusColor(item.Status, st)).SingleLine().Tooltip(item.Message)
+				}
+			})
+		}
+	})
+	if row.RightClicked() {
+		a.removeByPath(item.Path)
+	}
+}
+
+func (a *App) thumbBox(c *myui.Context, st style, item *batch.Item) {
+	box := myui.Row(c).Size(48, 48).Radius(st.RadiusPill).AlignItems(myui.Center).
+		Justify(myui.Center).Background(st.Recessed).Clip()
+	box.Children(func() {
+		if item.Thumb != "" {
+			if bmp, err := myui.DecodeBitmap([]byte(item.Thumb)); err == nil {
+				myui.Image(c, bmp).Size(48, 48)
+				return
+			}
+		}
+		myui.Icon(c, lucide.FileImage()).Width(17).Height(17).TextColor(st.TextDim)
+	})
+}
+
+func humanSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit && exp < 3; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGT"[exp])
+}
+
+func statusLabel(status string) string {
+	switch status {
+	case "ok":
+		return "已完成"
+	case "failed":
+		return "失败"
+	case "skipped":
+		return "已跳过"
+	case "cancelled":
+		return "已取消"
+	}
+	return ""
+}
+
+func statusColor(status string, st style) myui.Color {
+	switch status {
+	case "ok":
+		return st.Success
+	case "failed":
+		return st.Danger
+	case "cancelled":
+		return st.Warning
+	}
+	return st.TextDim
+}
+
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+func (a *App) removeByPath(path string) {
+	a.Session.Mu.Lock()
+	removed := -1
+	for i, it := range a.Session.Items {
+		if it.Path == path {
+			a.Session.Items = append(a.Session.Items[:i], a.Session.Items[i+1:]...)
+			removed = i
+			break
+		}
+	}
+	a.Session.Mu.Unlock()
+	if removed >= 0 && a.selectedPreviewPath() == path {
+		rows := a.Session.Snapshot()
+		if len(rows) == 0 {
+			a.SetPreview(nil)
+		} else {
+			a.selectPreview(rows[min(removed, len(rows)-1)].Path)
+		}
+	}
+	a.Invalidate()
+}
+
+// AddPaths expands dropped or picked paths into the session.
+func (a *App) AddPaths(raw []string) int {
+	if a.Window != nil {
+		a.ImportPaths(raw)
+		return 0
+	}
+	expanded := paths.Expand(raw)
+	for _, dir := range expanded.InputDirs {
+		a.rememberInputDir(dir)
+	}
+	if len(expanded.Files) == 0 {
+		a.SetStatus("没有找到可处理的图片")
+		a.Invalidate()
+		return 0
+	}
+	added := a.Session.Add(expanded.Files)
+	// The rows are read through a snapshot: a drop or a dialog callback calls this
+	// from a worker goroutine while the view thread is snapshotting the same
+	// session, and ranging over Session.Items directly raced with both.
+	rows := a.Session.Snapshot()
+	a.loadMetaRows(rows)
+	if added > 0 {
+		a.SetStatus(fmt.Sprintf("已添加 %d 张", added))
+	} else {
+		a.SetStatus("这些文件已经在列表里")
+	}
+	if len(rows) > 0 && a.Preview() == nil {
+		a.loadPreview(rows[0].Path)
+	}
+	a.Invalidate()
+	return added
+}
+
+// loadMetaRows probes the rows that still have no thumbnail. It takes a snapshot
+// index map, because Add may have appended rows since the caller started.
+func (a *App) loadMetaRows(rows []batch.Item) {
+	for i := range rows {
+		if rows[i].Thumb != "" && rows[i].Width > 0 {
+			continue
+		}
+		a.loadMeta(i, rows[i].Path)
+	}
+}
+
+// rememberInputDir pushes a dropped folder into the recent list the settings
+// page summarises, capped and de-duplicated by the settings package. Only the
+// shared Session copy is written here: a drop can arrive on a window callback,
+// and the editable settings belong to the UI thread.
+func (a *App) rememberInputDir(dir string) {
+	if dir == "" {
+		return
+	}
+	if err := a.Session.UpdateSettings(func(s *settings.Settings) { s.RecentInputDirs = settings.PushRecent(s.RecentInputDirs, dir) }); err != nil {
+		a.SetStatus("保存输入历史失败：" + err.Error())
+	}
+}
+
+// loadPreview decodes one file so the preview box has something to show before
+// the first run.
+func (a *App) loadPreview(path string) {
+	version := a.beginPreview(path)
+	opened, err := codec.OpenSRGB(path)
+	var img image.Image
+	if err == nil {
+		img = opened.Image
+	}
+	a.finishPreview(version, img, err)
+}
+
+// loadMeta probes one file for its dimensions, format and thumbnail.
+func (a *App) loadMeta(index int, path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	width, height, format, err := codec.Probe(path)
+	if err != nil {
+		return
+	}
+	thumb := ""
+	if info, terr := a.Thumbs.Get(path, info.ModTime().UnixNano(), info.Size()); terr == nil {
+		thumb = string(info.Data)
+	}
+	a.Session.SetMeta(index, width, height, format, thumb)
+}
+
+func (a *App) pickFiles() {
+	if a.Window == nil {
+		return
+	}
+	go func() {
+		chosen, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   a.Window,
+			Title:    "选择图片",
+			Multiple: true,
+			Filters: []mygo.FileFilter{{
+				Name:       "图片",
+				Extensions: paths.ImageExtensions,
+				MIMETypes:  []string{"image/*"},
+			}},
+		})
+		if err != nil || len(chosen) == 0 {
+			return
+		}
+		a.AddPaths(chosen)
+	}()
+}
+
+func (a *App) pickDirectory() {
+	if a.Window == nil {
+		return
+	}
+	go func() {
+		chosen, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:    a.Window,
+			Title:     "选择文件夹",
+			Directory: true,
+		})
+		if err != nil || len(chosen) == 0 {
+			return
+		}
+		a.AddPaths(chosen)
+	}()
+}
+
+// pickOutputDirectory lets the user override the default output folder.
+func (a *App) pickOutputDirectory() {
+	if a.Window == nil {
+		return
+	}
+	go func() {
+		chosen, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:    a.Window,
+			Title:     "选择输出文件夹",
+			Directory: true,
+		})
+		if err != nil || len(chosen) == 0 {
+			return
+		}
+		// Session.Settings is written under its lock by SetSettings; a plain
+		// struct copy here raced with it. SettingsSnapshot is the locked copy.
+		if serr := a.Session.UpdateSettings(func(next *settings.Settings) {
+			next.DefaultOutputDir = chosen[0]
+			next.RecentOutputDirs = settings.PushRecent(next.RecentOutputDirs, chosen[0])
+		}); serr != nil {
+			a.SetStatus("保存输出目录失败：" + serr.Error())
+			a.Invalidate()
+			return
+		}
+		// Session.Settings is the shared copy; the editable one follows on the next
+		// frame through applyPendingSettings, so the view is not written from here.
+		a.SetStatus("输出目录已更新")
+		a.Invalidate()
+	}()
+}
+
+// Start runs the active tool over every row.
+func (a *App) Start() {
+	if a.IsImporting() {
+		a.SetStatus("正在导入图片，请等待导入完成")
+		return
+	}
+	tool := a.ActiveTool()
+	if tool == nil {
+		return
+	}
+	if a.Session.Len() == 0 {
+		a.SetStatus("先添加图片")
+		return
+	}
+	// Claim the run atomically. Start is public and can also be reached from a
+	// second-instance callback or a test; a second start would replace the
+	// session's cancel token and let an older batch's completion overwrite the
+	// new one's status and Running flag.
+	a.mu.Lock()
+	if a.Running {
+		a.mu.Unlock()
+		return
+	}
+	a.Running = true
+	a.mu.Unlock()
+	a.SetProgress(0, "准备中")
+	tool.Run(a)
+}
+
+// Cancel asks the running batch to stop taking new items.
+func (a *App) Cancel() {
+	a.CancelImport()
+	a.Session.Mu.Lock()
+	cancel := a.Session.Cancel
+	a.Session.Mu.Unlock()
+	if cancel != nil {
+		cancel.Cancel()
+		a.SetStatus("正在取消…")
+	}
+}

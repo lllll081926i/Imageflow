@@ -1,0 +1,12 @@
+{
+  "name": "ImageFlow",
+  "identifier": "io.github.lllll081926i.imageflow",
+  "version": "2.3.0",
+  "out": "build",
+  "updates": {
+    "publicKey": "z69AAAE4oeWZ/iPsfz92/hIQkP3EOsMvcaVxCr5PKb8=",
+    "github": "lllll081926i/Imageflow",
+    "tagPrefix": "v",
+    "deltas": 3
+  }
+}
