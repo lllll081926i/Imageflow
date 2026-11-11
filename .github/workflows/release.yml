@@ -1,0 +1,163 @@
+name: 云端构建与发布
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows/amd64
+            runner: windows-latest
+          - target: windows/arm64
+            runner: windows-latest
+          - target: linux/amd64
+            runner: ubuntu-latest
+          - target: linux/arm64
+            runner: ubuntu-latest
+          - target: darwin/amd64
+            runner: macos-latest
+          - target: darwin/arm64
+            runner: macos-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CGO_ENABLED: '0'
+      RELEASE_TARGET: ${{ matrix.target }}
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 检查版本与发布标签
+        run: |
+          $config = Get-Content mygo.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne ('v' + $config.version)) {
+            throw '请从与 mygo.json 版本一致的 v 开头标签运行发布流程。'
+          }
+
+      - name: 运行测试与静态检查
+        if: matrix.target == 'windows/amd64'
+        run: |
+          go test ./... -timeout 10m
+          if ($LASTEXITCODE -ne 0) { throw '测试失败' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Go 静态检查失败' }
+          go tool mygo vet .
+          if ($LASTEXITCODE -ne 0) { throw 'MyGo 静态检查失败' }
+
+      - name: 构建安装包与签名更新包
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MYGO_UPDATER_PRIVATE_KEY)) {
+            throw '缺少 MYGO_UPDATER_PRIVATE_KEY 仓库密钥。'
+          }
+          go tool mygo build -platform $env:RELEASE_TARGET
+          if ($LASTEXITCODE -ne 0) { throw '发布构建失败' }
+
+      - name: 整理发布文件
+        run: |
+          $config = Get-Content mygo.json -Raw | ConvertFrom-Json
+          $target = $env:RELEASE_TARGET.Replace('/', '-')
+          $stage = Join-Path build $target
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          $assets = Get-ChildItem $stage -File | Where-Object {
+            $_.Name -match '\.(tar\.gz|deb|dmg|delta)$' -or
+            $_.Name -match '^imageflow-setup-.*\.exe$' -or
+            $_.Name -eq ('update-' + $target + '.json')
+          }
+          foreach ($asset in $assets) {
+            Copy-Item -LiteralPath $asset.FullName -Destination release-assets
+          }
+          $manifestPath = Join-Path release-assets ('update-' + $target + '.json')
+          if (-not (Test-Path $manifestPath)) { throw '缺少更新签名清单' }
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $config.version -or -not $manifest.signature) {
+            throw '更新清单版本或签名无效'
+          }
+          $archiveName = [Uri]::UnescapeDataString(([Uri]$manifest.url).Segments[-1])
+          $archivePath = Join-Path release-assets $archiveName
+          if (-not (Test-Path $archivePath)) { throw '更新清单对应的压缩包缺失' }
+          if ((Get-Item $archivePath).Length -ne $manifest.size) { throw '更新压缩包大小不匹配' }
+          if ($target.StartsWith('windows-')) {
+            $portableFiles = @(
+              (Join-Path $stage 'ImageFlow.exe'),
+              (Join-Path $stage 'icon.png'),
+              (Join-Path $stage '.mygo-files'),
+              'LICENSE'
+            )
+            $zip = Join-Path release-assets ('imageflow-' + $config.version + '-' + $target + '-portable.zip')
+            Compress-Archive -LiteralPath $portableFiles -DestinationPath $zip
+          }
+
+      - name: 保存构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ strategy.job-index }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: 发布 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v4
+
+      - name: 下载全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: 生成校验文件与发布说明
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release-assets -File | Sort-Object Name
+          $checksums = foreach ($file in $files) {
+            (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $file.Name
+          }
+          [IO.File]::WriteAllLines((Join-Path (Get-Location) 'release-assets/SHA256SUMS'), [string[]]$checksums, [Text.UTF8Encoding]::new($false))
+          $config = Get-Content mygo.json -Raw | ConvertFrom-Json
+          $notes = Get-Content CHANGELOG.md -Raw
+          $sectionPattern = '(?s)^.*?## ' + [regex]::Escape($config.version) + '\s*'
+          $notes = ($notes -replace $sectionPattern, '') -split '\r?\n## ' | Select-Object -First 1
+          $notes += "`n`n## 下载与验证`n`n- Windows：提供 x64 / ARM64 安装包和便携 ZIP。`n- macOS：提供 Intel / Apple Silicon 的 DMG 和压缩包，未经过 Apple 开发者签名和公证。`n- Linux：提供 x64 / ARM64 的 DEB 和压缩包。`n- 全部产物由 GitHub Actions 云端构建。Windows 执行测试及静态检查；其他平台执行编译打包，尚未完成各平台人工运行验证。`n- 附带 SHA256SUMS 和各平台签名更新清单。PNG 压缩引擎仅内置 Windows x64；其他平台需安装 OxiPNG。`n- 从旧版 Python/React 应用升级时，请下载安装包；旧版设置与更新机制未验证兼容。`n"
+          [IO.File]::WriteAllText((Join-Path (Get-Location) 'release-notes.md'), $notes, [Text.UTF8Encoding]::new($false))
+
+      - name: 创建并发布版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --title "ImageFlow $GITHUB_REF_NAME" --notes-file release-notes.md --draft
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
