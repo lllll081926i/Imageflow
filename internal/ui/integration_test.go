@@ -50,6 +50,35 @@ func seedInputs(t *testing.T, a *App, n int) []string {
 	return paths
 }
 
+// useTool selects a tool page by its label and returns it. The rail's order is a
+// product decision, not a test fixture: tests name the tool instead of an index,
+// so inserting a page cannot silently point them at a different one.
+func useTool(t *testing.T, a *App, name string) Tool {
+	t.Helper()
+	for i, tool := range a.Tools {
+		if tool.Name() == name {
+			a.Active = i
+			a.ShowSettings = false
+			return tool
+		}
+	}
+	t.Fatalf("工具 %q 未注册", name)
+	return nil
+}
+
+// toolByName returns a registered tool by its label, so a test never depends on
+// the rail's order.
+func (a *App) toolByName(t *testing.T, name string) Tool {
+	t.Helper()
+	for _, tool := range a.Tools {
+		if tool.Name() == name {
+			return tool
+		}
+	}
+	t.Fatalf("工具 %q 未注册", name)
+	return nil
+}
+
 // waitForRun blocks until the asynchronous batch finishes.
 func waitForRun(t *testing.T, a *App) {
 	t.Helper()
@@ -107,7 +136,7 @@ func countFiles(t *testing.T, dir string) int {
 func TestRunConvertEndToEnd(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 3)
-	a.Active = 0
+	useTool(t, a, "格式转换")
 	tool := a.ActiveTool().(*ConvertTool)
 	tool.format = "jpg"
 	tool.quality = 88
@@ -138,7 +167,7 @@ func TestRunConvertEndToEnd(t *testing.T) {
 func TestRunConvertWithResize(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 0
+	useTool(t, a, "格式转换")
 	tool := a.ActiveTool().(*ConvertTool)
 	tool.format = "png"
 	tool.resize = 1
@@ -159,7 +188,7 @@ func TestRunConvertWithResize(t *testing.T) {
 func TestRunResizeTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 2)
-	a.Active = 1
+	useTool(t, a, "尺寸调整")
 	a.Start()
 	waitForRun(t, a)
 	assertAllOK(t, a)
@@ -177,7 +206,7 @@ func TestRunResizeTool(t *testing.T) {
 func TestRunGridTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 3
+	useTool(t, a, "宫格切图")
 	tool := a.ActiveTool().(*GridTool)
 	tool.grid = 2
 	a.Start()
@@ -192,7 +221,7 @@ func TestRunGridTool(t *testing.T) {
 func TestRunLayoutTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 4
+	useTool(t, a, "图片布局")
 	tool := a.ActiveTool().(*LayoutTool)
 	tool.rows, tool.cols = 1, 3
 	a.Start()
@@ -206,7 +235,7 @@ func TestRunLayoutTool(t *testing.T) {
 func TestRunStitchTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 3)
-	a.Active = 5
+	useTool(t, a, "长图拼接")
 	a.Start()
 	waitForRun(t, a)
 	rows := a.Session.Snapshot()
@@ -237,7 +266,7 @@ func TestRunStitchTool(t *testing.T) {
 func TestRunWatermarkTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 2)
-	a.Active = 6
+	useTool(t, a, "批量水印")
 	tool := a.ActiveTool().(*WatermarkTool)
 	tool.text = "TEST"
 	tool.opacity = 100
@@ -254,7 +283,7 @@ func TestRunWatermarkTool(t *testing.T) {
 func TestRunPaletteTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 7
+	useTool(t, a, "色彩提取")
 	a.Start()
 	waitForRun(t, a)
 	assertAllOK(t, a)
@@ -270,7 +299,7 @@ func TestRunPaletteTool(t *testing.T) {
 func TestRunPDFTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 2)
-	a.Active = 9
+	useTool(t, a, "转 PDF")
 	a.Start()
 	waitForRun(t, a)
 	rows := a.Session.Snapshot()
@@ -296,7 +325,7 @@ func TestRunPDFTool(t *testing.T) {
 func TestRunRichTextTool(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 11
+	useTool(t, a, "富文本制图")
 	a.Start()
 	waitForRun(t, a)
 	assertAllOK(t, a)
@@ -313,7 +342,7 @@ func TestRunRichTextTool(t *testing.T) {
 func TestRunGIFToolRejectsStills(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 10
+	useTool(t, a, "GIF 工具")
 	a.Start()
 	waitForRun(t, a)
 	rows := a.Session.Snapshot()
@@ -328,7 +357,7 @@ func TestRunGIFToolRejectsStills(t *testing.T) {
 func TestCancelStopsUnstartedRows(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 8)
-	a.Active = 0
+	useTool(t, a, "格式转换")
 	tool := a.ActiveTool().(*ConvertTool)
 	tool.format = "png"
 	a.Start()

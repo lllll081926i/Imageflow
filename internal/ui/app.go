@@ -34,6 +34,15 @@ type Tool interface {
 	Run(a *App)
 }
 
+// previewWidget is implemented by a tool whose preview is more than one picture:
+// a collage, for instance, composes several inputs and receives pointer input.
+// The input card asks for it instead of drawing the shared single-file preview.
+type previewWidget interface {
+	// PreviewPanel draws the tool's own preview inside the input card. The
+	// Element it builds is the whole preview area; the tool sizes it itself.
+	PreviewPanel(c *myui.Context, a *App)
+}
+
 // App is the whole interface state.
 //
 // The batch goroutine updates Status, Progress, ProgressText and Running from
@@ -112,6 +121,34 @@ type App struct {
 	// map in applyPendingSettings.
 	pickerMu      sync.Mutex
 	pendingPicker map[*string]string
+
+	// collage saves the拼图 page's parameters in the background. The UI thread
+	// hands a snapshot to collageMu, and a single timer writes it, so a slider
+	// drag does not turn into one file write per frame.
+	collageMu      sync.Mutex
+	collagePending *settings.Collage
+	collageTimer   *time.Timer
+	collageSig     string
+
+	// railOrder is the sidebar's row order: position → index into Tools. It is a
+	// permutation, so a tool keeps its identity, its page and its selection while
+	// only its position changes. Zero length means "the natural order".
+	railOrder []int
+	// The long-press and drag state. railPressTool is the tool whose row is being
+	// pressed; railDragTool is the one lifted, which is set once the press has
+	// lasted long enough to be a drag.
+	railPressTool  int
+	railPressAt    time.Time
+	railPressMoved float32
+	railPressGrabY float32
+	railPressListY float32
+	railDragTool   int
+	railDragFrom   int
+	railDragTo     int
+	railDragY      float32
+	// railSuppressClick swallows the click the engine reports for the release that
+	// ended a reorder drag, so dropping a row does not also switch to its page.
+	railSuppressClick bool
 }
 
 // applyPendingSettings copies the folder history a background goroutine recorded
@@ -121,11 +158,33 @@ func (a *App) applyPendingSettings() {
 	// Drain dialog results on the UI thread before the controls read their
 	// bound fields, so no background goroutine writes view state directly.
 	a.pickerMu.Lock()
+	picked := len(a.pendingPicker) > 0
 	for dst, path := range a.pendingPicker {
 		*dst = path
 	}
 	clear(a.pendingPicker)
 	a.pickerMu.Unlock()
+	// A new background picture changes the collage preview, which is keyed by its
+	// inputs: dropping the key here is what makes the next frame recompose.
+	if picked {
+		if tool, ok := a.ActiveTool().(*CollageTool); ok && tool != nil {
+			tool.previewKey = ""
+		}
+	}
+	// Slot replacements chosen by a double click come through their own queue on
+	// the tool, because they are keyed by slot rather than by a bound field.
+	if tool, ok := a.ActiveTool().(*CollageTool); ok && tool != nil {
+		a.pickerMu.Lock()
+		for cell, path := range tool.pendingCells {
+			if tool.overrides == nil {
+				tool.overrides = map[int]string{}
+			}
+			tool.overrides[cell] = path
+			tool.previewKey = ""
+		}
+		clear(tool.pendingCells)
+		a.pickerMu.Unlock()
+	}
 
 	a.Session.Mu.Lock()
 	recentIn := append([]string(nil), a.Session.Settings.RecentInputDirs...)
@@ -142,11 +201,87 @@ func (a *App) applyPendingSettings() {
 	a.settingsBase.RecentOutputDirs = append([]string(nil), recentOut...)
 }
 
+// collageSignature summarises a collage snapshot, so an unchanged frame does not
+// schedule a settings write.
+func collageSignature(c settings.Collage) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d|%s|%v|%d|%d|%v|", c.GroupCount, c.PresetID, c.UseCustom, c.GridCols, c.GridRows, c.GridParents)
+	fmt.Fprintf(&b, "%s|%s|%d|%d,%d,%d,%d|%d|%d|%d|%d|", c.AspectID, c.CustomRatio, c.LongEdge,
+		c.MarginTop, c.MarginRight, c.MarginBottom, c.MarginLeft, c.Seam, c.Gap, c.Radius, c.Fit)
+	fmt.Fprintf(&b, "%s|%d|%d|%d|%d|", c.Background, c.BackgroundDim, c.Mode, c.Format, c.Quality)
+	fmt.Fprintf(&b, "%v|%s|%d|%.3f|%.1f|%d|", c.Watermark, c.WatermarkText, c.WatermarkSize,
+		c.WatermarkOpacity, c.WatermarkAngle, c.WatermarkDensity)
+	for _, m := range c.Marks {
+		fmt.Fprintf(&b, "%+v;", m)
+	}
+	return b.String()
+}
+
 // SetStatus records a status line from any goroutine.
 func (a *App) SetStatus(text string) {
 	a.mu.Lock()
 	a.Status = text
 	a.mu.Unlock()
+}
+
+// SaveCollage schedules a write of the collage page's parameters.
+//
+// The values are copied on the UI thread and written by a single debounced timer
+// 600 ms later: every slider drag or drag of a cell changes them dozens of times a
+// second, and one file write per frame would make a cheap edit expensive.
+func (a *App) SaveCollage(c settings.Collage) {
+	a.collageMu.Lock()
+	// A signature check keeps a frame that changed nothing from scheduling a
+	// write; equality is by value, so two identical snapshots skip the timer.
+	sig := collageSignature(c)
+	if sig == a.collageSig {
+		a.collageMu.Unlock()
+		return
+	}
+	a.collageSig = sig
+	copyOf := c
+	copyOf.Marks = append([]settings.CollageMark(nil), c.Marks...)
+	copyOf.GridParents = append([]int(nil), c.GridParents...)
+	a.collagePending = &copyOf
+	if a.collageTimer != nil {
+		a.collageTimer.Stop()
+	}
+	a.collageTimer = time.AfterFunc(600*time.Millisecond, a.flushCollage)
+	a.collageMu.Unlock()
+}
+
+// flushCollage writes the pending collage parameters, if any.
+func (a *App) flushCollage() {
+	a.collageMu.Lock()
+	pending := a.collagePending
+	a.collagePending = nil
+	a.collageTimer = nil
+	a.collageMu.Unlock()
+	if pending == nil {
+		return
+	}
+	value := *pending
+	if err := a.Session.UpdateSettings(func(next *settings.Settings) {
+		next.Collage = value
+	}); err != nil {
+		a.SetStatus("保存拼图设置失败：" + err.Error())
+		a.Invalidate()
+		return
+	}
+	a.collageMu.Lock()
+	a.settingsBase.Collage = value
+	a.Settings.Collage = value
+	a.collageMu.Unlock()
+}
+
+// FlushCollage writes the pending collage parameters now, for shutdown.
+func (a *App) FlushCollage() {
+	a.collageMu.Lock()
+	if a.collageTimer != nil {
+		a.collageTimer.Stop()
+	}
+	a.collageMu.Unlock()
+	a.flushCollage()
 }
 
 // flashSettingsSaved shows a short note in the save bar. It clears itself after
@@ -250,6 +385,12 @@ func NewApp(s settings.Settings) *App {
 		Settings:     s,
 		Status:       "拖入图片或文件夹开始",
 		ProgressText: "",
+		// -1 means "no drag": the zero value would name tool 0 as the row being
+		// carried, and every frame would draw it lifted.
+		railDragTool:  -1,
+		railDragFrom:  -1,
+		railDragTo:    -1,
+		railPressTool: -1,
 	}
 	a.Tools = []Tool{
 		&ConvertTool{},
@@ -257,6 +398,7 @@ func NewApp(s settings.Settings) *App {
 		&CropTool{},
 		&GridTool{},
 		&LayoutTool{},
+		&CollageTool{},
 		&StitchTool{},
 		&WatermarkTool{},
 		&PaletteTool{},
@@ -267,6 +409,11 @@ func NewApp(s settings.Settings) *App {
 		&CompressTool{},
 	}
 	a.settingsBase = a.Session.SettingsSnapshot()
+	// The row order is validated against the tool list, so it is seeded only after
+	// that list exists: seeding it first repaired every stored permutation to the
+	// natural order.
+	a.railOrder = append([]int(nil), s.RailOrder...)
+	a.ensureRailOrder()
 	// Fill each tool's defaults up front, so the panel and the batch runner agree
 	// even when the page has not been drawn yet.
 	for _, tool := range a.Tools {
@@ -274,7 +421,24 @@ func NewApp(s settings.Settings) *App {
 			init.ensure()
 		}
 	}
+	// The collage page's parameters live in the settings file; seed the tool from
+	// them so a restored template is what the first frame draws and exports.
+	if s.Collage.GroupCount > 0 {
+		if tool, ok := a.toolByNameInternal("图片拼图").(*CollageTool); ok && tool != nil {
+			tool.applyPersisted(s.Collage)
+		}
+	}
 	return a
+}
+
+// toolByNameInternal finds a registered tool by its label without a *testing.T.
+func (a *App) toolByNameInternal(name string) Tool {
+	for _, tool := range a.Tools {
+		if tool.Name() == name {
+			return tool
+		}
+	}
+	return nil
 }
 
 // View is the root view handed to the window.
@@ -532,13 +696,22 @@ func railLabelAlpha(width float32) float32 {
 	return (width - railLabelFadeFrom) / (railLabelFadeTo - railLabelFadeFrom)
 }
 
-// railList is the tool rows with one selection pill behind them.
-//
+// ObserveInput (not HandleInput) is enough because the rows keep their normal click
+// handling: the observer only tracks the gesture, and a plain click reaches the row
+// as it always did. The gestures themselves have two phases — a press must hold
+// still for railLongPress before anything lifts — which is why Dragged, available
+// only as it moves, cannot express them.
 // The pill is a single element that travels between rows instead of each row
 // painting its own highlight. Per-row highlights cannot animate: the old row loses
 // its gradient in the same frame the new row gains one, so the selection jumps. A
 // single pill has an identity across frames, so its Top is a value the framework
 // can interpolate.
+//
+// The list itself observes the pointer. A row cannot: the carried row is the thing
+// being moved, so a pointer position measured inside it changes as the row slides,
+// and a drag driven by those coordinates stalls or runs away. The list's own box
+// does not move, so its local coordinates are a stable frame of reference for the
+// whole gesture.
 //
 // The pill is always built, including on the settings page where it fades out.
 // MyGo identifies an unkeyed child by its position among its siblings; removing
@@ -547,17 +720,20 @@ func railLabelAlpha(width float32) float32 {
 // pill's travel from the top. Keeping the child (and keying every row) makes the
 // list's shape constant across every page switch.
 func (a *App) railList(c *myui.Context, st style, labelAlpha float32) {
-	// activeRow is which row the pill rests on. On the settings page the pill
-	// stays where it was and only fades, so returning to a tool travels from the
-	// last selected row instead of restarting at the top.
-	activeRow := a.Active
-	if activeRow < 0 || activeRow >= len(a.Tools) {
+	order := a.railOrderSnapshot()
+	rowPitch := float32(railRowPitch)
+
+	// activeRow is where the pill rests: the position of the selected tool, not
+	// the tool's index, so reordering the rail does not move the selection.
+	activeRow := a.railPositionOf(a.Active)
+	if a.Active < 0 || a.Active >= len(a.Tools) {
 		activeRow = 0
 	}
-	visible := !a.ShowSettings && a.Active >= 0 && a.Active < len(a.Tools)
+	visible := !a.ShowSettings && activeRow >= 0
 
-	myui.Column(c).FillWidth().Gap(railRowGap).Children(func() {
-		target := float32(activeRow * (railRowHeight + railRowGap))
+	list := myui.Column(c).FillWidth().Gap(railRowGap)
+	list.Children(func() {
+		target := float32(activeRow) * rowPitch
 		// ZIndex(-1) puts the pill behind the rows: the rows paint no background
 		// of their own, so the pill shows through, and an Absolute child would
 		// otherwise paint above its later siblings.
@@ -579,15 +755,17 @@ func (a *App) railList(c *myui.Context, st style, labelAlpha float32) {
 			alpha = pill.AnimateTo("rail-pill-alpha", alpha, shellCurve)
 		}
 		pill.Top(y).Opacity(alpha)
-		for i, tool := range a.Tools {
+
+		for pos, toolIndex := range order {
+			tool := a.Tools[toolIndex]
 			// The selected row's palette fades with the indicator. Switching it on
 			// the first frame of the settings page left white text on a gradient
 			// that was still fading out, which read as the rail being repainted.
 			rowAlpha := float32(0)
-			if i == activeRow {
+			if pos == activeRow {
 				rowAlpha = alpha
 			}
-			a.railItem(c, st, i, tool, labelAlpha, rowAlpha)
+			a.railItem(c, st, pos, toolIndex, tool, labelAlpha, rowAlpha, rowPitch)
 		}
 	})
 }
@@ -606,20 +784,85 @@ func mixColor(from, to myui.Color, k float32) myui.Color {
 	}
 }
 
-func (a *App) railItem(c *myui.Context, st style, index int, tool Tool, labelAlpha, selectAlpha float32) {
-	active := a.Active == index && !a.ShowSettings
-	item := myui.ButtonBase(c).Key(fmt.Sprintf("rail-tool-%d", index)).
+// railItem draws one tool row.
+//
+// The rows keep the flow layout that aligns their plates to one axis, and a
+// reorder moves them with a translation: a carried row follows the pointer, is
+// scaled up and takes a shadow, which is the only cue that says the pointer is now
+// carrying it rather than pressing it. The gesture itself lives on the list
+// (railPointerInput), so it has a coordinate frame that does not move.
+func (a *App) railItem(c *myui.Context, st style, pos, toolIndex int, tool Tool, labelAlpha, selectAlpha, rowPitch float32) {
+	active := a.Active == toolIndex && !a.ShowSettings
+	item := myui.ButtonBase(c).Key(railRowKey(toolIndex) + "-row").
 		FillWidth().Height(railRowHeight).Gap(11).
 		AlignItems(myui.Center).Radius(st.RadiusControl).
 		Cursor(myui.CursorPointer).Label(tool.Name()).
 		FocusRingColor(st.Brand).FocusRingOffset(1).
 		Transition(motion(springTap))
+
+	// Where the row belongs, and where the drag has taken it.
+	rest := float32(pos) * rowPitch
+	target := rest
+	carried := a.railDragTool == toolIndex
+	displaced := false
+	switch {
+	case carried:
+		target = a.railDragY
+	case a.railDragTool >= 0:
+		// The rows between the dragged row's original place and the slot it would
+		// take slide one step out of the way, so the gap it leaves is always right
+		// where it would land.
+		from, to := a.railDragFrom, a.railDragTo
+		switch {
+		case pos == from:
+			target = float32(to) * rowPitch
+			displaced = true
+		case from < to && pos > from && pos <= to:
+			target = rest - rowPitch
+			displaced = true
+		case from > to && pos >= to && pos < from:
+			target = rest + rowPitch
+			displaced = true
+		}
+	}
+
+	top := target
+	if !motionReduced {
+		switch {
+		case carried:
+			// A spring following a moving target oscillates, so the carried row
+			// trails the pointer on a short ease: it reads as a heavy card being
+			// carried rather than as a lag.
+			top = item.AnimateTo(railRowKey(toolIndex), target, railDragFollow)
+		default:
+			// A displaced row, and a row coming back, settle on the reorder spring:
+			// a small overshoot is what says a row was pushed out of the way.
+			top = item.AnimateTo(railRowKey(toolIndex), target, railReorderSpring)
+		}
+	}
+	// A flow child is moved by a translation, not by Top: Top is for an absolutely
+	// placed element, so setting it here would shift the row relative to the
+	// column's padding box on top of the flow position and push every later row
+	// further down. The translation is the offset from the row's own place, which
+	// is what makes it animation-safe and layout-neutral.
+	item.Translate(0, top-rest)
+
+	if carried {
+		// The carried row paints above the ones it passes over.
+		item.ZIndex(3)
+		item.Scale(1.04, 1.04)
+		item.Shadow(0, 8, 20, 0, myui.RGBA(0, 0, 0, 0.22))
+	} else if displaced {
+		item.ZIndex(1)
+	}
 	// The item keeps one alignment in every state: the plate sits at one x whether
 	// the rail is open or collapsed, and only the label appears beside it.
 	item = item.Justify(myui.Start).PaddingX(railItemPadding)
 	// The row itself paints no selection: the pill behind it does, and it slides
 	// between rows. Only the press and hover states belong to the row.
 	switch {
+	case carried:
+		item.Background(st.Card).Border(1, st.Divider)
 	case item.Pressed():
 		item.Background(st.DividerTop).Scale(0.99, 0.99)
 	case item.Hovered() && !active:
@@ -632,14 +875,14 @@ func (a *App) railItem(c *myui.Context, st style, index int, tool Tool, labelAlp
 		// pushed the label right, so the active row read as misaligned.
 		// Palette changes ride selectAlpha, the indicator's own fade, so opening
 		// the settings page cannot leave white glyphs on a vanishing gradient.
-		plateTint := mixColor(featureTintPlate(index, st),
+		plateTint := mixColor(featureTintPlate(toolIndex, st),
 			myui.Color{R: 255, G: 255, B: 255, A: 56}, selectAlpha)
 		myui.Row(c).Size(featurePlateSize, featurePlateSize).Radius(st.RadiusPill).
 			Justify(myui.Center).AlignItems(myui.Center).
 			Background(plateTint).Children(func() {
 			if icon := tool.Icon(); icon != nil {
 				myui.Icon(c, icon).Width(17).Height(17).
-					TextColor(mixColor(featureTint(index, st), myui.RGB(255, 255, 255), selectAlpha))
+					TextColor(mixColor(featureTint(toolIndex, st), myui.RGB(255, 255, 255), selectAlpha))
 			}
 		})
 		// The label is always built, and only fades as the rail narrows. Building
@@ -654,12 +897,77 @@ func (a *App) railItem(c *myui.Context, st style, index int, tool Tool, labelAlp
 			label.FontWeight(500)
 		}
 	})
+	// Activation stays on Clicked: the engine has already decided what counts as a
+	// click (in bounds, no drag), so re-deriving it here would disagree with the
+	// accessibility tree and with the tester. A drop sets railSuppressClick, which
+	// swallows the click the engine reports for the release that ended the drag.
+	a.railRowGesture(c, item, pos, toolIndex)
 	if item.Clicked() {
-		a.Active = index
-		a.ShowSettings = false
+		if a.railSuppressClick {
+			a.railSuppressClick = false
+		} else {
+			a.Active = toolIndex
+			a.ShowSettings = false
+		}
 	}
 }
 
+// railRowGesture runs one row's long press and drag while it is being built.
+//
+// It is called every frame the row exists, which is what makes a held press keep
+// asking for frames until it either lifts or ends. The pointer's movement comes
+// from Dragged, which reports the pointer's travel in the window's axes for this
+// frame: a delta survives the row's own translation, where an absolute local
+// position would feed the row's movement back into its target and stall.
+func (a *App) railRowGesture(c *myui.Context, item myui.Element, pos, toolIndex int) {
+	item.HandleInput(func(ev myui.InputEvent) bool {
+		switch ev.Kind {
+		case myui.InputPointerDown:
+			a.beginRailPress(c, toolIndex, pos, ev.Y)
+			// Not consumed: the engine still records the press, so a plain click
+			// reaches the row as it always did.
+			return false
+		case myui.InputPointerUp:
+			if a.railDragTool != toolIndex {
+				a.resetRailPress()
+				return false
+			}
+			// The row is dropped where it was carried to, not where the pointer
+			// happened to be inside it.
+			a.commitRailDrag()
+			// A drop is not a click: the row travelled, so opening its page would
+			// fight the gesture that just ended.
+			a.railSuppressClick = true
+			return true
+		}
+		return false
+	})
+
+	// Accumulate the pointer's travel while the press lasts.
+	if a.railPressTool == toolIndex {
+		if _, dy, ok := item.Dragged(); ok {
+			a.railPressMoved += absFloat32(dy)
+			if a.railDragTool == toolIndex {
+				a.railDragY += dy
+				maxY := float32(len(a.railOrderSnapshot())-1) * railRowPitch
+				if a.railDragY < 0 {
+					a.railDragY = 0
+				}
+				if a.railDragY > maxY {
+					a.railDragY = maxY
+				}
+				if next := a.railDragTargetFromPointer(); next != a.railDragTo {
+					a.railDragTo = next
+				}
+			}
+		}
+		if item.Pressed() {
+			a.noticeRailLift(c, true)
+		}
+	}
+}
+
+// railFooterItem draws one of the rail's own actions, below the tool list.
 func (a *App) railFooterItem(c *myui.Context, st style, key string, icon *myui.SVG, text string, active bool, labelAlpha float32, onClick func()) {
 	item := myui.ButtonBase(c).Key(key).FillWidth().Height(44).Gap(11).AlignItems(myui.Center).
 		Radius(st.RadiusControl).Cursor(myui.CursorPointer).
@@ -723,11 +1031,19 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	card := myui.Column(c).Grow(1).FillHeight().Radius(st.RadiusCard).
 		Background(st.Card).Border(1, st.Divider).
 		Shadow(0, 2, 12, 0, myui.RGBA(0, 0, 0, 0.04)).Clip().Label("输入卡").
-		Focusable().Bind(&a.previewFocus).
-		OnShortcut(0, myui.KeyLeft, func() { a.movePreview(-1) }).
-		OnShortcut(0, myui.KeyUp, func() { a.movePreview(-1) }).
-		OnShortcut(0, myui.KeyRight, func() { a.movePreview(1) }).
-		OnShortcut(0, myui.KeyDown, func() { a.movePreview(1) })
+		Focusable().Bind(&a.previewFocus)
+	// The arrow keys step through the file list, which is what the shared preview
+	// shows. A tool that draws its own preview binds them itself: leaving these on
+	// meant the arrows silently switched a preview nobody can see and the canvas
+	// never received the nudge it advertised.
+	tool := a.ActiveTool()
+	if _, ownPreview := tool.(previewWidget); !ownPreview || a.Session.Len() == 0 {
+		card = card.
+			OnShortcut(0, myui.KeyLeft, func() { a.movePreview(-1) }).
+			OnShortcut(0, myui.KeyUp, func() { a.movePreview(-1) }).
+			OnShortcut(0, myui.KeyRight, func() { a.movePreview(1) }).
+			OnShortcut(0, myui.KeyDown, func() { a.movePreview(1) })
+	}
 	a.previewMu.Lock()
 	focus := a.previewFocusPending
 	a.previewFocusPending = false
@@ -737,6 +1053,24 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	}
 	card.Children(func() {
 		a.inputHeader(c, st)
+		// A tool that composes several inputs draws its own preview area: the
+		// single-picture preview below shows one file, which is the wrong question
+		// for a collage. It is chosen by the tool's type, not by whether a picture
+		// happens to be decoded: a failed decode must not drop the canvas. An empty
+		// list keeps the shared dashed target: with nothing to compose, the canvas
+		// would be a large empty frame next to a hint saying what to do.
+		if widget, ok := tool.(previewWidget); ok && widget != nil && a.Session.Len() > 0 {
+			myui.Row(c).FillWidth().Grow(1).Padding(16, 16, 0, 16).
+				Key(fmt.Sprintf("preview-%d", a.Active)).
+				Transition(motion(springSoft)).Children(func() {
+				widget.PreviewPanel(c, a)
+			})
+			myui.Row(c).FillWidth().Padding(16, 0, 16, 16).
+				AlignItems(myui.Stretch).Children(func() {
+				a.dropAreaCompact(c, st)
+			})
+			return
+		}
 		if img := a.Preview(); img != nil {
 			// Padding on a wrapper keeps the preview inside the card's edges;
 			// a margin on a growing element is ignored by the row layout. The
@@ -766,6 +1100,34 @@ func (a *App) inputCard(c *myui.Context, st style) {
 			a.dropArea(c, st)
 		})
 	})
+}
+
+// dropAreaCompact is the file list under a tool that draws its own preview:
+// the list keeps its rows and its add action, but gives the canvas the room.
+func (a *App) dropAreaCompact(c *myui.Context, st style) {
+	items := a.Session.Snapshot()
+	area := myui.Column(c).FillWidth().Height(168).Gap(8).Padding(12).
+		Radius(st.RadiusPanel).Border(1, st.Divider).Background(st.Recessed).
+		Label("拖放区")
+	area.Children(func() {
+		myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
+			myui.Text(c, fmt.Sprintf("%d 个文件", len(items))).FontSize(11).
+				FontWeight(500).TextColor(st.TextDim)
+			myui.Spacer(c).Grow(1)
+			a.ghostButton(c, st, "添加更多", lucide.Plus(), a.pickFiles)
+			a.ghostButton(c, st, "选择文件夹", lucide.FolderOpen(), a.pickDirectory)
+		})
+		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
+			myui.Column(c).FillWidth().Gap(2).Children(func() {
+				for i := range items {
+					a.fileRow(c, st, &items[i])
+				}
+			})
+		})
+	})
+	if files := area.DroppedFiles(); len(files) > 0 {
+		a.AddPaths(files)
+	}
 }
 
 func (a *App) inputHeader(c *myui.Context, st style) {

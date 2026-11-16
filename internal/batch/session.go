@@ -13,6 +13,8 @@ import (
 
 // Item is one input file in the current session.
 type Item struct {
+	id        uint64
+	runID     uint64
 	Path      string  `json:"path"`
 	Name      string  `json:"name"`
 	Size      int64   `json:"size"`
@@ -42,6 +44,8 @@ type Session struct {
 	Progress   Progress
 	Running    bool
 	LastRun    time.Time
+	nextItemID uint64
+	runID      uint64
 }
 
 // NewSession creates an empty session with the given settings.
@@ -64,7 +68,9 @@ func (s *Session) Add(files []paths.InputFile) int {
 			s.Items[i].ModTimeNS = f.ModTimeNS
 			continue
 		}
+		s.nextItemID++
 		s.Items = append(s.Items, &Item{
+			id:        s.nextItemID,
 			Path:      f.Path,
 			Name:      f.Name,
 			Size:      f.Size,
@@ -117,7 +123,13 @@ func (s *Session) Len() int {
 func (s *Session) ResetStatus() {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
+	s.runID++
 	for _, it := range s.Items {
+		if it.id == 0 {
+			s.nextItemID++
+			it.id = s.nextItemID
+		}
+		it.runID = s.runID
 		it.Status = ""
 		it.Message = ""
 		it.Output = ""
@@ -136,6 +148,19 @@ func (s *Session) SetRowStatus(index int, status, message, output string) {
 	s.Items[index].Status = status
 	s.Items[index].Message = message
 	s.Items[index].Output = output
+}
+
+func (s *Session) SetItemStatus(item Item, status, message, output string) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	for _, current := range s.Items {
+		if item.id != 0 && current.id == item.id && current.runID == item.runID {
+			current.Status = status
+			current.Message = message
+			current.Output = output
+			return
+		}
+	}
 }
 
 // SetRowProgress records partial progress for one row.
@@ -187,6 +212,11 @@ func (s *Session) UpdateSettings(change func(*settings.Settings)) error {
 func cloneSettings(s settings.Settings) settings.Settings {
 	s.RecentInputDirs = append([]string(nil), s.RecentInputDirs...)
 	s.RecentOutputDirs = append([]string(nil), s.RecentOutputDirs...)
+	s.RailOrder = append([]int(nil), s.RailOrder...)
+	// The collage block holds two slices, and a shallow copy would let a worker
+	// append into the UI thread's backing array.
+	s.Collage.Marks = append([]settings.CollageMark(nil), s.Collage.Marks...)
+	s.Collage.GridParents = append([]int(nil), s.Collage.GridParents...)
 	return s
 }
 

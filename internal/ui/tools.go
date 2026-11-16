@@ -301,6 +301,7 @@ func (t *ResizeTool) Run(a *App) {
 		sizes := engine.ParsePresetSizes(t.preset)
 		if len(sizes) == 0 {
 			a.SetStatus("目标尺寸为空")
+			a.SetRunning(false)
 			return
 		}
 		modes := []string{"contain", "cover", "stretch"}
@@ -602,13 +603,15 @@ func (t *StitchTool) Run(a *App) {
 	}
 	a.SetRunning(true)
 	cancel := a.beginWholeList()
+	rows = a.Session.Snapshot()
 	// 裸 goroutine 同样要先把 t.* 快照成局部值，避免与 UI 线程并发读写产生数据竞争。
 	vertical, format := t.vertical, t.format
 	gap, background, borderMode, border := t.gap, t.background, t.borderMode, t.border
 	target, quality := t.target, t.quality
 	go func() {
+		defer a.finishRun()
 		if cancel.Cancelled() {
-			a.endWholeList(cancel, len(rows))
+			a.endWholeList(cancel, rows)
 			return
 		}
 		paths := make([]string, 0, len(rows))
@@ -622,13 +625,12 @@ func (t *StitchTool) Run(a *App) {
 		ext := extOf(format)
 		out, skipped := a.outputPathFor(rows[0], "stitch", ext, 1)
 		if skipped {
-			if a.endWholeList(cancel, len(rows)) {
+			if a.endWholeList(cancel, rows) {
 				return
 			}
-			a.SetRunning(false)
 			a.SetStatus("拼接已跳过：目标文件已存在")
 			for i := range rows {
-				a.Session.SetRowStatus(i, "skipped", "目标已存在", "")
+				a.Session.SetItemStatus(rows[i], "skipped", "目标已存在", "")
 			}
 			a.Invalidate()
 			return
@@ -650,21 +652,20 @@ func (t *StitchTool) Run(a *App) {
 			req.TargetHeight = int(target)
 		}
 		res := engine.StitchContext(cancel, req)
-		if a.endWholeList(cancel, len(rows), res) {
+		if a.endWholeList(cancel, rows, res) {
 			return
 		}
-		a.SetRunning(false)
 		if res.Success {
 			a.SetStatus(fmt.Sprintf("拼接完成：%d 张，%d×%d", res.Count, res.Width, res.Height))
 			for i := range rows {
-				a.Session.SetRowStatus(i, "ok", "", res.OutputPath)
+				a.Session.SetItemStatus(rows[i], "ok", "", res.OutputPath)
 			}
 			a.SetProgress(100, a.StatusLine())
 			a.loadPreview(out)
 		} else {
 			a.SetStatus("拼接失败：" + res.Error)
 			for i := range rows {
-				a.Session.SetRowStatus(i, "failed", res.Error, "")
+				a.Session.SetItemStatus(rows[i], "failed", res.Error, "")
 			}
 			a.SetProgress(0, a.StatusLine())
 		}
@@ -1121,14 +1122,16 @@ func (t *PDFTool) Run(a *App) {
 	}
 	a.SetRunning(true)
 	cancel := a.beginWholeList()
+	rows = a.Session.Snapshot()
 	// 裸 goroutine 同样要先把 t.* 快照成局部值，避免与 UI 线程并发读写产生数据竞争。
 	layout, pageSize := t.layout, t.pageSize
 	customRows, customCols := t.rows, t.cols
 	margin, title, author := t.margin, t.title, t.author
 	orientation, fitMode, password := t.orientation, t.fitMode, t.password
 	go func() {
+		defer a.finishRun()
 		if cancel.Cancelled() {
-			a.endWholeList(cancel, len(rows))
+			a.endWholeList(cancel, rows)
 			return
 		}
 		paths := make([]string, 0, len(rows))
@@ -1137,13 +1140,12 @@ func (t *PDFTool) Run(a *App) {
 		}
 		out, skipped := a.outputPathFor(rows[0], "document", "pdf", 1)
 		if skipped {
-			if a.endWholeList(cancel, len(rows)) {
+			if a.endWholeList(cancel, rows) {
 				return
 			}
-			a.SetRunning(false)
 			a.SetStatus("PDF 已跳过：目标文件已存在")
 			for i := range rows {
-				a.Session.SetRowStatus(i, "skipped", "目标已存在", "")
+				a.Session.SetItemStatus(rows[i], "skipped", "目标已存在", "")
 			}
 			a.Invalidate()
 			return
@@ -1162,20 +1164,19 @@ func (t *PDFTool) Run(a *App) {
 			FitMode:    fitMode,
 			UserPasswd: password,
 		})
-		if a.endWholeList(cancel, len(rows), res) {
+		if a.endWholeList(cancel, rows, res) {
 			return
 		}
-		a.SetRunning(false)
 		if res.Success {
 			a.SetStatus(fmt.Sprintf("PDF 已生成：%d 张图片", res.Count))
 			for i := range rows {
-				a.Session.SetRowStatus(i, "ok", "", res.OutputPath)
+				a.Session.SetItemStatus(rows[i], "ok", "", res.OutputPath)
 			}
 			a.SetProgress(100, a.StatusLine())
 		} else {
 			a.SetStatus("PDF 生成失败：" + res.Error)
 			for i := range rows {
-				a.Session.SetRowStatus(i, "failed", res.Error, "")
+				a.Session.SetItemStatus(rows[i], "failed", res.Error, "")
 			}
 			a.SetProgress(0, a.StatusLine())
 		}
@@ -1321,9 +1322,6 @@ func (t *GIFTool) Run(a *App) {
 	width, height, maintain, loop := t.width, t.height, t.maintain, t.loop
 	a.runBatch("动图处理", func(index int, item batch.Item) engine.Result {
 		ext := extOf(format)
-		if format == "apng" {
-			ext = "png"
-		}
 		out, skipped := a.outputPathFor(item, action, ext, index+1)
 		if skipped {
 			return engine.Skip("目标已存在")

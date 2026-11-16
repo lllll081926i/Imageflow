@@ -38,3 +38,67 @@ func (a *App) pickRichTextImage(target *string) {
 		a.Invalidate()
 	}()
 }
+
+// pickCollageCell asks for one picture to replace a collage slot.
+//
+// The result is queued like every other dialog result: the collage fields are
+// read by the UI thread on every frame, and `applyPendingSettings` drains the
+// queue before the controls read them.
+func (a *App) pickCollageCell(t *CollageTool, cell int) {
+	if a.Window == nil || t == nil || cell < 0 {
+		return
+	}
+	go func() {
+		chosen, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   a.Window,
+			Title:    "替换这一格的图片",
+			Multiple: false,
+			Filters: []mygo.FileFilter{{
+				Name:       "图片",
+				Extensions: paths.ImageExtensions,
+				MIMETypes:  []string{"image/*"},
+			}},
+		})
+		if err != nil || len(chosen) == 0 {
+			return
+		}
+		a.pickerMu.Lock()
+		if t.pendingCells == nil {
+			t.pendingCells = make(map[int]string)
+		}
+		t.pendingCells[cell] = chosen[0]
+		a.pickerMu.Unlock()
+		a.Invalidate()
+	}()
+}
+
+// pickCollageBackground asks for one picture to use as the collage canvas
+// background. The result is queued like every other dialog result: the collage
+// tool's fields are read by the UI thread on every frame.
+func (a *App) pickCollageBackground(t *CollageTool) {
+	if a.Window == nil || t == nil {
+		return
+	}
+	go func() {
+		chosen, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   a.Window,
+			Title:    "选择背景图片",
+			Multiple: false,
+			Filters: []mygo.FileFilter{{
+				Name:       "图片",
+				Extensions: paths.ImageExtensions,
+				MIMETypes:  []string{"image/*"},
+			}},
+		})
+		if err != nil || len(chosen) == 0 {
+			return
+		}
+		a.pickerMu.Lock()
+		if a.pendingPicker == nil {
+			a.pendingPicker = make(map[*string]string)
+		}
+		a.pendingPicker[&t.bgPath] = chosen[0]
+		a.pickerMu.Unlock()
+		a.Invalidate()
+	}()
+}

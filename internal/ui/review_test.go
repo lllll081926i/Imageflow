@@ -71,7 +71,7 @@ func TestWholeListCancellationKeepsCommittedResult(t *testing.T) {
 	seedInputs(t, a, 1)
 	cancel := a.beginWholeList()
 	cancel.Cancel()
-	if a.endWholeList(cancel, 1, engine.Result{Success: true, OutputPath: "written.pdf"}) {
+	if a.endWholeList(cancel, a.Session.Snapshot(), engine.Result{Success: true, OutputPath: "written.pdf"}) {
 		t.Fatal("已提交输出被标记为取消")
 	}
 	if row := a.Session.Snapshot()[0]; row.Status == "cancelled" {
@@ -79,7 +79,7 @@ func TestWholeListCancellationKeepsCommittedResult(t *testing.T) {
 	}
 	cancel = a.beginWholeList()
 	cancel.Cancel()
-	if !a.endWholeList(cancel, 1, engine.Fail("CANCELLED", "已取消")) {
+	if !a.endWholeList(cancel, a.Session.Snapshot(), engine.Fail("CANCELLED", "已取消")) {
 		t.Fatal("未提交输出的取消结果未处理")
 	}
 	if row := a.Session.Snapshot()[0]; row.Status != "cancelled" {

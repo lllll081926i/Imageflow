@@ -65,19 +65,19 @@ func TestConvertToolKeepsAspectByDefault(t *testing.T) {
 func TestToolDefaultsMatchOriginalPanels(t *testing.T) {
 	a := newTestApp(t)
 
-	gif := a.Tools[10].(*GIFTool)
+	gif := a.toolByName(t, "GIF 工具").(*GIFTool)
 	gif.ensure()
 	if !gif.maintain {
 		t.Error("GIF resize must keep the aspect ratio by default")
 	}
 
-	pal := a.Tools[7].(*PaletteTool)
+	pal := a.toolByName(t, "色彩提取").(*PaletteTool)
 	pal.ensure()
 	if !pal.includeText {
 		t.Error("the palette strip must label its HEX values by default")
 	}
 
-	pdf := a.Tools[9].(*PDFTool)
+	pdf := a.toolByName(t, "转 PDF").(*PDFTool)
 	pdf.ensure()
 	if pdf.orientation != 0 {
 		t.Error("the PDF page must start portrait")

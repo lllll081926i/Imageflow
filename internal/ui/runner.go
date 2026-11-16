@@ -33,13 +33,13 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 			}
 			if !res.Success {
 				status, msg := batch.FailFromResult(res)
-				a.Session.SetRowStatus(index, status, msg, "")
+				a.Session.SetItemStatus(item, status, msg, "")
 				return fmt.Errorf("%s", msg)
 			}
 			if res.Skipped {
 				// The destination was protected by the conflict strategy; nothing was
 				// written, so the row says so and leaves both counters alone.
-				a.Session.SetRowStatus(index, "skipped", res.Message, "")
+				a.Session.SetItemStatus(item, "skipped", res.Message, "")
 				return batch.ErrSkipped
 			}
 			// A tool that writes several files reports their folder; the row keeps
@@ -48,12 +48,13 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 			if out == "" && len(res.Outputs) > 0 {
 				out = res.Outputs[0]
 			}
-			a.Session.SetRowStatus(index, "ok", res.Message, out)
+			a.Session.SetItemStatus(item, "ok", res.Message, out)
 			return nil
 		}
 	}
 
 	go func() {
+		defer a.finishRun()
 		results := batch.Run(jobs, a.Session.SettingsSnapshot().MaxConcurrency, cancel, func(p batch.Progress) {
 			a.Session.Mu.Lock()
 			a.Session.Progress = p
@@ -79,14 +80,13 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 				// batch.Run never invokes the job for a cancelled row, so the
 				// row's status has to be written here; otherwise it stays blank
 				// and the cancellation is invisible in the file list.
-				a.Session.SetRowStatus(i, "cancelled", "已取消", "")
+				a.Session.SetItemStatus(rows[i], "cancelled", "已取消", "")
 			}
 		}
 		a.Session.Mu.Lock()
 		a.Session.Running = false
 		a.Session.Cancel = nil
 		a.Session.Mu.Unlock()
-		a.SetRunning(false)
 		switch {
 		case cancelled > 0:
 			// A cancelled run must not be reported as "完成": none of the
@@ -124,7 +124,7 @@ func (a *App) beginWholeList() *batch.Cancel {
 }
 
 // endWholeList 释放取消令牌；只有未提交输出的取消结果才覆盖行状态。
-func (a *App) endWholeList(cancel *batch.Cancel, rows int, result ...engine.Result) bool {
+func (a *App) endWholeList(cancel *batch.Cancel, rows []batch.Item, result ...engine.Result) bool {
 	a.Session.Mu.Lock()
 	a.Session.Cancel = nil
 	a.Session.Mu.Unlock()
@@ -135,10 +135,9 @@ func (a *App) endWholeList(cancel *batch.Cancel, rows int, result ...engine.Resu
 	if len(result) > 0 && result[0].ErrorCode != "CANCELLED" {
 		return false
 	}
-	a.SetRunning(false)
-	a.SetStatus("已取消：完成 0 张，取消 " + fmt.Sprint(rows) + " 张")
-	for i := 0; i < rows; i++ {
-		a.Session.SetRowStatus(i, "cancelled", "已取消", "")
+	a.SetStatus("已取消：完成 0 张，取消 " + fmt.Sprint(len(rows)) + " 张")
+	for _, item := range rows {
+		a.Session.SetItemStatus(item, "cancelled", "已取消", "")
 	}
 	a.SetProgress(0, "")
 	a.Invalidate()
@@ -156,6 +155,15 @@ func (a *App) endWholeList(cancel *batch.Cancel, rows int, result ...engine.Resu
 func (a *App) outputPathFor(item batch.Item, op, ext string, seq int) (string, bool) {
 	s := a.Session.SettingsSnapshot()
 	base := batch.BuildOutputPath(s, item.Path, item.RelPath, op, ext, seq)
+	return a.reserveOutput(base, s)
+}
+
+func (a *App) outputDirectoryFor(item batch.Item, suffix string) (string, bool) {
+	s := a.Session.SettingsSnapshot()
+	return a.reserveOutput(outputDirFor(s, item, suffix), s)
+}
+
+func (a *App) reserveOutput(base string, s settings.Settings) (string, bool) {
 	if base == "" {
 		return "", false
 	}
@@ -171,6 +179,11 @@ func (a *App) outputPathFor(item batch.Item, op, ext string, seq int) (string, b
 	}
 	a.planned = append(a.planned, resolved)
 	return resolved, false
+}
+
+func (a *App) finishRun() {
+	a.SetRunning(false)
+	a.Invalidate()
 }
 
 // resetPlan clears the reserved paths before a batch starts.
@@ -199,7 +212,7 @@ func extOf(outputFormat string) string {
 	case "gif":
 		return "gif"
 	case "apng":
-		return "png"
+		return "apng"
 	case "pdf":
 		return "pdf"
 	}

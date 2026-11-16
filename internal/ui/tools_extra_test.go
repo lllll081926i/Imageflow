@@ -12,7 +12,7 @@ import (
 func TestCropToolEndToEnd(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 2
+	useTool(t, a, "图片裁剪")
 	tool := a.ActiveTool().(*CropTool)
 	tool.ratio = 0 // 1:1
 	tool.anchor = 4
@@ -41,7 +41,7 @@ func TestCropToolEndToEnd(t *testing.T) {
 func TestIconToolEndToEnd(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
-	a.Active = 8
+	useTool(t, a, "图标生成")
 	tool := a.ActiveTool().(*IconTool)
 	tool.withICO = true
 	tool.withFav = true

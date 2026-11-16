@@ -87,6 +87,7 @@ func main() {
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if !app.ShouldHideOnClose() {
 				app.CancelImport()
+				app.CancelCollageWork()
 				return
 			}
 			e.PreventDefault()

@@ -141,6 +141,7 @@ func featureTint(index int, st style) myui.Color {
 		myui.RGB(16, 185, 129),  // emerald-500 GIF 工具
 		myui.RGB(100, 116, 139), // slate-500  富文本制图
 		myui.RGB(34, 197, 94),   // 图片压缩
+		myui.RGB(244, 63, 94),   // rose-500   图片拼图
 	}
 	if index < 0 || index >= len(palette) {
 		return st.Brand

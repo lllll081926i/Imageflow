@@ -225,7 +225,7 @@ func TestHelpers(t *testing.T) {
 	if got := extOf("JPEG"); got != "jpg" {
 		t.Errorf("extOf = %q", got)
 	}
-	if got := extOf("apng"); got != "png" {
+	if got := extOf("apng"); got != "apng" {
 		t.Errorf("extOf apng = %q", got)
 	}
 	if got := hexOf(myui.RGB(255, 128, 0)); got != "#FF8000" {

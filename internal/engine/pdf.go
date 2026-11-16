@@ -169,9 +169,17 @@ func GeneratePDFContext(ctx context.Context, req PDFRequest) Result {
 		dx := boxX + (boxW-dw)/2
 		dy := boxY + (boxH-dh)/2
 		rect := &gopdf.Rect{W: dw, H: dh}
+		doc.SaveGraphicsState()
+		doc.ClipPolygon([]gopdf.Point{
+			{X: boxX, Y: boxY},
+			{X: boxX + boxW, Y: boxY},
+			{X: boxX + boxW, Y: boxY + boxH},
+			{X: boxX, Y: boxY + boxH},
+		})
 		if err := doc.Image(tmp, dx, dy, rect); err != nil {
 			return Fail("PDF_DRAW_FAILED", err.Error())
 		}
+		doc.RestoreGraphicsState()
 		written++
 	}
 	if written == 0 {

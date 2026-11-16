@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	"image/gif"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,13 +294,13 @@ func RunGIF(req GIFRequest) Result {
 	case "export_frames":
 		return exportFrames(req)
 	case "", "reverse":
-		return transformAnimation(req, func(a *Animation) { reverseFrames(a) })
+		return transformAnimation(req, func(a *Animation) error { reverseFrames(a); return nil })
 	case "change_speed":
 		factor := req.SpeedFactor
 		if factor <= 0 {
 			factor = 1
 		}
-		return transformAnimation(req, func(a *Animation) {
+		return transformAnimation(req, func(a *Animation) error {
 			for i := range a.Frames {
 				d := int(float64(a.Frames[i].Delay) / factor)
 				if d < 10 {
@@ -307,13 +308,14 @@ func RunGIF(req GIFRequest) Result {
 				}
 				a.Frames[i].Delay = d
 			}
+			return nil
 		})
 	case "resize":
-		return transformAnimation(req, func(a *Animation) { resizeFrames(a, req) })
+		return transformAnimation(req, func(a *Animation) error { return resizeFrames(a, req) })
 	case "compress":
 		// Re-encoding with a smaller palette is the compression: the writer
 		// derives the colour count from req.Quality.
-		return transformAnimation(req, func(a *Animation) {})
+		return transformAnimation(req, func(a *Animation) error { return nil })
 	}
 	return Fail("GIF_BAD_REQUEST", "未知的操作: "+req.Action)
 }
@@ -324,9 +326,9 @@ func reverseFrames(a *Animation) {
 	}
 }
 
-func resizeFrames(a *Animation, req GIFRequest) {
+func resizeFrames(a *Animation, req GIFRequest) error {
 	if req.Width <= 0 && req.Height <= 0 {
-		return
+		return nil
 	}
 	w, h := req.Width, req.Height
 	if req.MaintainAR {
@@ -336,11 +338,25 @@ func resizeFrames(a *Animation, req GIFRequest) {
 			w = 0
 		}
 	}
+	width, height := float64(w), float64(h)
+	if w <= 0 {
+		width = math.Max(1, math.Floor(float64(a.Width)*height/float64(a.Height)+0.5))
+	}
+	if h <= 0 {
+		height = math.Max(1, math.Floor(float64(a.Height)*width/float64(a.Width)+0.5))
+	}
+	if width > output.MaxOutputSide || height > output.MaxOutputSide {
+		return output.ErrSizeExceeded
+	}
+	if err := animationSize(int(width), int(height), len(a.Frames)); err != nil {
+		return err
+	}
 	for i := range a.Frames {
-		a.Frames[i].Image = resizeImage(a.Frames[i].Image, w, h)
+		a.Frames[i].Image = resizeImage(a.Frames[i].Image, int(width), int(height))
 	}
 	b := a.Frames[0].Image.Bounds()
 	a.Width, a.Height = b.Dx(), b.Dy()
+	return nil
 }
 
 func exportFrames(req GIFRequest) Result {
@@ -393,7 +409,7 @@ func exportFrames(req GIFRequest) Result {
 	return out
 }
 
-func transformAnimation(req GIFRequest, mutation func(*Animation)) Result {
+func transformAnimation(req GIFRequest, mutation func(*Animation) error) Result {
 	if req.InputPath == "" || req.OutputPath == "" {
 		return Fail("GIF_BAD_REQUEST", "缺少输入或输出路径")
 	}
@@ -404,7 +420,9 @@ func transformAnimation(req GIFRequest, mutation func(*Animation)) Result {
 	if len(animation.Frames) == 0 {
 		return Fail("GIF_NO_FRAMES", "没有可用的帧")
 	}
-	mutation(animation)
+	if err := mutation(animation); err != nil {
+		return Fail("OUTPUT_TOO_LARGE", err.Error())
+	}
 	if req.ApplyLoop {
 		animation.Loop = req.Loop
 	}
@@ -419,7 +437,7 @@ func transformAnimation(req GIFRequest, mutation func(*Animation)) Result {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return Fail("WRITE_FAILED", err.Error())
 	}
-	if err := output.CheckSize(animation.Width, animation.Height); err != nil {
+	if err := animationSize(animation.Width, animation.Height, len(animation.Frames)); err != nil {
 		return Fail("OUTPUT_TOO_LARGE", err.Error())
 	}
 	switch format {
@@ -492,10 +510,18 @@ func writeAPNG(a *Animation, target string) error {
 		if delayMs <= 0 {
 			delayMs = 100
 		}
+		divisor, remainder := delayMs, 1000
+		for remainder != 0 {
+			divisor, remainder = remainder, divisor%remainder
+		}
+		numerator, denominator := delayMs/divisor, 1000/divisor
+		if numerator > math.MaxUint16 {
+			return fmt.Errorf("APNG 无法精确表示 %d 毫秒的帧延迟", delayMs)
+		}
 		out.Frames = append(out.Frames, apng.Frame{
 			Image:            frame.Image,
-			DelayNumerator:   uint16(delayMs),
-			DelayDenominator: 1000,
+			DelayNumerator:   uint16(numerator),
+			DelayDenominator: uint16(denominator),
 			DisposeOp:        apng.DISPOSE_OP_NONE,
 			BlendOp:          apng.BLEND_OP_SOURCE,
 		})

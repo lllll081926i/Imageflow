@@ -318,7 +318,10 @@ func (t *IconTool) Run(a *App) {
 	padding, radius, bg := int(t.padding), int(t.radius), t.bgHex
 	withICO, withFav, withSVG := t.withICO, t.withFav, t.withSVG
 	a.runBatch("图标", func(index int, item batch.Item) engine.Result {
-		dir := outputDirFor(a.Session.SettingsSnapshot(), item, "_icons")
+		dir, skipped := a.outputDirectoryFor(item, "_icons")
+		if skipped {
+			return engine.Skip("目标已存在")
+		}
 		return engine.BuildIconSet(engine.IconRequest{
 			InputPath:   item.Path,
 			OutputDir:   dir,
