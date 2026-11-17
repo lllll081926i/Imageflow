@@ -213,6 +213,8 @@ func cloneSettings(s settings.Settings) settings.Settings {
 	s.RecentInputDirs = append([]string(nil), s.RecentInputDirs...)
 	s.RecentOutputDirs = append([]string(nil), s.RecentOutputDirs...)
 	s.RailOrder = append([]int(nil), s.RailOrder...)
+	s.RailOrderIDs = append([]string(nil), s.RailOrderIDs...)
+	s.RailCollapsedGroups = append([]string(nil), s.RailCollapsedGroups...)
 	// The collage block holds two slices, and a shallow copy would let a worker
 	// append into the UI thread's backing array.
 	s.Collage.Marks = append([]settings.CollageMark(nil), s.Collage.Marks...)

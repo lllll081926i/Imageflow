@@ -38,7 +38,7 @@ func TestColorFieldAcceptsTypedHex(t *testing.T) {
 // typed colour back into the model.
 func TestColorTextRoundTrips(t *testing.T) {
 	value := myui.RGB(0, 122, 255)
-	field := colorTextFor(&value)
+	field := &colorText{dst: &value}
 	field.sync()
 	if field.value != "#007AFF" {
 		t.Fatalf("initial text = %q, want #007AFF", field.value)
@@ -64,32 +64,37 @@ func TestColorTextRoundTrips(t *testing.T) {
 	}
 }
 
-// TestColorFieldRemembersItsText pins the per-colour binding.
-//
-// The field used to build a new binding every frame, so the text started empty each
-// time: the input showed the placeholder instead of the current colour, and a typed
-// code could not survive the next repaint. The binding is now keyed by the colour's
-// address, which the tools keep stable.
 func TestColorFieldRemembersItsText(t *testing.T) {
 	value := myui.RGB(255, 128, 0)
-	first := colorTextFor(&value)
-	first.sync()
-	if first.value != "#FF8000" {
-		t.Fatalf("first frame text = %q", first.value)
+	tester := myui.NewTester(func(c *myui.Context) { colorField(c, &value) }, 400, 100)
+	for _, field := range tester.AccessAll() {
+		if field.Placeholder == "#RRGGBB" {
+			tester.ClickAt(field.Bounds.X+10, field.Bounds.Y+10)
+			tester.Key(myui.Ctrl, myui.KeyA)
+			tester.Type("#FF80")
+		}
 	}
-	// Half-typed on the next frame.
-	first.value = "#FF80"
-	first.sync()
-	second := colorTextFor(&value)
-	if second.value != "#FF80" {
-		t.Errorf("the next frame started at %q, want the half-typed text kept", second.value)
+	tester.Frame()
+	if value != myui.RGB(255, 128, 0) {
+		t.Fatal("未完成的色值修改了颜色")
 	}
-	// A change from the picker wins over the stale text.
+	found := false
+	for _, field := range tester.AccessAll() {
+		if field.Placeholder == "#RRGGBB" && field.Value == "#FF80" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("跨帧后未完成的色值丢失")
+	}
 	value = myui.RGB(0, 0, 0)
-	second.sync()
-	if second.value != "#000000" {
-		t.Errorf("picker change did not reach the field: %q", second.value)
+	tester.Frame()
+	for _, field := range tester.AccessAll() {
+		if field.Placeholder == "#RRGGBB" && field.Value == "#000000" {
+			return
+		}
 	}
+	t.Fatal("外部颜色修改未同步到输入框")
 }
 
 // TestRailHasNoHeading pins that the rail starts straight at its first tool: the

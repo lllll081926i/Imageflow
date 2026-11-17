@@ -128,20 +128,31 @@ func styles(c *myui.Context) style {
 // is the one thing a per-tool tint must not be.
 func featureTint(index int, st style) myui.Color {
 	palette := []myui.Color{
-		myui.RGB(59, 130, 246),  // blue-500   格式转换
-		myui.RGB(6, 182, 212),   // cyan-500   尺寸调整
-		myui.RGB(168, 85, 247),  // purple-500 图片裁剪
-		myui.RGB(139, 92, 246),  // violet-500 宫格切图
-		myui.RGB(20, 184, 166),  // teal-500   图片布局
-		myui.RGB(236, 72, 153),  // pink-500   长图拼接
-		myui.RGB(249, 115, 22),  // orange-500 批量水印
-		myui.RGB(217, 119, 6),   // amber-600  色彩提取
-		myui.RGB(239, 68, 68),   // red-500    图标生成
-		myui.RGB(99, 102, 241),  // indigo-500 转 PDF
-		myui.RGB(16, 185, 129),  // emerald-500 GIF 工具
-		myui.RGB(100, 116, 139), // slate-500  富文本制图
-		myui.RGB(34, 197, 94),   // 图片压缩
-		myui.RGB(244, 63, 94),   // rose-500   图片拼图
+		myui.RGB(59, 130, 246),  // blue-500     格式转换
+		myui.RGB(6, 182, 212),   // cyan-500     尺寸调整
+		myui.RGB(168, 85, 247),  // purple-500   图片裁剪
+		myui.RGB(139, 92, 246),  // violet-500   宫格切图
+		myui.RGB(20, 184, 166),  // teal-500     图片布局
+		myui.RGB(244, 63, 94),   // rose-500     图片拼图
+		myui.RGB(236, 72, 153),  // pink-500     长图拼接
+		myui.RGB(249, 115, 22),  // orange-500   批量水印
+		myui.RGB(217, 119, 6),   // amber-600    色彩提取
+		myui.RGB(239, 68, 68),   // red-500      图标生成
+		myui.RGB(99, 102, 241),  // indigo-500   转 PDF
+		myui.RGB(16, 185, 129),  // emerald-500  GIF 工具
+		myui.RGB(100, 116, 139), // slate-500    富文本制图
+		myui.RGB(34, 197, 94),   // green-500    图片压缩
+		myui.RGB(14, 165, 233),  // sky-500      基础编辑
+		myui.RGB(180, 83, 9),    // amber-700    自由布局
+		myui.RGB(190, 24, 93),   // pink-700     图片标注
+		myui.RGB(13, 148, 136),  // teal-600     截图美化
+		myui.RGB(147, 51, 234),  // purple-600   专业调色
+		myui.RGB(2, 132, 199),   // sky-600      滤镜效果
+		myui.RGB(75, 85, 99),    // gray-600     图片对比
+		myui.RGB(120, 53, 15),   // amber-900    图像分析
+		myui.RGB(22, 163, 74),   // green-600    像素画 / 点阵
+		myui.RGB(219, 39, 119),  // pink-600     表情包制作
+		myui.RGB(79, 70, 229),   // indigo-600   AI 高清放大
 	}
 	if index < 0 || index >= len(palette) {
 		return st.Brand

@@ -139,6 +139,9 @@ func Run(jobs []Job, concurrency int, cancel *Cancel, onProgress func(Progress))
 				err := Execute(jobs[index], cancel)
 				mu.Lock()
 				switch {
+				case errors.Is(err, context.Canceled):
+					results[index] = Cancelled
+					progress.Cancelled++
 				case errors.Is(err, ErrSkipped):
 					results[index] = Skipped
 					progress.Skipped++

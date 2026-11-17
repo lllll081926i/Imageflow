@@ -1,5 +1,11 @@
 # 桌面能力验证记录（2026-11-09）
 
+## 最新发布验收：3.2.0（2026-11-17）
+
+以下历史快照保留原验证范围；最新结果以 `RELEASE-ACCEPTANCE-2026-11-17.md` 为准。全量测试、全量竞态检查、Go/MyGo 静态检查、六平台 CGO=0 编译通过；Go 1.27.4 下漏洞扫描未发现漏洞。真实双 GPU 小图、大图、透明输入、自然照片及活动推理取消均通过。双源模型下载经代理实测通过。UI 自动交互与 100 张空输入布局截图通过，Windows 可见原生窗口另验真实导入。
+
+云端强制执行 Windows 全新安装、3.1.0 升级、模型保留、卸载、便携移动验收；六平台打包和签名成功后才允许标签发布。Linux/macOS/Windows ARM64 尚未人工原生运行；未完成显存极限、长稳与完整画质/分发法务评测。
+
 本文件记录 Go 重写版的**真实进程级验证**，不是单元测试结论。
 每条都给出执行命令、实际输出与判定，便于复核。
 
@@ -209,3 +215,33 @@ captured 158151 bytes
 | `ui_transparency` | 字段保留但不生效：新界面不用半透明材质，否则卡片边界会糊掉 |
 | 缩略图 JPEG 降采样 | 首次加载解码整图再缩小 |
 | 更新签名 | 用 MyGo 的 Ed25519 机制；需配置 `MYGO_UPDATER_PRIVATE_KEY` 与 `updates` 才能发布签名清单，否则设置页显示「此版本未配置自动更新」 |
+
+---
+
+## 追加：2026-11-17 全量审查与导航重构的验证范围
+
+本轮验证与上表口径一致，但只覆盖本轮改动可达的部分：
+
+```
+$ gofmt -l ./internal ./cmd main.go   → 无输出
+$ go vet ./...                        → 无输出
+$ go tool mygo vet .                  → 无输出
+$ go test ./...                       → 全部 ok
+$ go test -race ./internal/ui/ ./internal/engine/  → 全部 ok
+$ CGO_ENABLED=0 go build ./...        → 无输出
+$ go build -o build/zz_check.exe .    → 产物 44.6 MB（单文件，含内嵌 oxipng 与 lcms.wasm）
+```
+
+**本轮未执行**：`govulncheck`、六平台云端构建、安装包签名验证、真实 GPU 推理、人工 E2E 点击。
+这些都需要外部环境或获批模型，记录在 [REVIEW-2026-11-17.md](REVIEW-2026-11-17.md) §5 与
+[benchmarks/baseline.md](benchmarks/baseline.md) §4。
+
+## 追加：独立审查修复与 AI 模型下载（2026-11-17）
+
+- 原 17 项独立复现已纳入常规测试并通过，修复明细见 `REPAIR-2026-11-17-INDEPENDENT.md`。
+- 增加设置页双源及代理交互、配置保存重载、代理连接失败、下载取消、错误哈希、已有模型保护和清单合并上限回归，均通过。
+- `CGO_ENABLED=0 go test ./... -count=1 -timeout 15m`、`go vet ./...`、`go tool mygo vet .` 通过。
+- Windows/Linux/macOS 的 amd64、arm64 均通过 `CGO_ENABLED=0 go build ./...`；这不等于原生安装包构建或运行验收。
+- GitHub 与国内加速实际下载测试通过。测试使用系统代理，下载后执行固定归档哈希及模型文件哈希校验。联网测试需显式设置 `IMAGEFLOW_MODEL_DOWNLOAD_LIVE=1`，默认测试不访问下载源。
+- 含双源下载实现的全量 `go test -race ./... -count=1 -timeout 20m` 通过；随后补充的设置交互和清单上限测试也通过定向 race 检查。未执行云端发布或六平台原生安装验收。
+- 后续执行 `TestRealGPUInference`：真实 RTX 4060 / Radeon 780M 推理和七条应用适配器路径全部通过。三个模型、2×/3× 后处理、PNG/JPG/WebP、TTA 均有实测输出。仅覆盖 128×128 插画输入；结果及证据见 `benchmarks/GPU-2026-11-17.md`，不等于大图性能、画质或显存验收。

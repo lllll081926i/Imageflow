@@ -19,7 +19,11 @@ func newTestApp(t *testing.T) *App {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("IMAGEFLOW_SETTINGS_FILE", filepath.Join(dir, "settings.json"))
-	return NewApp(settings.Default())
+	a := NewApp(settings.Default())
+	// The shipping app opens on the landing page; a page test wants the workbench.
+	// The landing page has its own tests, which set ShowHome back on.
+	a.ShowHome = false
+	return a
 }
 
 // dumpFrame renders the current view to a PNG so a broken layout can be
@@ -165,6 +169,17 @@ func TestNavigationSwitchesTools(t *testing.T) {
 	}
 	if !tt.HasText("水印内容为空") && !tt.HasText("平铺重复") {
 		t.Errorf("watermark controls missing: %v", tt.Texts())
+	}
+	// 转 PDF lives in the last group, below the visible part of the scrolling rail.
+	// A grouped sidebar is reachable through search as well as by scrolling, so the
+	// test drives the path a user would take when the row is not on screen. The
+	// search must leave the row where the viewport can reach it: a filtered list is
+	// short, so its single result is at the top.
+	a.searchQuery = "pdf"
+	tt.Frame()
+	for i := 0; i < 20; i++ {
+		tt.Advance(16 * time.Millisecond)
+		tt.Frame()
 	}
 	if err := tt.Click("转 PDF"); err != nil {
 		t.Fatalf("click pdf: %v", err)

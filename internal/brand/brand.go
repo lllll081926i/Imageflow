@@ -7,7 +7,7 @@
 // three different pictures.
 package brand
 
-// LogoSVG is the original project's frontend/logo.svg, unchanged.
+// LogoSVG 保留原项目的图形，并使用不透明白色内底。
 //
 // The mark is a stroked rounded square (112..912 of a 1024 canvas) with two arcs
 // and a centre dot, filled by a blue → indigo → purple gradient. The generous
@@ -22,7 +22,7 @@ const LogoSVG = `<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="n
             <stop offset="100%" stop-color="#AF52DE"/>
         </linearGradient>
     </defs>
-    <rect x="112" y="112" width="800" height="800" rx="200" fill="white" fill-opacity="0.05"/>
+    <rect x="112" y="112" width="800" height="800" rx="200" fill="white"/>
     <rect x="112" y="112" width="800" height="800" rx="200" stroke="url(#flow_gradient)" stroke-width="32"/>
     <path d="M360 512C360 423.634 431.634 352 520 352H660" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
     <path d="M660 512C660 600.366 588.366 672 500 672H360" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
@@ -44,7 +44,7 @@ const IconSVG = `<svg width="1024" height="1024" viewBox="96 96 832 832" fill="n
             <stop offset="100%" stop-color="#AF52DE"/>
         </linearGradient>
     </defs>
-    <rect x="112" y="112" width="800" height="800" rx="200" fill="white" fill-opacity="0.05"/>
+    <rect x="112" y="112" width="800" height="800" rx="200" fill="white"/>
     <rect x="112" y="112" width="800" height="800" rx="200" stroke="url(#flow_gradient)" stroke-width="32"/>
     <path d="M360 512C360 423.634 431.634 352 520 352H660" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
     <path d="M660 512C660 600.366 588.366 672 500 672H360" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>

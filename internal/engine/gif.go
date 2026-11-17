@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -472,10 +473,17 @@ func loopValue(loop int) int {
 }
 
 func writeGIF(a *Animation, target string, quality int) error {
+	return writeGIFContext(context.Background(), a, target, quality)
+}
+
+func writeGIFContext(ctx context.Context, a *Animation, target string, quality int) error {
 	colors := gifColorsForQuality(quality)
 	paletted := make([]*image.Paletted, 0, len(a.Frames))
 	delays := make([]int, 0, len(a.Frames))
 	for _, frame := range a.Frames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		paletted = append(paletted, toPaletted(frame.Image, colors))
 		d := frame.Delay / 10
 		if d < 2 {
@@ -489,7 +497,12 @@ func writeGIF(a *Animation, target string, quality int) error {
 		LoopCount: loopValue(a.Loop),
 		Config:    image.Config{ColorModel: paletted[0].Palette, Width: a.Width, Height: a.Height},
 	}
-	return codec.WriteAtomic(target, func(w *os.File) error { return gif.EncodeAll(w, out) })
+	return codec.WriteAtomic(target, func(file *os.File) error {
+		if err := gif.EncodeAll(animationWriter{ctx, file}, out); err != nil {
+			return err
+		}
+		return ctx.Err()
+	})
 }
 
 // gifColorsForQuality maps the tool's quality slider onto a palette size. GIF
@@ -504,8 +517,15 @@ func gifColorsForQuality(quality int) int {
 }
 
 func writeAPNG(a *Animation, target string) error {
+	return writeAPNGContext(context.Background(), a, target)
+}
+
+func writeAPNGContext(ctx context.Context, a *Animation, target string) error {
 	out := apng.APNG{LoopCount: uint(loopValue(a.Loop))}
 	for _, frame := range a.Frames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		delayMs := frame.Delay
 		if delayMs <= 0 {
 			delayMs = 100
@@ -526,15 +546,27 @@ func writeAPNG(a *Animation, target string) error {
 			BlendOp:          apng.BLEND_OP_SOURCE,
 		})
 	}
-	return codec.WriteAtomic(target, func(w *os.File) error { return apng.Encode(w, out) })
+	return codec.WriteAtomic(target, func(file *os.File) error {
+		if err := apng.Encode(animationWriter{ctx, file}, out); err != nil {
+			return err
+		}
+		return ctx.Err()
+	})
 }
 
 func writeAnimatedWebP(a *Animation, target string, quality int) error {
+	return writeAnimatedWebPContext(context.Background(), a, target, quality)
+}
+
+func writeAnimatedWebPContext(ctx context.Context, a *Animation, target string, quality int) error {
 	if quality <= 0 {
 		quality = 80
 	}
 	out := &webp.WEBP{LoopCount: int(loopValue(a.Loop))}
 	for _, frame := range a.Frames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d := frame.Delay
 		if d <= 0 {
 			d = 100
@@ -543,8 +575,23 @@ func writeAnimatedWebP(a *Animation, target string, quality int) error {
 		out.Delay = append(out.Delay, d)
 	}
 	return codec.WriteAtomic(target, func(w *os.File) error {
-		return webp.EncodeAll(w, out, webp.Options{Quality: quality, Method: 4})
+		if err := webp.EncodeAll(animationWriter{ctx, w}, out, webp.Options{Quality: quality, Method: 4}); err != nil {
+			return err
+		}
+		return ctx.Err()
 	})
+}
+
+type animationWriter struct {
+	ctx    context.Context
+	writer io.Writer
+}
+
+func (writer animationWriter) Write(data []byte) (int, error) {
+	if err := writer.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return writer.writer.Write(data)
 }
 
 // adaptivePalette builds a palette of at most colors entries from the frame's

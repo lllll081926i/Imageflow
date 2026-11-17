@@ -186,6 +186,7 @@ type CollageTool struct {
 	initialised bool
 }
 
+func (t *CollageTool) ID() string      { return ToolCollage }
 func (t *CollageTool) Name() string    { return "图片拼图" }
 func (t *CollageTool) Icon() *myui.SVG { return lucide.LayoutTemplate() }
 
@@ -725,12 +726,9 @@ func (t *CollageTool) PreviewPanel(c *myui.Context, a *App) {
 		if t.previewErr != "" {
 			warnAlert(c, "预览失败："+t.previewErr)
 		}
-		// The hint line keeps the two canvas modes distinguishable: framing a cell
-		// and drawing a mark take the same drag, so the panel has to say which one
-		// is armed.
-		hint := "点击选格，拖拽调整取景"
+		hint := "取景"
 		if t.drawMode {
-			hint = "在画布上拖拽绘制" + collageMarkTools[t.markTool].Label
+			hint = collageMarkTools[t.markTool].Label
 		}
 		myui.Row(c).FillWidth().Gap(6).AlignItems(myui.Center).Children(func() {
 			myui.Icon(c, lucide.MousePointerClick()).Width(12).Height(12).TextColor(st.TextDim)
@@ -1471,9 +1469,9 @@ func (t *CollageTool) mergeEditor(c *myui.Context, st style, a *App) {
 			}
 		})
 		myui.Row(c).FillWidth().Gap(6).AlignItems(myui.Center).Children(func() {
-			hint := "点两格合并成一块，右键区块可拆分"
+			hint := "合并区块"
 			if t.mergeAnchor >= 0 {
-				hint = "再点另一格完成合并"
+				hint = "选择目标区块"
 			}
 			myui.Text(c, hint).FontSize(11).TextColor(st.TextDim).SingleLine()
 			myui.Spacer(c).Grow(1)
@@ -1628,8 +1626,6 @@ func (t *CollageTool) styleSection(c *myui.Context, a *App) {
 		if t.seam == collageSeamed {
 			sliderRow(c, "间距", &t.gap, 0, 80, 1, "%.0f px")
 			sliderRow(c, "圆角", &t.radius, 0, 120, 1, "%.0f px")
-		} else {
-			myui.Text(c, "各格紧贴，不裁切也不露底色").FontSize(11).TextColor(st.TextDim)
 		}
 		fit := t.fit
 		segmented(c, &fit, []string{"裁切填满", "完整显示", "拉伸"})
@@ -1716,8 +1712,6 @@ func (t *CollageTool) markSection(c *myui.Context, a *App) {
 					textField(c, &t.markText, "说明文字")
 				})
 			}
-			myui.Text(c, "在画布上拖拽绘制"+collageMarkTools[t.markTool].Label).
-				FontSize(11).TextColor(st.TextDim)
 		}
 		myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
 			for i, hex := range collageMarkColors {
@@ -1743,7 +1737,7 @@ func (t *CollageTool) markSection(c *myui.Context, a *App) {
 			myui.Spacer(c).Grow(1)
 			status := "未选中标注"
 			if t.selectedMark >= 0 && t.selectedMark < len(t.marks) {
-				status = fmt.Sprintf("已选 %s", markKindLabel(t.marks[t.selectedMark].Kind))
+				status = fmt.Sprintf("已选 %s", annotateKindLabel(t.marks[t.selectedMark].Kind))
 			}
 			statusPill(c, status, st.TextDim)
 		})
@@ -1793,9 +1787,6 @@ func (t *CollageTool) markSection(c *myui.Context, a *App) {
 				t.previewKey = ""
 			})
 		})
-		if len(t.marks) > 0 {
-			myui.Text(c, "标注随画布等比缩放").FontSize(11).TextColor(st.TextDim)
-		}
 	})
 }
 
@@ -1904,20 +1895,9 @@ func (t *CollageTool) deleteSelectedMark() {
 	t.previewKey = ""
 }
 
-// markKindLabel names an annotation kind in the panel.
-func markKindLabel(kind string) string {
-	switch kind {
-	case "text":
-		return "文字"
-	case "arrow":
-		return "箭头"
-	case "rect":
-		return "方框"
-	case "ellipse":
-		return "圆圈"
-	}
-	return kind
-}
+// annotateKindLabel resolves an annotation kind's label. It lives in
+// tools_studio.go with the annotation toolbar, which is the table that covers every
+// kind the app can draw; the collage page's four marks are a subset of it.
 
 func (t *CollageTool) watermarkSection(c *myui.Context) {
 	sectionCard(c, "水印", func() {

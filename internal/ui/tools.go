@@ -8,7 +8,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/lucide"
 
 	"github.com/lllll081926i/imageflow-go/internal/batch"
-	"github.com/lllll081926i/imageflow-go/internal/codec"
+	"github.com/lllll081926i/imageflow-go/internal/capabilities"
 	"github.com/lllll081926i/imageflow-go/internal/engine"
 )
 
@@ -26,6 +26,7 @@ type ConvertTool struct {
 	initialised bool
 }
 
+func (t *ConvertTool) ID() string      { return ToolConvert }
 func (t *ConvertTool) Name() string    { return "格式转换" }
 func (t *ConvertTool) Icon() *myui.SVG { return lucide.RefreshCw() }
 
@@ -50,9 +51,10 @@ func (t *ConvertTool) ensure() {
 	}
 }
 
-// convertFormats is the converter's format ladder: the engine's list is the one
-// source of truth, so a format can never appear on the page without an encoder.
-var convertFormats = codec.OutputFormats
+// convertFormats is the converter's format ladder. It is derived from the runtime
+// capability table, so a format can never appear on the page without an encoder and
+// the settings page's 编解码能力 list cannot disagree with this menu.
+var convertFormats = capabilities.EncoderFormats()
 
 func (t *ConvertTool) Panel(c *myui.Context, a *App) {
 	t.ensure()
@@ -71,6 +73,9 @@ func (t *ConvertTool) Panel(c *myui.Context, a *App) {
 		}
 		if engine.QualityFormats[t.format] {
 			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		}
+		if !capabilities.SupportsExt(t.format).Encode {
+			warnAlert(c, "当前格式不支持输出")
 		}
 		if t.format == "ico" {
 			myui.Column(c).Gap(5).Children(func() {
@@ -198,6 +203,7 @@ type ResizeTool struct {
 	presetHex string
 }
 
+func (t *ResizeTool) ID() string      { return ToolResize }
 func (t *ResizeTool) Name() string    { return "尺寸调整" }
 func (t *ResizeTool) Icon() *myui.SVG { return lucide.Scaling() }
 
@@ -371,6 +377,7 @@ type GridTool struct {
 	quality float64
 }
 
+func (t *GridTool) ID() string      { return ToolGrid }
 func (t *GridTool) Name() string    { return "宫格切图" }
 func (t *GridTool) Icon() *myui.SVG { return lucide.Grid3X3() }
 
@@ -437,6 +444,7 @@ type LayoutTool struct {
 	quality float64
 }
 
+func (t *LayoutTool) ID() string      { return ToolLayoutPage }
 func (t *LayoutTool) Name() string    { return "图片布局" }
 func (t *LayoutTool) Icon() *myui.SVG { return lucide.LayoutGrid() }
 
@@ -528,6 +536,7 @@ type StitchTool struct {
 	initialised bool
 }
 
+func (t *StitchTool) ID() string      { return ToolStitch }
 func (t *StitchTool) Name() string    { return "长图拼接" }
 func (t *StitchTool) Icon() *myui.SVG { return lucide.Rows3() }
 
@@ -702,6 +711,7 @@ type WatermarkTool struct {
 	initialised bool
 }
 
+func (t *WatermarkTool) ID() string      { return ToolWatermark }
 func (t *WatermarkTool) Name() string    { return "批量水印" }
 func (t *WatermarkTool) Icon() *myui.SVG { return lucide.Stamp() }
 
@@ -925,6 +935,7 @@ type PaletteTool struct {
 	initialised  bool
 }
 
+func (t *PaletteTool) ID() string      { return ToolPalette }
 func (t *PaletteTool) Name() string    { return "色彩提取" }
 func (t *PaletteTool) Icon() *myui.SVG { return lucide.Pipette() }
 
@@ -1014,6 +1025,7 @@ type PDFTool struct {
 
 var paperOptions = []string{"A4", "A3", "A5", "Letter", "Legal", "B5", "B4", "Tabloid"}
 
+func (t *PDFTool) ID() string      { return ToolPDF }
 func (t *PDFTool) Name() string    { return "转 PDF" }
 func (t *PDFTool) Icon() *myui.SVG { return lucide.FileText() }
 
@@ -1202,6 +1214,7 @@ type GIFTool struct {
 	initialised bool
 }
 
+func (t *GIFTool) ID() string      { return ToolGIF }
 func (t *GIFTool) Name() string    { return "GIF 工具" }
 func (t *GIFTool) Icon() *myui.SVG { return lucide.Film() }
 
@@ -1279,10 +1292,14 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 	}
 
 	sectionCard(c, "输出格式", func() {
-		opts := []string{"gif", "webp", "apng"}
+		opts := capabilities.AnimationTargets()
+		labels := make([]string, len(opts))
+		for i, target := range opts {
+			labels[i] = strings.ToUpper(target)
+		}
 		selected := indexOf(opts, t.format)
-		segmented(c, &selected, opts)
-		if selected < len(opts) {
+		segmented(c, &selected, labels)
+		if selected >= 0 && selected < len(opts) {
 			t.format = opts[selected]
 		}
 	})
@@ -1368,6 +1385,7 @@ type RichTextTool struct {
 	imagePct   float64
 }
 
+func (t *RichTextTool) ID() string      { return ToolRichText }
 func (t *RichTextTool) Name() string    { return "富文本制图" }
 func (t *RichTextTool) Icon() *myui.SVG { return lucide.Type() }
 

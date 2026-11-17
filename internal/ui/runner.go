@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -15,6 +16,10 @@ import (
 // runOne handles a single row and returns the engine envelope; the wrapper
 // resolves the row status, keeps the counters and repaints the window.
 func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engine.Result) {
+	a.runBatchContext(verb, func(_ context.Context, index int, item batch.Item) engine.Result { return runOne(index, item) })
+}
+
+func (a *App) runBatchContext(verb string, runOne func(context.Context, int, batch.Item) engine.Result) {
 	a.Session.ResetStatus()
 	a.resetPlan()
 	cancel := &batch.Cancel{}
@@ -28,10 +33,14 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 		item := rows[i]
 		jobs[i] = func(_ *batch.Cancel) error {
 			var res engine.Result
-			if err := batch.Execute(func(_ *batch.Cancel) error { res = runOne(index, item); return nil }, nil); err != nil {
+			if err := batch.Execute(func(_ *batch.Cancel) error { res = runOne(cancel, index, item); return nil }, nil); err != nil {
 				res = engine.Fail("TASK_PANIC", err.Error())
 			}
 			if !res.Success {
+				if res.ErrorCode == "CANCELLED" {
+					a.Session.SetItemStatus(item, "cancelled", "已取消", "")
+					return context.Canceled
+				}
 				status, msg := batch.FailFromResult(res)
 				a.Session.SetItemStatus(item, status, msg, "")
 				return fmt.Errorf("%s", msg)

@@ -21,6 +21,10 @@ import (
 
 // Tool is one page of the workbench.
 type Tool interface {
+	// ID is the tool's stable identifier. It survives a rename, a reorder and an
+	// insertion, and it is what the saved sidebar order stores: an index would be
+	// reinterpreted as soon as a page is added.
+	ID() string
 	// Name is the label in the side navigation and the page title.
 	Name() string
 	// Icon is the nav glyph.
@@ -56,7 +60,16 @@ type App struct {
 
 	Active       int
 	ShowSettings bool
-	Tools        []Tool
+	// ShowHome draws the landing page instead of a tool. It is the app's start
+	// state: twenty-five rows in a column is a list to read, not a place to start.
+	ShowHome bool
+	// searchQuery filters the navigation. It is the rail's own box, so it searches
+	// tools only — never the user's pictures.
+	searchQuery string
+	// collapsedGroups holds the sidebar groups the user folded away, keyed by
+	// group. A missing key means open.
+	collapsedGroups map[string]bool
+	Tools           []Tool
 
 	Status       string
 	Progress     float32
@@ -78,6 +91,12 @@ type App struct {
 	previewFocusPending bool
 	previewLoadMu       sync.Mutex
 	previewFocus        myui.Handle
+	studioPreview       studioJob[image.Image]
+	studioOutput        image.Image
+	studioSourceVersion uint64
+	studioToolID        string
+	studioPreviewError  string
+	studioPreviewBusy   bool
 
 	// quitting is set when the user asked to quit, so the close handler stops
 	// hiding the window. quitWithoutTray makes close quit outright, for a
@@ -121,6 +140,10 @@ type App struct {
 	// map in applyPendingSettings.
 	pickerMu      sync.Mutex
 	pendingPicker map[*string]string
+	// pendingDone holds the completion callbacks queued with those paths. They run
+	// on the UI thread after the fields are applied, so a page starts its work on
+	// the value it can actually see.
+	pendingDone []func()
 
 	// collage saves the拼图 page's parameters in the background. The UI thread
 	// hands a snapshot to collageMu, and a single timer writes it, so a slider
@@ -134,6 +157,25 @@ type App struct {
 	// permutation, so a tool keeps its identity, its page and its selection while
 	// only its position changes. Zero length means "the natural order".
 	railOrder []int
+	// railOrderIDs is the same order as stable identifiers. It is the persistent
+	// form; railOrder is the per-frame index form derived from it.
+	railOrderIDs []string
+	// railDragPos and railDragFromPos are ordinals among the *visible* tool rows.
+	// A group header is not a row: a drag moves a tool past other tools, and the
+	// group standing between them is a label, not a slot.
+	railDragPos     int
+	railDragFromPos int
+	// railRevealTool asks the rail to scroll one row into view on the next frame.
+	// Selecting a page from the landing page or from a search result must bring its
+	// row into sight, otherwise the sidebar shows a selection nobody can see.
+	railRevealTool int
+	// windowWidth is the frame's window width, read once per frame. The rail's
+	// auto-collapse rule reads it, so the app answers the question instead of every
+	// caller measuring the window again.
+	windowWidth float32
+	// railRowsCache and railRowsKeyValue memoise the row table for one frame shape.
+	railRowsCache    []railRow
+	railRowsKeyValue string
 	// The long-press and drag state. railPressTool is the tool whose row is being
 	// pressed; railDragTool is the one lifted, which is set once the press has
 	// lasted long enough to be a drag.
@@ -163,7 +205,14 @@ func (a *App) applyPendingSettings() {
 		*dst = path
 	}
 	clear(a.pendingPicker)
+	done := a.pendingDone
+	a.pendingDone = nil
 	a.pickerMu.Unlock()
+	// The completion callbacks run after every field was applied, so a page that
+	// reloads a picture on selection reads the path it just received.
+	for _, fn := range done {
+		fn()
+	}
 	// A new background picture changes the collage preview, which is keyed by its
 	// inputs: dropping the key here is what makes the next frame recompose.
 	if picked {
@@ -374,6 +423,9 @@ func (a *App) SetPreview(img image.Image) {
 func (a *App) Preview() image.Image {
 	a.previewMu.Lock()
 	defer a.previewMu.Unlock()
+	if tool := a.ActiveTool(); tool != nil && tool.ID() == a.studioToolID && a.studioSourceVersion == a.previewVersion && a.studioOutput != nil {
+		return a.studioOutput
+	}
 	return a.lastPreview
 }
 
@@ -385,12 +437,17 @@ func NewApp(s settings.Settings) *App {
 		Settings:     s,
 		Status:       "拖入图片或文件夹开始",
 		ProgressText: "",
+		// The app opens on the landing page: twenty-five rows in a column is a list
+		// to read, not a place to start, and a first-time user has no reason to know
+		// which row they want.
+		ShowHome: true,
 		// -1 means "no drag": the zero value would name tool 0 as the row being
 		// carried, and every frame would draw it lifted.
-		railDragTool:  -1,
-		railDragFrom:  -1,
-		railDragTo:    -1,
-		railPressTool: -1,
+		railDragTool:   -1,
+		railDragFrom:   -1,
+		railDragTo:     -1,
+		railPressTool:  -1,
+		railRevealTool: -1,
 	}
 	a.Tools = []Tool{
 		&ConvertTool{},
@@ -407,12 +464,43 @@ func NewApp(s settings.Settings) *App {
 		&GIFTool{},
 		&RichTextTool{},
 		&CompressTool{},
+		// The pages below are the增量 deliveries of the v2.0 plan: they append to
+		// the existing list so no existing row moves until the user reorders it.
+		&EditTool{},
+		&CollageStudioTool{},
+		&AnnotateTool{},
+		&ScreenshotTool{},
+		&GradeTool{},
+		&FilterTool{},
+		&CompareTool{},
+		&AnalysisTool{},
+		&PixelTool{},
+		&EmoteTool{},
+		&UpscaleTool{engine: s.AIEnginePath, models: s.AIModelsDir},
 	}
 	a.settingsBase = a.Session.SettingsSnapshot()
 	// The row order is validated against the tool list, so it is seeded only after
 	// that list exists: seeding it first repaired every stored permutation to the
 	// natural order.
-	a.railOrder = append([]int(nil), s.RailOrder...)
+	//
+	// A file written by v3.1.0 stores legacy indexes; those are migrated to
+	// identifiers once, here, so the user's arrangement survives the upgrade and
+	// every later save writes identifiers only.
+	if len(s.RailOrderIDs) == 0 && len(s.RailOrder) > 0 {
+		a.railOrderIDs = migrateRailOrderIDs(s.RailOrder)
+		a.Settings.RailOrderIDs = append([]string(nil), a.railOrderIDs...)
+		a.Settings.RailOrder = nil
+	} else {
+		a.railOrderIDs = append([]string(nil), s.RailOrderIDs...)
+	}
+	// The folded sections are restored before the first frame, so the sidebar opens
+	// the way the user left it.
+	a.collapsedGroups = map[string]bool{}
+	for _, key := range s.RailCollapsedGroups {
+		if _, known := groupByKey(key); known {
+			a.collapsedGroups[key] = true
+		}
+	}
 	a.ensureRailOrder()
 	// Fill each tool's defaults up front, so the panel and the batch runner agree
 	// even when the page has not been drawn yet.
@@ -430,6 +518,38 @@ func NewApp(s settings.Settings) *App {
 	}
 	return a
 }
+
+// Tool identifiers. A tool's identifier is permanent: it is what a saved sidebar
+// order stores, so renaming a page or renaming a label never reinterprets a
+// stored arrangement.
+const (
+	ToolConvert    = "convert"
+	ToolResize     = "resize"
+	ToolCrop       = "crop"
+	ToolGrid       = "grid"
+	ToolLayoutPage = "layout"
+	ToolCollage    = "collage"
+	ToolStitch     = "stitch"
+	ToolWatermark  = "watermark"
+	ToolPalette    = "palette"
+	ToolIcon       = "icon"
+	ToolPDF        = "pdf"
+	ToolGIF        = "gif"
+	ToolRichText   = "richtext"
+	ToolCompress   = "compress"
+
+	ToolEdit       = "edit"
+	ToolStudio     = "studio"
+	ToolAnnotate   = "annotate"
+	ToolScreenshot = "screenshot"
+	ToolGrade      = "grade"
+	ToolFilter     = "filter"
+	ToolCompare    = "compare"
+	ToolAnalysis   = "analysis"
+	ToolPixel      = "pixel"
+	ToolEmote      = "emote"
+	ToolUpscale    = "upscale"
+)
 
 // toolByNameInternal finds a registered tool by its label without a *testing.T.
 func (a *App) toolByNameInternal(name string) Tool {
@@ -458,6 +578,8 @@ func (a *App) View(c *myui.Context) {
 	applyBrandTheme(c, st)
 
 	myui.Column(c).Fill().Background(st.Shell).Padding(0, 16, 16, 16).Children(func() {
+		// One read per frame: the layout below and the rail's width rule both need it.
+		a.windowWidth, _ = c.Size()
 		// The rail's width is animated here, not on the rail itself: a sibling only
 		// reflows when the value it reads changes, and a transition on the rail's
 		// own Width repaints it after the row was already laid out. Feeding the
@@ -468,7 +590,7 @@ func (a *App) View(c *myui.Context) {
 		// that 216 + 420 leaves the input card nothing, it shows as the icon strip
 		// without the user having to collapse it.
 		railWidth := a.railTargetWidth()
-		if w, _ := c.Size(); w > 0 && w < 1080 {
+		if a.railCollapsedAuto() {
 			railWidth = railCollapsedWidth
 		}
 		if !motionReduced {
@@ -480,6 +602,9 @@ func (a *App) View(c *myui.Context) {
 			// whose key changes on every switch — so the rail was rebuilt alongside
 			// the page it sits next to, and its own animation state went with it.
 			a.rail(c, st, railWidth)
+			// The reveal request is consumed by the rail's own build: one frame asks for
+			// the scroll, and the next frame's layout is already there.
+			a.railRevealTool = -1
 			// The page container is keyed by what it shows, so switching tools or
 			// opening the settings builds a new element and pageSwap's fade plays.
 			page := myui.Row(c).Grow(1).FillHeight().Gap(16).
@@ -488,6 +613,10 @@ func (a *App) View(c *myui.Context) {
 			page.Children(func() {
 				if a.ShowSettings {
 					a.settingsPage(c, st)
+					return
+				}
+				if a.ShowHome {
+					a.homePage(c, st)
 					return
 				}
 				tool := a.ActiveTool()
@@ -506,6 +635,9 @@ func (a *App) View(c *myui.Context) {
 func (a *App) pageKey() string {
 	if a.ShowSettings {
 		return "page-settings"
+	}
+	if a.ShowHome {
+		return "page-home"
 	}
 	return fmt.Sprintf("page-tool-%d", a.Active)
 }
@@ -533,6 +665,13 @@ var pageSwap = myui.ElementTransition{
 	Enter: &myui.Motion{Opacity: 0.72},
 }
 
+// railCollapsedAuto reports whether a window of the given width renders the rail as
+// the icon strip. The rule lives here so a test can assert the behaviour instead of
+// copying the threshold.
+func (a *App) railCollapsedAuto() bool {
+	return a.railCollapsed || (a.windowWidth > 0 && a.windowWidth < railAutoCollapseWidth)
+}
+
 // railTargetWidth is where the rail's spring is headed: railWidth open, railCollapsedWidth closed.
 func (a *App) railTargetWidth() float32 {
 	if a.railCollapsed {
@@ -548,6 +687,9 @@ func (a *App) railTargetWidth() float32 {
 const (
 	railWidth          = 216
 	railCollapsedWidth = 72
+	// railAutoCollapseWidth is the window width below which the rail shows as the
+	// icon strip: 216 + 420 of cards leaves nothing for the preview under this.
+	railAutoCollapseWidth = 1080
 	// railItemPadding is the row's inner x padding. It is the same in both states
 	// on purpose: the plate then sits on the same pixel whether the rail is open
 	// or collapsed, and only the label changes beside it. The value is what
@@ -656,6 +798,11 @@ func (a *App) rail(c *myui.Context, st style, width float32) {
 	rail.Children(func() {
 		// No "工具箱" caption: the icons and their labels already say what the
 		// column is, and the heading pushed the first tool down for nothing.
+		//
+		// The search box is the list's own filter, so it sits above the list rather
+		// than in the header: a query narrows the column in place, and the group
+		// headers give way to a single ranked answer.
+		a.railSearch(c, st, labelAlpha)
 
 		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
 			a.railList(c, st, labelAlpha)
@@ -663,11 +810,15 @@ func (a *App) rail(c *myui.Context, st style, width float32) {
 
 		myui.Column(c).FillWidth().Gap(2).PaddingY(8).Children(func() {
 			myui.Row(c).FillWidth().Height(1).Background(st.Divider).Margin(0, 4, 6, 4)
+			// 首页 returns to the landing page. It sits with the settings row because
+			// both are shell destinations rather than tools.
+			a.homeEntry(c, st, labelAlpha)
 			// 全局设置 toggles: selecting it while the settings page shows returns
 			// to the tool page, which is why the settings header carries no second
 			// back button.
 			a.railFooterItem(c, st, "rail-settings", lucide.Settings(), "全局设置", a.ShowSettings, labelAlpha, func() {
 				a.ShowSettings = !a.ShowSettings
+				a.ShowHome = false
 			})
 			// The collapse action the original sidebar had. Its icon flips, so the
 			// same button both opens and closes the rail.
@@ -719,55 +870,102 @@ func railLabelAlpha(width float32) float32 {
 // rebuilt the entire rail, reset every row's hover/focus state and restarted the
 // pill's travel from the top. Keeping the child (and keying every row) makes the
 // list's shape constant across every page switch.
+// railList draws the grouped navigation.
+//
+// A group header is a row of its own: clicking it folds the group away, which is
+// what keeps twenty-five tools readable in a 216 DIP column. The rows inside a
+// group follow the saved permutation, so a user's own order is preserved inside
+// whatever section a tool belongs to.
+//
+// The selection pill is placed at the active tool's planned row, not at a computed
+// pitch times an index: a header and a group gap break the fixed pitch, so the
+// list's own row table is the only source of truth for a y coordinate.
 func (a *App) railList(c *myui.Context, st style, labelAlpha float32) {
-	order := a.railOrderSnapshot()
-	rowPitch := float32(railRowPitch)
-
-	// activeRow is where the pill rests: the position of the selected tool, not
-	// the tool's index, so reordering the rail does not move the selection.
-	activeRow := a.railPositionOf(a.Active)
-	if a.Active < 0 || a.Active >= len(a.Tools) {
-		activeRow = 0
-	}
-	visible := !a.ShowSettings && activeRow >= 0
+	rows := a.railRows()
+	visible := !a.ShowSettings && !a.ShowHome
 
 	list := myui.Column(c).FillWidth().Gap(railRowGap)
 	list.Children(func() {
-		target := float32(activeRow) * rowPitch
-		// ZIndex(-1) puts the pill behind the rows: the rows paint no background
-		// of their own, so the pill shows through, and an Absolute child would
-		// otherwise paint above its later siblings.
+		// The pill is always built, even with no active row to point at: MyGo
+		// identifies an unkeyed child by its position among its siblings, so
+		// removing the first child renumbers every row after it.
 		pill := myui.Row(c).FillWidth().Height(railRowHeight).
 			Radius(st.RadiusControl).Absolute().Top(0).Left(0).ZIndex(-1).
-			Key("rail-pill").
-			Gradient(st.Brand, st.BrandGradientTo, 90).
+			Key("rail-pill").Gradient(st.Brand, st.BrandGradientTo, 90).
 			Shadow(0, 4, 12, 0, st.BrandGlow).Label("选中指示")
-		// AnimateTo runs while the list is built, and its value drives this
-		// frame's Top: the pill therefore travels instead of jumping. The same
-		// curve as the rail width and the page handover keeps the fade in step.
-		y := target
-		alpha := float32(0)
+		target, alpha := float32(0), float32(0)
 		if visible {
-			alpha = 1
+			if y := a.railToolRowY(a.Active); y >= 0 {
+				target, alpha = y, 1
+			}
 		}
+		y := target
 		if !motionReduced {
 			y = pill.AnimateTo("rail-pill-top", target, railPillCurve)
 			alpha = pill.AnimateTo("rail-pill-alpha", alpha, shellCurve)
 		}
 		pill.Top(y).Opacity(alpha)
 
-		for pos, toolIndex := range order {
-			tool := a.Tools[toolIndex]
-			// The selected row's palette fades with the indicator. Switching it on
-			// the first frame of the settings page left white text on a gradient
-			// that was still fading out, which read as the rail being repainted.
+		// Header and rows are laid out in one flow, so the y the pill uses and the
+		// y the layout produces stay the same number. A header's own height is
+		// written explicitly, which is what makes the two agree across the group
+		// gap as well.
+		for _, row := range rows {
+			if row.Header {
+				a.railGroupHeader(c, st, row.Group, labelAlpha)
+				continue
+			}
+			tool := a.Tools[row.Tool]
 			rowAlpha := float32(0)
-			if pos == activeRow {
+			if row.Tool == a.Active {
 				rowAlpha = alpha
 			}
-			a.railItem(c, st, pos, toolIndex, tool, labelAlpha, rowAlpha, rowPitch)
+			a.railItem(c, st, row, tool, labelAlpha, rowAlpha)
 		}
 	})
+}
+
+// railGroupHeader draws one section heading: its glyph, its label, and a chevron
+// that says whether the section is open.
+//
+// In the collapsed strip there is no room for a label, so the heading shrinks to a
+// hairline rule: the groups stay visually separated without wasting the width.
+func (a *App) railGroupHeader(c *myui.Context, st style, key string, labelAlpha float32) {
+	group, ok := groupByKey(key)
+	if !ok {
+		return
+	}
+	open := a.groupExpanded(key)
+	if labelAlpha <= 0.02 {
+		myui.Row(c).FillWidth().Height(railHeaderHeight).
+			Justify(myui.Center).AlignItems(myui.Center).Children(func() {
+			myui.Row(c).Width(16).Height(1).Background(st.Divider)
+		})
+		return
+	}
+	row := myui.ButtonBase(c).Key("rail-group-" + key).FillWidth().
+		Height(railHeaderHeight).Gap(6).AlignItems(myui.Center).
+		Radius(st.RadiusPill).Cursor(myui.CursorPointer).
+		Label(group.Label).FocusRingColor(st.Brand).FocusRingOffset(1)
+	row = row.Justify(myui.Start).PaddingX(railItemPadding)
+	if row.Hovered() {
+		row.Background(st.Recessed)
+	}
+	row.Opacity(labelAlpha)
+	row.Children(func() {
+		myui.Icon(c, group.Icon()).Width(12).Height(12).TextColor(st.TextDim)
+		myui.Text(c, group.Label).FontSize(11).FontWeight(600).
+			LetterSpacing(0.2).TextColor(st.TextDim).NoWrap()
+		myui.Spacer(c).Grow(1)
+		icon := lucide.ChevronDown()
+		if !open {
+			icon = lucide.ChevronRight()
+		}
+		myui.Icon(c, icon).Width(12).Height(12).TextColor(st.TextDim)
+	})
+	if row.Clicked() {
+		a.toggleGroup(key)
+	}
 }
 
 // mixColor blends two straight-alpha colours. The selection indicator and the
@@ -791,8 +989,17 @@ func mixColor(from, to myui.Color, k float32) myui.Color {
 // scaled up and takes a shadow, which is the only cue that says the pointer is now
 // carrying it rather than pressing it. The gesture itself lives on the list
 // (railPointerInput), so it has a coordinate frame that does not move.
-func (a *App) railItem(c *myui.Context, st style, pos, toolIndex int, tool Tool, labelAlpha, selectAlpha, rowPitch float32) {
-	active := a.Active == toolIndex && !a.ShowSettings
+func (a *App) railItem(c *myui.Context, st style, row railRow, tool Tool, labelAlpha, selectAlpha float32) {
+	toolIndex := row.Tool
+	rest := row.Y
+	carried := a.railDragTool == toolIndex
+	// A press outside the open sections can no longer be carried: the row it was
+	// pointing at is not visible, so the list has no slot to move it to.
+	visible := carried || a.railToolRowY(toolIndex) >= 0
+	if !visible {
+		return
+	}
+	active := a.Active == toolIndex && !a.ShowSettings && !a.ShowHome
 	item := myui.ButtonBase(c).Key(railRowKey(toolIndex) + "-row").
 		FillWidth().Height(railRowHeight).Gap(11).
 		AlignItems(myui.Center).Radius(st.RadiusControl).
@@ -800,28 +1007,31 @@ func (a *App) railItem(c *myui.Context, st style, pos, toolIndex int, tool Tool,
 		FocusRingColor(st.Brand).FocusRingOffset(1).
 		Transition(motion(springTap))
 
-	// Where the row belongs, and where the drag has taken it.
-	rest := float32(pos) * rowPitch
+	// Where the row belongs, and where the drag has taken it. Positions are
+	// ordinals among the visible tool rows: a group header is a label, not a slot,
+	// so it never counts as a step of travel.
 	target := rest
-	carried := a.railDragTool == toolIndex
 	displaced := false
 	switch {
 	case carried:
 		target = a.railDragY
 	case a.railDragTool >= 0:
-		// The rows between the dragged row's original place and the slot it would
-		// take slide one step out of the way, so the gap it leaves is always right
-		// where it would land.
-		from, to := a.railDragFrom, a.railDragTo
+		from, to := a.railDragFromPos, a.railDragTo
+		pos := a.railToolOrdinal(toolIndex)
+		pitch := float32(railRowHeight + railRowGap)
 		switch {
+		case pos < 0:
 		case pos == from:
-			target = float32(to) * rowPitch
+			// The carried row's own gap travels to its future slot.
+			target = rest + float32(to-from)*pitch
 			displaced = true
 		case from < to && pos > from && pos <= to:
-			target = rest - rowPitch
+			// Rows between the old and the new slot step up one place.
+			target = rest - pitch
 			displaced = true
 		case from > to && pos >= to && pos < from:
-			target = rest + rowPitch
+			// Rows between step down one place.
+			target = rest + pitch
 			displaced = true
 		}
 	}
@@ -901,13 +1111,18 @@ func (a *App) railItem(c *myui.Context, st style, pos, toolIndex int, tool Tool,
 	// click (in bounds, no drag), so re-deriving it here would disagree with the
 	// accessibility tree and with the tester. A drop sets railSuppressClick, which
 	// swallows the click the engine reports for the release that ended the drag.
-	a.railRowGesture(c, item, pos, toolIndex)
+	a.railRowGesture(c, item, toolIndex)
+	if a.railRevealTool == toolIndex {
+		item.ScrollIntoView()
+	}
 	if item.Clicked() {
 		if a.railSuppressClick {
 			a.railSuppressClick = false
 		} else {
 			a.Active = toolIndex
 			a.ShowSettings = false
+			a.ShowHome = false
+			a.searchQuery = ""
 		}
 	}
 }
@@ -919,11 +1134,11 @@ func (a *App) railItem(c *myui.Context, st style, pos, toolIndex int, tool Tool,
 // from Dragged, which reports the pointer's travel in the window's axes for this
 // frame: a delta survives the row's own translation, where an absolute local
 // position would feed the row's movement back into its target and stall.
-func (a *App) railRowGesture(c *myui.Context, item myui.Element, pos, toolIndex int) {
+func (a *App) railRowGesture(c *myui.Context, item myui.Element, toolIndex int) {
 	item.HandleInput(func(ev myui.InputEvent) bool {
 		switch ev.Kind {
 		case myui.InputPointerDown:
-			a.beginRailPress(c, toolIndex, pos, ev.Y)
+			a.beginRailPress(c, toolIndex, ev.Y)
 			// Not consumed: the engine still records the press, so a plain click
 			// reaches the row as it always did.
 			return false
@@ -949,9 +1164,13 @@ func (a *App) railRowGesture(c *myui.Context, item myui.Element, pos, toolIndex 
 			a.railPressMoved += absFloat32(dy)
 			if a.railDragTool == toolIndex {
 				a.railDragY += dy
-				maxY := float32(len(a.railOrderSnapshot())-1) * railRowPitch
-				if a.railDragY < 0 {
-					a.railDragY = 0
+				// The travel is bounded by the visible tool rows, not by the whole
+				// list: a group folded away has no slots to drop into.
+				lastPos := a.railToolCount() - 1
+				maxY := a.railDragYOfOrdinal(lastPos)
+				minY := a.railDragYOfOrdinal(0)
+				if a.railDragY < minY {
+					a.railDragY = minY
 				}
 				if a.railDragY > maxY {
 					a.railDragY = maxY
@@ -1053,13 +1272,17 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	}
 	card.Children(func() {
 		a.inputHeader(c, st)
+		a.requestStudioPreview(tool)
+		if a.studioPreviewError != "" && a.studioToolID == tool.ID() {
+			warnAlert(c, "预览失败："+a.studioPreviewError)
+		}
 		// A tool that composes several inputs draws its own preview area: the
 		// single-picture preview below shows one file, which is the wrong question
 		// for a collage. It is chosen by the tool's type, not by whether a picture
 		// happens to be decoded: a failed decode must not drop the canvas. An empty
 		// list keeps the shared dashed target: with nothing to compose, the canvas
 		// would be a large empty frame next to a hint saying what to do.
-		if widget, ok := tool.(previewWidget); ok && widget != nil && a.Session.Len() > 0 {
+		if widget, ok := tool.(previewWidget); ok && widget != nil && (a.Session.Len() > 0 || tool.ID() == ToolCompare) {
 			myui.Row(c).FillWidth().Grow(1).Padding(16, 16, 0, 16).
 				Key(fmt.Sprintf("preview-%d", a.Active)).
 				Transition(motion(springSoft)).Children(func() {
@@ -1133,23 +1356,14 @@ func (a *App) dropAreaCompact(c *myui.Context, st style) {
 func (a *App) inputHeader(c *myui.Context, st style) {
 	myui.Row(c).FillWidth().Height(52).PaddingX(18).Gap(10).AlignItems(myui.Center).
 		Children(func() {
-			tool := a.ActiveTool()
-			myui.Text(c, "输入项").FontSize(14).FontWeight(600).TextColor(st.Text)
+			myui.Text(c, "输入项").FontSize(14).FontWeight(600).TextColor(st.Text).NoWrap()
 			count := fmt.Sprintf("%d", a.Session.Len())
 			myui.Row(c).Height(20).PaddingX(7).Radius(999).
 				Justify(myui.Center).AlignItems(myui.Center).
 				Background(st.Recessed).Children(func() {
 				myui.Text(c, count).FontSize(11).FontWeight(600).TextColor(st.TextSub)
 			})
-			if tool != nil {
-				myui.Row(c).Width(1).Height(16).Background(st.Divider).MarginX(4)
-				if icon := tool.Icon(); icon != nil {
-					myui.Icon(c, icon).Width(15).Height(15).TextColor(featureTint(a.Active, st))
-				}
-				myui.Text(c, tool.Name()).FontSize(12.5).FontWeight(500).TextColor(st.TextSub)
-			}
 			myui.Spacer(c).Grow(1)
-			statusPill(c, a.statusLabel(), a.statusTint(st))
 			a.ghostButton(c, st, "选择输出位置", lucide.FolderOpen(), a.pickOutputDirectory)
 			if a.Session.Len() > 0 {
 				a.ghostButton(c, st, "清空", lucide.Trash2(), func() {
@@ -1162,8 +1376,13 @@ func (a *App) inputHeader(c *myui.Context, st style) {
 		})
 }
 
-// ghostButton draws a secondary action with the same keyboard, pressed,
-// disabled and loading semantics as the primary action.
+// ghostButtonOf is the shared secondary action, for a caller that stores its actions
+// in a table. It is the same control the App method builds, so a table-driven row
+// cannot end up looking like a second design.
+func ghostButtonOf(c *myui.Context, st style, text string, icon *myui.SVG, onClick func()) myui.Element {
+	return ghostButtonIn(c, st, text, icon, onClick)
+}
+
 func (a *App) ghostButton(c *myui.Context, st style, text string, icon *myui.SVG, onClick func()) myui.Element {
 	return a.ghostButtonState(c, st, text, icon, false, false, onClick)
 }
@@ -1406,7 +1625,7 @@ func (a *App) actionBar(c *myui.Context, st style) {
 				}
 				return
 			}
-			primaryButton(c, st, "开始处理", lucide.Play(), a.Session.Len() == 0, false, a.Start).
+			primaryButton(c, st, "开始处理", lucide.Play(), a.Session.Len() == 0 && !toolRunsWithoutList(a.ActiveTool()), false, a.Start).
 				Grow(1).Height(46)
 			if a.Session.Len() > 0 {
 				a.ghostButton(c, st, "取消", lucide.X(), a.Cancel)

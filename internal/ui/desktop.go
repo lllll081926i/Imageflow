@@ -44,7 +44,8 @@ func (a *App) SetQuitWithoutTray() {
 
 // quit hides the tray and asks the app to exit.
 func (a *App) quit() {
-	a.CancelImport()
+	a.Cancel()
+	a.CancelStudioWork()
 	a.CancelCollageWork()
 	a.mu.Lock()
 	a.quitting = true

@@ -1,6 +1,6 @@
 module github.com/lllll081926i/imageflow-go
 
-go 1.27.3
+go 1.27.4
 
 tool github.com/egoist/mygo/cmd/mygo
 
@@ -20,6 +20,8 @@ require (
 	github.com/signintech/gopdf v0.38.4
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/image v0.47.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
@@ -33,8 +35,6 @@ require (
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )

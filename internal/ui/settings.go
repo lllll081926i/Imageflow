@@ -6,6 +6,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +16,10 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/lucide"
 
 	"github.com/lllll081926i/imageflow-go/internal/batch"
+	"github.com/lllll081926i/imageflow-go/internal/capabilities"
 	"github.com/lllll081926i/imageflow-go/internal/paths"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
+	"github.com/lllll081926i/imageflow-go/internal/upscale"
 )
 
 // settingsSection is one grouped block. The icon plate and title stay on their
@@ -79,10 +82,13 @@ func (a *App) settingsPage(c *myui.Context, st style) {
 						myui.Column(c).FillWidth().Gap(14).Label("输出设置").Children(func() {
 							a.settingsNaming(c, st, s)
 							a.settingsOutput(c, st, s)
+							a.capabilitySection(c, st)
 							a.aboutSection(c, st)
 						})
 						myui.Column(c).FillWidth().Gap(14).Label("应用设置").Children(func() {
 							a.settingsBehaviour(c, st, s)
+							a.componentSection(c, st)
+							a.modelDownloadSettings(c, st, s)
 							a.updatesSection(c, st)
 						})
 					})
@@ -91,8 +97,11 @@ func (a *App) settingsPage(c *myui.Context, st style) {
 				myui.Column(c).FillWidth().Gap(12).Label("设置单列").Children(func() {
 					a.settingsNaming(c, st, s)
 					a.settingsOutput(c, st, s)
+					a.capabilitySection(c, st)
 					a.aboutSection(c, st)
 					a.settingsBehaviour(c, st, s)
+					a.componentSection(c, st)
+					a.modelDownloadSettings(c, st, s)
 					a.updatesSection(c, st)
 				})
 			})
@@ -331,6 +340,62 @@ func (a *App) settingsSaveBar(c *myui.Context, st style, compact bool) {
 			myui.Column(c).Grow(1).Children(feedback)
 			actions()
 		})
+	})
+}
+
+// capabilitySection is the single source of truth the PRD asks for: the settings
+// page lists what this build can actually read, write, animate and carry, instead
+// of each page keeping its own opinion.
+func (a *App) capabilitySection(c *myui.Context, st style) {
+	snapshot := capabilities.Current()
+	settingsSection(c, st, lucide.FileImage(), "编解码能力", func() {
+		for _, f := range snapshot.Formats {
+			format, summary, writable := f.Format, f.Summary(), f.Encode
+			row := myui.Row(c).FillWidth().MinHeight(26).AlignItems(myui.Center).Gap(8)
+			row.Children(func() {
+				myui.Text(c, format).FontSize(12).FontWeight(600).TextColor(st.Text)
+				myui.Text(c, summary).FontSize(11).TextColor(st.TextSub).SingleLine()
+				myui.Spacer(c).Grow(1)
+				if writable {
+					statusPill(c, "可写", st.Success)
+				} else {
+					statusPill(c, "只读", st.TextDim)
+				}
+			})
+		}
+	})
+}
+
+// componentSection lists the optional components and their model catalogue. It is
+// the one place a model's licence and hash state are visible before use.
+func (a *App) componentSection(c *myui.Context, st style) {
+	settingsSection(c, st, lucide.Sparkles(), "模型与组件", func() {
+		models := upscale.RegistrySnapshot()
+		for _, tool := range a.Tools {
+			if current, ok := tool.(*UpscaleTool); ok && len(current.env.Models) > 0 && current.env.ModelsRoot == current.models {
+				models = make([]upscale.Model, 0, len(current.env.Models))
+				for _, status := range current.env.Models {
+					models = append(models, status.Model)
+				}
+				break
+			}
+		}
+		for _, m := range models {
+			name, license, scale, purpose, hashed := m.Name, m.License, m.Scale, m.Purpose, m.SHA256 != ""
+			row := myui.Column(c).FillWidth().Gap(4).Padding(9).
+				Radius(st.RadiusPill).Background(st.Recessed)
+			row.Children(func() {
+				myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(8).Children(func() {
+					myui.Text(c, name).FontSize(11.5).FontWeight(600).TextColor(st.Text)
+					myui.Spacer(c).Grow(1)
+					statusPill(c, fmt.Sprintf("%d× · %s", scale, purpose), st.TextDim)
+				})
+				myui.Text(c, license).FontSize(10).TextColor(st.TextDim).MaxLines(2)
+				if !hashed {
+					myui.Text(c, "未登记哈希，不能启用").FontSize(10).TextColor(st.Warning)
+				}
+			})
+		}
 	})
 }
 

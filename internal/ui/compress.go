@@ -18,6 +18,7 @@ type CompressTool struct {
 
 var compressionFormats = []string{"auto", "jpg", "png", "webp", "avif"}
 
+func (t *CompressTool) ID() string      { return ToolCompress }
 func (t *CompressTool) Name() string    { return "图片压缩" }
 func (t *CompressTool) Icon() *myui.SVG { return lucide.Minimize2() }
 func (t *CompressTool) ensure() {

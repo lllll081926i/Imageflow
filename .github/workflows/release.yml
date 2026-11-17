@@ -53,6 +53,10 @@ jobs:
       - name: 检查版本与发布标签
         run: |
           $config = Get-Content mygo.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:GITHUB_REF_TYPE -ne 'tag') {
+            Write-Output '分支运行仅执行构建与验收，不发布版本。'
+            exit 0
+          }
           if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne ('v' + $config.version)) {
             throw '请从与 mygo.json 版本一致的 v 开头标签运行发布流程。'
           }
@@ -76,6 +80,21 @@ jobs:
           }
           go tool mygo build -platform $env:RELEASE_TARGET
           if ($LASTEXITCODE -ne 0) { throw '发布构建失败' }
+
+      - name: 验收 Windows 安装、升级、卸载与便携启动
+        if: matrix.target == 'windows/amd64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/verify-windows.ps1
+
+      - name: 保存 Windows 验收证据
+        if: always() && matrix.target == 'windows/amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-acceptance
+          path: ${{ runner.temp }}/imageflow-acceptance/evidence/*
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: 整理发布文件
         run: |
@@ -122,6 +141,7 @@ jobs:
 
   publish:
     name: 发布 GitHub Release
+    if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15

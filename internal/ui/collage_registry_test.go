@@ -29,12 +29,23 @@ func TestCollagePageIsRegisteredBeforeStitch(t *testing.T) {
 	for _, tool := range a.Tools {
 		names = append(names, tool.Name())
 	}
-	want := []string{
+	// The first fourteen rows are the v3.1.0 ladder in its original order: an
+	// upgrade must not move a row the user already knows. The pages the v2.0 plan
+	// adds follow, so no existing row shifts until the user reorders it.
+	legacy := []string{
 		"格式转换", "尺寸调整", "图片裁剪", "宫格切图", "图片布局",
 		"图片拼图", "长图拼接", "批量水印", "色彩提取", "图标生成",
 		"转 PDF", "GIF 工具", "富文本制图", "图片压缩",
 	}
-	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("tools = %v, want %v", names, want)
+	if len(names) < len(legacy) {
+		t.Fatalf("tools = %v, want at least the %d legacy rows", names, len(legacy))
+	}
+	if !reflect.DeepEqual(names[:len(legacy)], legacy) {
+		t.Fatalf("legacy rows = %v, want %v", names[:len(legacy)], legacy)
+	}
+	for i, tool := range a.Tools {
+		if tool.ID() == "" {
+			t.Errorf("tool %d (%s) has no stable id", i, tool.Name())
+		}
 	}
 }

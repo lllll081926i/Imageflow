@@ -25,7 +25,7 @@ var capturePath = flag.String("capture", "", "save a PNG of the window and exit"
 var openPaths = flag.String("open", "", "comma-separated files or folders to load at startup")
 
 // toolIndex selects the tool page a capture should show.
-var toolIndex = flag.Int("tool", 0, "tool page index to show at startup")
+var toolIndex = flag.Int("tool", -1, "tool page index to show at startup")
 
 // startHidden opens the app in the tray only, which is what an autostart entry
 // uses when the user does not want a window at login.
@@ -69,9 +69,7 @@ func main() {
 			Content: ui.View(app.View),
 		})
 		app.Window = win
-		if *toolIndex >= 0 && *toolIndex < len(app.Tools) {
-			app.Active = *toolIndex
-		}
+		selectStartupTool(app, *toolIndex)
 		if *openPaths != "" {
 			app.AddPaths(strings.Split(*openPaths, ","))
 		}
@@ -86,7 +84,8 @@ func main() {
 		// original app did with its background-running setting on.
 		win.OnClose(func(e *mygo.CloseEvent) {
 			if !app.ShouldHideOnClose() {
-				app.CancelImport()
+				app.Cancel()
+				app.CancelStudioWork()
 				app.CancelCollageWork()
 				return
 			}
@@ -110,7 +109,7 @@ func main() {
 			app.AutoCheckUpdates()
 		}
 		if capturing {
-			go captureAndQuit(win)
+			go captureAndQuit(win, app)
 		}
 	})
 	if err := mygo.App.Run(); err != nil {
@@ -118,9 +117,26 @@ func main() {
 	}
 }
 
-func captureAndQuit(win *mygo.Window) {
+func selectStartupTool(app *appui.App, index int) {
+	if index >= 0 && index < len(app.Tools) {
+		app.Active = index
+		app.ShowHome = false
+	}
+}
+
+func captureAndQuit(win *mygo.Window, app *appui.App) {
+	deadline := time.Now().Add(30 * time.Second)
+	for app.IsImporting() {
+		if time.Now().After(deadline) {
+			log.Print("capture failed: startup import timed out")
+			mygo.App.Exit(1)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	// Give the window a moment to paint its first frames.
 	time.Sleep(1200 * time.Millisecond)
+	log.Printf("截图准备完成：输入 %d 张，状态 %s", app.Session.Len(), app.StatusLine())
 	data, err := win.CapturePage()
 	if err != nil {
 		log.Printf("capture failed: %v", err)

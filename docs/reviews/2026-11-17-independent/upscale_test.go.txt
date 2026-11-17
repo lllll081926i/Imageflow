@@ -1,0 +1,99 @@
+package upscale
+
+import (
+ "context"
+ "image"
+ "image/color"
+ "image/png"
+ "os"
+ "path/filepath"
+ "strings"
+ "testing"
+)
+
+func init() {
+ mode:=os.Getenv("IMAGEFLOW_REVIEW_UPSCALE_HELPER")
+ if mode=="" {return}
+ args:=os.Args[1:]
+ value:=func(flag string)string{for index:=0;index+1<len(args);index++{if args[index]==flag{return args[index+1]}};return ""}
+ target:=value("-o")
+ if mode=="model-name" && strings.HasSuffix(value("-n"),".param") {
+  os.Stderr.WriteString("模型名称不应包含 .param 扩展名")
+  os.Exit(23)
+ }
+ if mode=="failed-write" {
+  os.WriteFile(target,[]byte("partial output"),0600)
+  os.Exit(9)
+ }
+ if mode=="corrupt-output" {
+  os.WriteFile(target,[]byte("not an image"),0600)
+  os.Exit(0)
+ }
+ output,err:=os.Create(target)
+ if err!=nil {os.Exit(24)}
+ img:=image.NewNRGBA(image.Rect(0,0,8,8))
+ img.SetNRGBA(0,0,color.NRGBA{R:255,A:255})
+ png.Encode(output,img)
+ output.Close()
+ os.Exit(0)
+}
+
+func auditUpscaleRequest(t *testing.T,mode string)Request{
+ t.Helper()
+ t.Setenv("IMAGEFLOW_REVIEW_UPSCALE_HELPER",mode)
+ original:=RegistrySnapshot()
+ t.Cleanup(func(){SetRegistry(original)})
+ root:=t.TempDir()
+ model:=Model{Name:"audit-model",ParamFile:"audit-model.param",BinFile:"audit-model.bin",Scale:4}
+ if err:=os.MkdirAll(model.Dir(root),0700);err!=nil {t.Fatal(err)}
+ for _,name:=range []string{model.ParamFile,model.BinFile} {
+  if err:=os.WriteFile(filepath.Join(model.Dir(root),name),[]byte("audit"),0600);err!=nil {t.Fatal(err)}
+ }
+ hash,err:=DirHash(model.Dir(root),model.ParamFile,model.BinFile)
+ if err!=nil {t.Fatal(err)}
+ model.SHA256=hash
+ SetRegistry([]Model{model})
+ executable,err:=os.Executable()
+ if err!=nil {t.Fatal(err)}
+ input:=filepath.Join(root,"input.png")
+ output,err:=os.Create(input)
+ if err!=nil {t.Fatal(err)}
+ png.Encode(output,image.NewNRGBA(image.Rect(0,0,2,2)))
+ output.Close()
+ return Request{EnginePath:executable,ModelsRoot:root,Model:model.Name,InputPath:input,OutputPath:filepath.Join(root,"out.png"),Scale:4,GPU:-1}
+}
+
+func TestAuditUpscaleModelName(t *testing.T){
+ req:=auditUpscaleRequest(t,"model-name")
+ if _,err:=Run(context.Background(),req);err!=nil {t.Fatalf("模型名参数不符合引擎协议：%v",err)}
+}
+
+func TestAuditUpscaleRejectsCorruptOutput(t *testing.T){
+ req:=auditUpscaleRequest(t,"corrupt-output")
+ if report,err:=Run(context.Background(),req);err==nil {t.Fatalf("损坏输出被报告成功：%+v",report)}
+}
+
+func TestAuditUpscaleFailurePreservesTarget(t *testing.T){
+ req:=auditUpscaleRequest(t,"failed-write")
+ before:=[]byte("previous approved output")
+ if err:=os.WriteFile(req.OutputPath,before,0600);err!=nil {t.Fatal(err)}
+ if _,err:=Run(context.Background(),req);err==nil {t.Fatal("预期引擎失败")}
+ after,err:=os.ReadFile(req.OutputPath)
+ if err!=nil {t.Fatal(err)}
+ if string(after)!=string(before) {t.Fatalf("失败推理覆盖了已有目标：%q",after)}
+}
+
+func TestAuditUpscaleRequestedScale(t *testing.T){
+ req:=auditUpscaleRequest(t,"valid-output")
+ req.Scale=2
+ report,err:=Run(context.Background(),req)
+ if err!=nil {t.Fatal(err)}
+ file,err:=os.Open(req.OutputPath)
+ if err!=nil {t.Fatal(err)}
+ defer file.Close()
+ img,err:=png.Decode(file)
+ if err!=nil {t.Fatal(err)}
+ if img.Bounds().Dx()!=4 || img.Bounds().Dy()!=4 || report.AppliedScale!=2 {
+  t.Fatalf("请求 2 倍，实际 %v、AppliedScale=%d",img.Bounds(),report.AppliedScale)
+ }
+}

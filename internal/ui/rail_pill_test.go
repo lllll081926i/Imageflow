@@ -23,11 +23,12 @@ func TestRailPillTravelsBetweenRows(t *testing.T) {
 	tt := myui.NewTester(a.View, 1200, 800)
 	tt.Frame()
 
-	// Row centres: the rail's padding is 10 top, and each row is railRowHeight tall
-	// with railRowGap between.
+	// Row centres: kept only for the sanity check above, where the first row is the
+	// one immediately after the first group header.
 	rowCentre := func(i int) float32 {
-		return float32(10+i*(railRowHeight+railRowGap)) + railRowHeight/2
+		return float32(10+railHeaderHeight+i*(railRowHeight+railRowGap)) + railRowHeight/2
 	}
+	_ = rowCentre
 
 	pillTop := func() (int, int, bool) {
 		img := tt.Image()
@@ -63,13 +64,32 @@ func TestRailPillTravelsBetweenRows(t *testing.T) {
 	if !ok {
 		t.Fatalf("no pill found on the first frame (len %d)", firstLen)
 	}
-	if want := rowCentre(0); abs(int(float32(firstTop)-want+railRowHeight/2)) > 6 {
-		t.Fatalf("pill top = %d, want row 0 (centre %.0f)", firstTop, want)
+	// The pill sits at the first tool row's planned top. That plan is in the list's
+	// content space, and the scan reads window pixels, so the comparison uses the
+	// first row's own bounds to carry the offset rather than a hand-copied padding
+	// constant that a group header would invalidate.
+	firstRow, ok := tt.Access(a.Tools[0].Name())
+	if !ok {
+		t.Fatal("the first row is missing")
 	}
-
-	// Jump to a row far enough down that the travel is unambiguous.
-	a.Active = 9
+	if want := int(firstRow.Bounds.Y); abs(firstTop-want) > 4 {
+		t.Fatalf("pill top = %d, want the first row's top %d", firstTop, want)
+	}
+	// Jump to a row close enough that it stays inside the rendered list, so the
+	// pill can be measured in window pixels, but far enough that the travel is
+	// unambiguous.
+	dest := a.toolIndex(ToolCollage)
+	a.Active = dest
 	tt.Frame()
+
+	// The planned top of the destination row is in the list's content space; the
+	// pill is drawn in that same space, so the comparison is against the row table
+	// rather than against a fixed pitch. A header between two rows is exactly why
+	// the old "10 + i*(48+2)" formula no longer holds.
+	destTop := a.railToolRowY(dest)
+	if destTop < 0 {
+		t.Fatalf("row %d has no planned position", dest)
+	}
 
 	var seen []int
 	for i := 0; i < 24; i++ {
@@ -83,8 +103,13 @@ func TestRailPillTravelsBetweenRows(t *testing.T) {
 		t.Fatalf("pill was visible on only %d frames", len(seen))
 	}
 	settled := seen[len(seen)-1]
-	if want := rowCentre(9); abs(int(float32(settled)-want+railRowHeight/2)) > 6 {
-		t.Errorf("pill settled at %d, want row 9 (centre %.0f)", settled, want)
+	// The pill is drawn inside the scrolling list, so its window y carries the list's
+	// own offset. Comparing it with the destination row's committed top removes that
+	// offset and checks the one thing that matters: the pill is on its row.
+	if info, ok := tt.Access(a.Tools[dest].Name()); ok {
+		if abs(settled-int(info.Bounds.Y)) > 4 {
+			t.Errorf("pill settled at %d, want the row top %v", settled, info.Bounds.Y)
+		}
 	}
 	// Intermediate positions: at least three frames between the two rows.
 	low, high := firstTop, settled

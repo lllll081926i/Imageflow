@@ -28,6 +28,7 @@ type CropTool struct {
 	quality    float64
 }
 
+func (t *CropTool) ID() string      { return ToolCrop }
 func (t *CropTool) Name() string    { return "图片裁剪" }
 func (t *CropTool) Icon() *myui.SVG { return lucide.Crop() }
 
@@ -230,6 +231,7 @@ type IconTool struct {
 	initialised bool
 }
 
+func (t *IconTool) ID() string      { return ToolIcon }
 func (t *IconTool) Name() string    { return "图标生成" }
 func (t *IconTool) Icon() *myui.SVG { return lucide.AppWindow() }
 

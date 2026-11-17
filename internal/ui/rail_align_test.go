@@ -14,9 +14,12 @@ import (
 // default in place aligns by its own label width: every icon landed at a
 // different x and the whole column read as misaligned. The plates are drawn,
 // not exposed to the accessibility tree, so the check is pixel-based: on each
-// inactive row's centre line (the active row is a gradient that fills the row
-// and hides its plate), the coloured run at the rail's leading edge must sit
-// at the same centre x on every row, open or collapsed.
+// visible row's centre line, the coloured run at the rail's leading edge must
+// sit at the same centre x on every row, open or collapsed.
+//
+// The rail scrolls, so the scan covers only the rows it can actually measure: a
+// row clipped by the viewport has no plate on its centre line, and a stale bound
+// from a frame before the scroll settled is not a layout defect.
 func TestRailRowsAlignOnOneAxis(t *testing.T) {
 	a := newTestApp(t)
 	// The settings page showing leaves every tool row inactive: its plate is
@@ -28,14 +31,16 @@ func TestRailRowsAlignOnOneAxis(t *testing.T) {
 		tt.Frame()
 	}
 
-	// The scan window stops before the labels begin (plate at 36, label at 79),
-	// so the coloured run it finds is the plate or the footer icon alone.
+	// The scan window stops before the labels begin, so the coloured run it finds is
+	// the plate or the footer icon alone.
 	const scanFrom, scanTo = 30, 74
-	centre := func(name string) int {
+	// centre returns 2x the plate's centre on one row, and false when the row has no
+	// measurable plate on this frame.
+	centre := func(name string) (int, bool) {
 		t.Helper()
 		info, ok := tt.Access(name)
 		if !ok {
-			t.Fatalf("%q has no accessible name", name)
+			return 0, false
 		}
 		img := tt.Image()
 		if img == nil {
@@ -52,39 +57,74 @@ func TestRailRowsAlignOnOneAxis(t *testing.T) {
 				last = x
 			}
 		}
-		if first < 0 {
-			t.Fatalf("%q: no plate found on the row's centre line", name)
+		if first < 0 || last-first < 8 {
+			return 0, false
 		}
-		return first + last // 2x the centre; rows compare equal either way
+		return first + last, true // 2x the centre; rows compare equal either way
 	}
 
-	// Every inactive row: the tools, and the collapse action (never active).
-	rows := make([]string, 0, len(a.Tools)+1)
-	for _, tool := range a.Tools {
-		rows = append(rows, tool.Name())
+	measure := func(label string) map[string]int {
+		t.Helper()
+		found := map[string]int{}
+		for _, row := range a.railRows() {
+			if row.Header {
+				continue
+			}
+			name := a.Tools[row.Tool].Name()
+			if value, ok := centre(name); ok {
+				found[name] = value
+			}
+		}
+		if value, ok := centre("收起侧栏"); ok {
+			found["收起侧栏"] = value
+		}
+		if len(found) < 3 {
+			t.Fatalf("%s: only %d rows measurable: %v", label, len(found), found)
+		}
+		return found
 	}
-	rows = append(rows, "收起侧栏")
-	want := centre(rows[0])
-	for _, name := range rows[1:] {
-		if got := centre(name); got > want+4 || got < want-4 {
-			t.Errorf("%q plate centre = %v, want %v (row misaligned)", name, got/2.0, want/2.0)
+
+	compare := func(label string, found map[string]int) {
+		t.Helper()
+		var want int
+		first := true
+		for _, value := range found {
+			if first {
+				want, first = value, false
+				continue
+			}
+			if value > want+4 || value < want-4 {
+				t.Errorf("%s: a plate centre is %v, want %v (row misaligned)", label, float64(value)/2, float64(want)/2)
+			}
 		}
 	}
 
-	// Collapsed: the labels are gone and the plates centre in the strip, one
-	// centre for every row. The collapse action renames itself on the way.
+	compare("open", measure("open"))
+
+	// Collapsed: the labels are gone and the plates centre in the strip, one centre
+	// for every row. The footer action renames itself on the way.
 	a.railCollapsed = true
 	for i := 0; i < 40; i++ {
 		tt.Advance(16 * time.Millisecond)
 		tt.Frame()
 	}
-	rows[len(rows)-1] = "展开侧栏"
-	want = centre(rows[0])
-	for _, name := range rows[1:] {
-		if got := centre(name); got > want+4 || got < want-4 {
-			t.Errorf("collapsed %q plate centre = %v, want %v", name, got/2.0, want/2.0)
+	found := map[string]int{}
+	for _, row := range a.railRows() {
+		if row.Header {
+			continue
+		}
+		name := a.Tools[row.Tool].Name()
+		if value, ok := centre(name); ok {
+			found[name] = value
 		}
 	}
+	if value, ok := centre("展开侧栏"); ok {
+		found["展开侧栏"] = value
+	}
+	if len(found) < 3 {
+		t.Fatalf("collapsed: only %d rows measurable: %v", len(found), found)
+	}
+	compare("collapsed", found)
 }
 
 // diffRGBA is the largest channel difference of two pixels.

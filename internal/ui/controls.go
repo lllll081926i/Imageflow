@@ -256,6 +256,30 @@ func switchField(c *myui.Context, on *bool, text string) {
 	})
 }
 
+// ghostButtonIn draws a secondary action without an App receiver, so a page that
+// stores its actions in a table can build one from a value.
+func ghostButtonIn(c *myui.Context, st style, text string, icon *myui.SVG, onClick func()) myui.Element {
+	btn := myui.ButtonBase(c).Height(32).PaddingX(11).Radius(st.RadiusPill).Gap(5).
+		AlignItems(myui.Center).Cursor(myui.CursorPointer).Label(text).
+		Transition(motion(springTap)).Border(1, st.Divider).Background(st.Card)
+	switch {
+	case btn.Pressed():
+		btn.Background(st.DividerTop).Border(1, st.BrandDeep).Scale(0.98, 0.98)
+	case btn.Hovered():
+		btn.Background(st.Recessed).Border(1, st.Brand)
+	}
+	btn.Children(func() {
+		if icon != nil {
+			myui.Icon(c, icon).Width(13).Height(13).TextColor(st.TextSub)
+		}
+		myui.Text(c, text).FontSize(12).TextColor(st.Text).NoWrap()
+	})
+	if btn.Clicked() && onClick != nil {
+		onClick()
+	}
+	return btn
+}
+
 // colorField is a swatch and a hex field, side by side and the same height.
 //
 // The framework's ColorWell is 36×20 by default while a text field here is 38
@@ -265,8 +289,11 @@ func switchField(c *myui.Context, on *bool, text string) {
 // the pair.
 func colorField(c *myui.Context, value *myui.Color) {
 	st := styles(c)
-	hex := colorTextFor(value)
-	myui.Row(c).FillWidth().Height(38).AlignItems(myui.Center).Gap(8).Children(func() {
+	row := myui.Row(c).FillWidth().Height(38).AlignItems(myui.Center).Gap(8)
+	hex := myui.Local(row, "color-text", func() colorText { return colorText{} })
+	hex.dst = value
+	hex.sync()
+	row.Children(func() {
 		myui.ColorWell(c, value).Size(58, 38).Justify(myui.Center).
 			AlignItems(myui.Center).Radius(st.RadiusControl).
 			Background(st.Recessed).Border(1, st.Divider)
@@ -286,24 +313,6 @@ type colorText struct {
 	value string
 	last  myui.Color
 	ready bool
-}
-
-// colorFields keeps one binding per colour, keyed by the colour's own address.
-//
-// A fresh binding per frame lost the text immediately: every frame started with an
-// empty string, so the field always showed the placeholder instead of the current
-// colour, and a half-typed code could never survive to the next frame. The tools
-// keep their colours as struct fields, so the address is stable for the life of
-// the page. Only the render pass touches this map.
-var colorFields = map[*myui.Color]*colorText{}
-
-func colorTextFor(value *myui.Color) *colorText {
-	if field, ok := colorFields[value]; ok {
-		return field
-	}
-	field := &colorText{dst: value}
-	colorFields[value] = field
-	return field
 }
 
 // sync reconciles the text and the colour, in this order: a colour changed from

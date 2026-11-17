@@ -1,0 +1,7 @@
+{
+  "Replace": {
+    "D:\\Code\\Imageflow\\internal\\engine\\audit_independent_test.go": "D:\\Code\\Imageflow\\docs\\reviews\\2026-11-17-independent\\engine_test.go.txt",
+    "D:\\Code\\Imageflow\\internal\\ui\\audit_independent_test.go": "D:\\Code\\Imageflow\\docs\\reviews\\2026-11-17-independent\\ui_test.go.txt",
+    "D:\\Code\\Imageflow\\internal\\upscale\\audit_independent_test.go": "D:\\Code\\Imageflow\\docs\\reviews\\2026-11-17-independent\\upscale_test.go.txt"
+  }
+}

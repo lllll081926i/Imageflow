@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // ConflictStrategy mirrors ImageFlow's output conflict policies.
@@ -32,11 +33,24 @@ type Settings struct {
 	UITransparency          bool             `json:"ui_transparency"`
 	UIReducedMotion         bool             `json:"ui_reduced_motion"`
 	BackgroundRunning       bool             `json:"background_running"`
-	// RailOrder is the sidebar's row order: position → index into Tools. It is a
-	// permutation, so a tool keeps its identity, its page and its selection while
-	// only its position changes. A missing or stale list falls back to the natural
-	// order.
+	AIEnginePath            string           `json:"ai_engine_path"`
+	AIModelsDir             string           `json:"ai_models_dir"`
+	AIModelSource           string           `json:"ai_model_source"`
+	AIModelMirror           string           `json:"ai_model_mirror"`
+	AIModelProxyMode        string           `json:"ai_model_proxy_mode"`
+	AIModelProxyURL         string           `json:"ai_model_proxy_url"`
+	// RailOrder is the sidebar's row order as legacy tool indexes: position →
+	// index into the v3.1.0 tool list. It is read only to migrate a file written
+	// before stable identifiers existed; RailOrderIDs is what the app writes.
 	RailOrder []int `json:"rail_order,omitempty"`
+	// RailOrderIDs is the sidebar order as stable tool identifiers. A tool keeps
+	// its identifier across renames, insertions and reorders, so adding a page
+	// never silently reinterpretes a saved permutation.
+	RailOrderIDs []string `json:"rail_order_ids,omitempty"`
+	// RailCollapsedGroups holds the sidebar sections the user folded away, by group
+	// key. Folding is a preference about reading, so it survives a restart; a group
+	// missing from this list is open.
+	RailCollapsedGroups []string `json:"rail_collapsed_groups,omitempty"`
 	// Collage keeps the collage page's parameters across sessions: a template, a
 	// canvas ratio and a set of annotations take minutes to put together, and
 	// losing them on every launch made the page expensive to use.
@@ -145,6 +159,7 @@ func DefaultConcurrency() int {
 
 // Default returns the settings a fresh install uses.
 func Default() Settings {
+	executable, _ := os.Executable()
 	return Settings{
 		MaxConcurrency:          DefaultConcurrency(),
 		OutputPrefix:            "IF",
@@ -155,6 +170,11 @@ func Default() Settings {
 		RememberWindowState:     true,
 		UITransparency:          true,
 		Collage:                 DefaultCollage(),
+		AIModelsDir:             resolveModelDirectory("", executable, ""),
+		AIModelSource:           "github",
+		AIModelMirror:           "https://ghfast.top/",
+		AIModelProxyMode:        "system",
+		AIModelProxyURL:         "http://127.0.0.1:7890",
 	}
 }
 
@@ -190,6 +210,22 @@ func Load() Settings {
 }
 
 func (s *Settings) normalize() {
+	defaults := Default()
+	executable, _ := os.Executable()
+	configurationPath, _ := Path()
+	s.AIModelsDir = resolveModelDirectory(s.AIModelsDir, executable, configurationPath)
+	if s.AIModelSource != "github" && s.AIModelSource != "mirror" {
+		s.AIModelSource = defaults.AIModelSource
+	}
+	if s.AIModelMirror == "" {
+		s.AIModelMirror = defaults.AIModelMirror
+	}
+	if s.AIModelProxyMode != "system" && s.AIModelProxyMode != "custom" && s.AIModelProxyMode != "direct" {
+		s.AIModelProxyMode = defaults.AIModelProxyMode
+	}
+	if s.AIModelProxyURL == "" {
+		s.AIModelProxyURL = defaults.AIModelProxyURL
+	}
 	if s.MaxConcurrency < 1 || s.MaxConcurrency > 32 {
 		s.MaxConcurrency = DefaultConcurrency()
 	}
@@ -299,6 +335,9 @@ func Save(s Settings) error {
 		return err
 	}
 	s.normalize()
+	if sameModelDirectory(s.AIModelsDir, Default().AIModelsDir) {
+		s.AIModelsDir = "models"
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -324,6 +363,27 @@ func Save(s Settings) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+func resolveModelDirectory(saved, executable, configurationPath string) string {
+	if executable == "" {
+		return ""
+	}
+	defaultPath := filepath.Join(filepath.Dir(executable), "models")
+	if saved == "" || saved == "models" || configurationPath != "" && sameModelDirectory(saved, filepath.Join(filepath.Dir(configurationPath), "models")) {
+		return defaultPath
+	}
+	if !filepath.IsAbs(saved) {
+		return filepath.Join(filepath.Dir(executable), saved)
+	}
+	return saved
+}
+
+func sameModelDirectory(first, second string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(first), filepath.Clean(second))
+	}
+	return filepath.Clean(first) == filepath.Clean(second)
 }
 
 // PushRecent returns the list with value moved to the front, kept unique on a

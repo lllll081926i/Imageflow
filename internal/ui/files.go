@@ -323,7 +323,7 @@ func (a *App) Start() {
 	if tool == nil {
 		return
 	}
-	if a.Session.Len() == 0 {
+	if a.Session.Len() == 0 && !toolRunsWithoutList(tool) {
 		a.SetStatus("先添加图片")
 		return
 	}
@@ -340,6 +340,10 @@ func (a *App) Start() {
 	a.mu.Unlock()
 	a.SetProgress(0, "准备中")
 	tool.Run(a)
+}
+
+func toolRunsWithoutList(tool Tool) bool {
+	return tool != nil && (tool.ID() == ToolCompare || tool.ID() == ToolAnalysis || tool.ID() == ToolStudio)
 }
 
 // Cancel asks the running batch to stop taking new items.
