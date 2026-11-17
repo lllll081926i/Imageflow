@@ -1,5 +1,11 @@
 # 发布前验收（2026-11-17）
 
+## 发布结果
+
+`3.2.0` 已于 2026-11-17 发布：[下载页面](https://github.com/lllll081926i/Imageflow/releases/tag/v3.2.0)。标签源码为 `813237a`。正式流程 [Actions 44028916457](https://github.com/lllll081926i/Imageflow/actions/runs/44028916457) 的六平台构建、Windows 安装生命周期验收及发布均成功。
+
+发布后核对：33 个发行文件的 GitHub SHA256 与 `SHA256SUMS` 一致；下载的校验清单及六份更新清单与 GitHub 文件摘要一致。使用应用内置公钥校验六个完整更新包 SHA256 的 Ed25519 签名，全部通过。未重新下载全部压缩包，压缩包摘要使用 GitHub 上传记录与发布校验清单交叉核对。正式 Windows 验收证据保存在 Actions 的 `windows-acceptance` artifact，本地副本为 `build/release-acceptance-20261117/cloud-release/`。
+
 ## 验收范围
 
 验收当前工作区的 25 个工具、共享导航和设置、文件安全、可选 AI 组件、原生 Windows 启动及打包。不把路线图延期功能伪装为已交付能力。用户后续授权：验收通过后提交、推送并发布 `3.2.0`，通过云端构建生成发行文件。
