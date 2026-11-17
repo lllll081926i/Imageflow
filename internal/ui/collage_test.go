@@ -327,8 +327,11 @@ func TestCollageMarkToolsAddMarks(t *testing.T) {
 		if frac[0] > 0.6 {
 			frac[0], frac[1] = 0.1, 0.75
 		}
-		fromX := box.Bounds.X + box.Bounds.W*float32(frac[0])
-		fromY := box.Bounds.Y + box.Bounds.H*float32(frac[1])
+		aspect := tool.aspect()
+		canvasWidth, canvasHeight := collage.CanvasSize(aspect.W, aspect.H, 1000)
+		picture := previewFitRect(box.Bounds, canvasWidth, canvasHeight)
+		fromX := picture.X + picture.W*float32(frac[0])
+		fromY := picture.Y + picture.H*float32(frac[1])
 		toX := fromX + 40
 		toY := fromY + 30
 		tt.Press(fromX, fromY)

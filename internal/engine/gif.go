@@ -372,9 +372,6 @@ func exportFrames(req GIFRequest) Result {
 	if format == "" {
 		format = "png"
 	}
-	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
-		return Fail("WRITE_FAILED", err.Error())
-	}
 	start, end := req.FrameStart, req.FrameEnd
 	if start < 0 {
 		start = 0
@@ -384,6 +381,9 @@ func exportFrames(req GIFRequest) Result {
 	}
 	if start >= end {
 		return Fail("GIF_BAD_REQUEST", fmt.Sprintf("帧范围无效: %d-%d（共 %d 帧）", start, end, len(animation.Frames)))
+	}
+	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
+		return Fail("WRITE_FAILED", err.Error())
 	}
 	base := strings.TrimSuffix(filepath.Base(req.InputPath), filepath.Ext(req.InputPath))
 	var written []string

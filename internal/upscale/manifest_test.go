@@ -79,10 +79,10 @@ func TestManifestRejectsUnsafeAndInvalidEntries(t *testing.T) {
 	}
 }
 
-func TestAnimeVideoModelUsesNativeFileSuffix(t *testing.T) {
+func TestHighFidelityModelUsesActualResourceName(t *testing.T) {
 	model := defaultRegistry()[2]
-	if model.engineName() != "realesr-animevideov3" || model.ParamFile != "realesr-animevideov3-x2.param" || model.BinFile != "realesr-animevideov3-x2.bin" {
-		t.Fatalf("动漫视频模型协议不正确：%+v", model)
+	if model.engineName() != "hfa2k-4x" || model.ParamFile != "hfa2k-4x.param" || model.BinFile != "hfa2k-4x.bin" {
+		t.Fatalf("High Fidelity 模型协议不正确：%+v", model)
 	}
 }
 

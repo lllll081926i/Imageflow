@@ -170,11 +170,9 @@ func TestNavigationSwitchesTools(t *testing.T) {
 	if !tt.HasText("水印内容为空") && !tt.HasText("平铺重复") {
 		t.Errorf("watermark controls missing: %v", tt.Texts())
 	}
-	// 转 PDF lives in the last group, below the visible part of the scrolling rail.
-	// A grouped sidebar is reachable through search as well as by scrolling, so the
-	// test drives the path a user would take when the row is not on screen. The
-	// search must leave the row where the viewport can reach it: a filtered list is
-	// short, so its single result is at the top.
+	if err := tt.Click("首页"); err != nil {
+		t.Fatal(err)
+	}
 	a.searchQuery = "pdf"
 	tt.Frame()
 	for i := 0; i < 20; i++ {

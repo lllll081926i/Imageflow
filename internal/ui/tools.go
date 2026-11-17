@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	myui "github.com/egoist/mygo/ui"
@@ -251,7 +252,7 @@ func (t *ResizeTool) Panel(c *myui.Context, a *App) {
 			if len(sizes) == 0 {
 				warnAlert(c, "没有解析出有效尺寸")
 			} else {
-				myui.Row(c).FillWidth().Gap(6).Children(func() {
+				myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 					for _, size := range sizes {
 						statusPill(c, size.String(), styles(c).Brand)
 					}
@@ -288,7 +289,7 @@ func (t *ResizeTool) Panel(c *myui.Context, a *App) {
 		} else if selected < len(opts) {
 			t.format = opts[selected]
 		}
-		if !(t.mode == 3 && t.format == "") {
+		if qualityRelevant(a, t.format) && !(t.mode == 3 && t.format == "") {
 			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
 		}
 	})
@@ -321,7 +322,10 @@ func (t *ResizeTool) Run(a *App) {
 		}
 		presetHex, quality := t.presetHex, t.quality
 		a.runBatch("多尺寸", func(index int, item batch.Item) engine.Result {
-			dir := outputDirFor(a.Session.SettingsSnapshot(), item, "_sizes")
+			dir, skipped := a.outputDirectoryFor(item, "_sizes")
+			if skipped {
+				return engine.Skip("目标目录已存在")
+			}
 			return engine.ResizeToPresets(engine.PresetRequest{
 				InputPath:    item.Path,
 				OutputDir:    dir,
@@ -411,7 +415,9 @@ func (t *GridTool) Panel(c *myui.Context, a *App) {
 		if selected < len(opts) {
 			t.format = opts[selected]
 		}
-		sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		if qualityRelevant(a, t.format) {
+			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		}
 	})
 }
 
@@ -423,7 +429,10 @@ func (t *GridTool) Run(a *App) {
 	t.ensure()
 	grid, format, quality := t.grid, t.format, t.quality
 	a.runBatch("切图", func(index int, item batch.Item) engine.Result {
-		dir := outputDirFor(a.Session.SettingsSnapshot(), item, "_grid")
+		dir, skipped := a.outputDirectoryFor(item, "_grid")
+		if skipped {
+			return engine.Skip("目标目录已存在")
+		}
 		return engine.CutGrid(engine.GridRequest{
 			InputPath:    item.Path,
 			OutputDir:    dir,
@@ -489,7 +498,9 @@ func (t *LayoutTool) Panel(c *myui.Context, a *App) {
 		if selected < len(opts) {
 			t.format = opts[selected]
 		}
-		sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		if qualityRelevant(a, t.format) {
+			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		}
 	})
 }
 
@@ -501,7 +512,10 @@ func (t *LayoutTool) Run(a *App) {
 	t.ensure()
 	square, rows, cols, format, quality := t.square, t.rows, t.cols, t.format, t.quality
 	a.runBatch("布局", func(index int, item batch.Item) engine.Result {
-		dir := outputDirFor(a.Session.SettingsSnapshot(), item, "_layout")
+		dir, skipped := a.outputDirectoryFor(item, "_layout")
+		if skipped {
+			return engine.Skip("目标目录已存在")
+		}
 		mode := "cover"
 		if square {
 			mode = "square"
@@ -567,7 +581,11 @@ func (t *StitchTool) Panel(c *myui.Context, a *App) {
 		t.vertical = selected
 		grid2(c, func() {
 			myui.Column(c).Gap(5).Children(func() {
-				label(c, "目标长边（0 = 自动）")
+				if t.vertical == 0 {
+					label(c, "统一宽度（0 = 自动）")
+				} else {
+					label(c, "统一高度（0 = 自动）")
+				}
 				numberField(c, &t.target, 0, 16000, 16, "自动")
 			})
 			myui.Column(c).Gap(5).Children(func() {
@@ -586,7 +604,9 @@ func (t *StitchTool) Panel(c *myui.Context, a *App) {
 	})
 	sectionCard(c, "边框", func() {
 		switchField(c, &t.borderMode, "单张图加边框")
-		sliderRow(c, "边框宽度", &t.border, 0, 200, 1, "%.0f px")
+		if t.borderMode {
+			sliderRow(c, "边框宽度", &t.border, 0, 200, 1, "%.0f px")
+		}
 	})
 	sectionCard(c, "输出", func() {
 		opts := []string{"png", "jpg", "webp"}
@@ -595,7 +615,9 @@ func (t *StitchTool) Panel(c *myui.Context, a *App) {
 		if selected < len(opts) {
 			t.format = opts[selected]
 		}
-		sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		if qualityRelevant(a, t.format) {
+			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		}
 	})
 }
 
@@ -716,7 +738,7 @@ func (t *WatermarkTool) Name() string    { return "批量水印" }
 func (t *WatermarkTool) Icon() *myui.SVG { return lucide.Stamp() }
 
 func (t *WatermarkTool) ensure() {
-	if t.text == "" {
+	if !t.initialised && t.text == "" {
 		t.text = "ImageFlow"
 	}
 	if t.fontName == "" {
@@ -764,7 +786,6 @@ func (t *WatermarkTool) ensure() {
 
 func (t *WatermarkTool) Panel(c *myui.Context, a *App) {
 	t.ensure()
-	st := styles(c)
 	sectionCard(c, "文字", func() {
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "内容（支持换行）")
@@ -816,31 +837,7 @@ func (t *WatermarkTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "位置", func() {
-		positions := []string{"tl", "tc", "tr", "cl", "c", "cr", "bl", "bc", "br"}
-		myui.Row(c).FillWidth().Gap(6).Children(func() {
-			for _, p := range positions {
-				pos := p
-				active := t.position == pos
-				btn := myui.Row(c).Grow(1).Height(30).Radius(st.RadiusPill).
-					Justify(myui.Center).AlignItems(myui.Center).
-					Cursor(myui.CursorPointer).Label(pos).Transition(motion(springTap))
-				if active {
-					btn.Gradient(st.Brand, st.BrandGradientTo, 90)
-				} else {
-					btn.Border(1, st.Divider).Background(st.Recessed)
-				}
-				btn.Children(func() {
-					col := st.TextSub
-					if active {
-						col = myui.RGB(255, 255, 255)
-					}
-					myui.Text(c, positionGlyph(pos)).FontSize(12).TextColor(col)
-				})
-				if btn.Clicked() {
-					t.position = pos
-				}
-			}
-		})
+		anchorPicker(c, t.position, func(position string) { t.position = position })
 		sliderRow(c, "边距", &t.margin, 0, 500, 1, "%.0f px")
 		switchField(c, &t.tiled, "平铺重复")
 		if t.tiled {
@@ -851,9 +848,11 @@ func (t *WatermarkTool) Panel(c *myui.Context, a *App) {
 		}
 	})
 
-	sectionCard(c, "输出", func() {
-		sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
-	})
+	if qualityRelevant(a, "") {
+		sectionCard(c, "输出", func() {
+			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+		})
+	}
 }
 
 func positionGlyph(p string) string {
@@ -879,21 +878,43 @@ func positionGlyph(p string) string {
 	}
 }
 
+func anchorPosition(index int) string {
+	if index < 0 || index >= len(engine.CropAnchors) {
+		return "c"
+	}
+	return engine.CropAnchors[index]
+}
+
+func anchorPicker(c *myui.Context, selected string, onSelect func(string)) {
+	st := styles(c)
+	names := []string{"左上", "上中", "右上", "左中", "居中", "右中", "左下", "下中", "右下"}
+	myui.Grid(c).Width(132).Columns(3).Gap(4).Children(func() {
+		for index, position := range engine.CropAnchors {
+			c.Key(position)
+			button := myui.ButtonBase(c).FillWidth().Height(32).Radius(st.RadiusControl).
+				Label(names[index]).Tooltip(names[index]).Cursor(myui.CursorPointer).FocusRingColor(st.Brand)
+			color := st.TextSub
+			if position == selected {
+				button.Background(st.Brand)
+				color = myui.RGB(255, 255, 255)
+			} else {
+				button.Background(st.Recessed).Border(1, st.Divider)
+			}
+			button.Center().Children(func() {
+				myui.Text(c, positionGlyph(position)).FontSize(13).TextColor(color)
+			})
+			button.OnClick(func() { onSelect(position) })
+		}
+	})
+}
+
 func (t *WatermarkTool) PreviewCaption(a *App) string {
 	return truncate(strings.SplitN(t.text, "\n", 2)[0], 18)
 }
 
 func (t *WatermarkTool) Run(a *App) {
 	t.ensure()
-	sizeMode := "px"
-	if t.sizeMode == 1 {
-		sizeMode = "percent"
-	}
-	text, fontName := t.text, t.fontName
-	fontSize, colorHex := t.fontSize, t.colorHex
-	opacity, rotation, position, margin := t.opacity, t.rotation, t.position, t.margin
-	tiled, tileGapX, tileGapY := t.tiled, t.tileGapX, t.tileGapY
-	stroke, strokeHex, shadow, quality := t.stroke, t.strokeHex, t.shadow, t.quality
+	request := t.request()
 	a.runBatch("水印", func(index int, item batch.Item) engine.Result {
 		ext := strings.TrimPrefix(strings.ToLower(itemPathExt(item.Path)), ".")
 		if ext == "" {
@@ -903,27 +924,24 @@ func (t *WatermarkTool) Run(a *App) {
 		if skipped {
 			return engine.Skip("目标已存在")
 		}
-		return engine.Watermark(engine.WatermarkRequest{
-			InputPath:  item.Path,
-			OutputPath: out,
-			Text:       text,
-			FontName:   fontName,
-			SizeMode:   sizeMode,
-			FontSize:   int(fontSize),
-			Color:      colorHex,
-			Opacity:    int(opacity),
-			Rotation:   int(rotation),
-			Position:   position,
-			Margin:     int(margin),
-			Tiled:      tiled,
-			TileGapX:   int(tileGapX),
-			TileGapY:   int(tileGapY),
-			StrokeWide: int(stroke),
-			StrokeColr: strokeHex,
-			Shadow:     shadow,
-			Quality:    int(quality),
-		})
+		req := request
+		req.InputPath, req.OutputPath = item.Path, out
+		return engine.Watermark(req)
 	})
+}
+
+func (t *WatermarkTool) request() engine.WatermarkRequest {
+	sizeMode := "px"
+	if t.sizeMode == 1 {
+		sizeMode = "percent"
+	}
+	return engine.WatermarkRequest{
+		Text: t.text, FontName: t.fontName, SizeMode: sizeMode,
+		FontSize: int(t.fontSize), Color: t.colorHex, Opacity: int(t.opacity),
+		Rotation: int(t.rotation), Position: t.position, Margin: int(t.margin),
+		Tiled: t.tiled, TileGapX: int(t.tileGapX), TileGapY: int(t.tileGapY),
+		StrokeWide: int(t.stroke), StrokeColr: t.strokeHex, Shadow: t.shadow, Quality: int(t.quality),
+	}
 }
 
 // PaletteTool extracts colours.
@@ -1107,7 +1125,9 @@ func (t *PDFTool) Panel(c *myui.Context, a *App) {
 		})
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "打开密码（留空不加密）")
-			textField(c, &t.password, "可选")
+			input := myui.TextInput(c, &t.password).Password().Label("打开密码").
+				FillWidth().Height(38).PaddingX(12).Radius(styles(c).RadiusControl).FontSize(13).Placeholder("可选")
+			styleFieldInput(c, input, false)
 		})
 	})
 }
@@ -1222,6 +1242,9 @@ var gifActions = []string{"倒放", "变速", "压缩", "缩放", "导出帧"}
 var gifActionKeys = []string{"reverse", "change_speed", "compress", "resize", "export_frames"}
 
 func (t *GIFTool) ensure() {
+	if t.action < 0 || t.action >= len(gifActions) {
+		t.action = 0
+	}
 	if t.speed == 0 {
 		t.speed = 1
 	}
@@ -1248,7 +1271,7 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 		selected := t.action
 		segmented(c, &selected, gifActions)
 		t.action = selected
-		switch gifActionKeys[maxInt0(selected)] {
+		switch gifActionKeys[selected] {
 		case "change_speed":
 			sliderRow(c, "倍速", &t.speed, 0.1, 5, 0.1, "%.1f×")
 		case "compress":
@@ -1268,18 +1291,21 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 		case "export_frames":
 			grid2(c, func() {
 				myui.Column(c).Gap(5).Children(func() {
-					label(c, "起始帧（0 = 第一帧）")
+					label(c, "起始帧（从 0 计）")
 					numberField(c, &t.frameStart, 0, 9999, 1, "0")
 				})
 				myui.Column(c).Gap(5).Children(func() {
-					label(c, "结束帧（0 = 到末尾）")
+					label(c, "结束帧（不含，0 = 末尾）")
 					numberField(c, &t.frameEnd, 0, 9999, 1, "0")
 				})
 			})
+			if t.frameEnd > 0 && t.frameEnd <= t.frameStart {
+				warnAlert(c, "结束帧必须大于起始帧")
+			}
 		}
 		// 导出帧 writes still PNGs, so neither the loop count nor the container
 		// applies; showing them promised settings the action cannot honour.
-		if gifActionKeys[maxInt0(selected)] != "export_frames" {
+		if gifActionKeys[selected] != "export_frames" {
 			myui.Column(c).Gap(5).Children(func() {
 				label(c, "循环次数（0 = 无限）")
 				numberField(c, &t.loop, 0, 100, 1, "0")
@@ -1287,7 +1313,7 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 		}
 	})
 
-	if gifActionKeys[maxInt0(t.action)] == "export_frames" {
+	if gifActionKeys[t.action] == "export_frames" {
 		return
 	}
 
@@ -1305,24 +1331,26 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 	})
 }
 
-func maxInt0(v int) int {
-	if v < 0 {
-		return 0
-	}
-	return v
-}
-
 func (t *GIFTool) PreviewCaption(a *App) string {
-	return gifActions[maxInt0(t.action)]
+	t.ensure()
+	return gifActions[t.action]
 }
 
 func (t *GIFTool) Run(a *App) {
 	t.ensure()
-	action := gifActionKeys[maxInt0(t.action)]
+	action := gifActionKeys[t.action]
 	if action == "export_frames" {
 		frameStart, frameEnd := t.frameStart, t.frameEnd
+		if frameEnd > 0 && frameEnd <= frameStart {
+			a.finishRun()
+			a.SetStatus("结束帧必须大于起始帧")
+			return
+		}
 		a.runBatch("导出帧", func(index int, item batch.Item) engine.Result {
-			dir := outputDirFor(a.Session.SettingsSnapshot(), item, "_frames")
+			dir, skipped := a.outputDirectoryFor(item, "_frames")
+			if skipped {
+				return engine.Skip("目标目录已存在")
+			}
 			return engine.RunGIF(engine.GIFRequest{
 				Action:       "export_frames",
 				InputPath:    item.Path,
@@ -1363,26 +1391,27 @@ func (t *GIFTool) Run(a *App) {
 
 // RichTextTool renders structured content to an image.
 type RichTextTool struct {
-	width      float64
-	padding    float64
-	fontSize   float64
-	lineHeight float64
-	theme      string
-	fontName   string
-	background myui.Color
-	bgHex      string
-	textColor  myui.Color
-	textHex    string
-	headingCol myui.Color
-	headingHex string
-	accentCol  myui.Color
-	accentHex  string
-	heading    string
-	body       string
-	quote      string
-	listItems  string
-	imagePath  string
-	imagePct   float64
+	initialised bool
+	width       float64
+	padding     float64
+	fontSize    float64
+	lineHeight  float64
+	theme       string
+	fontName    string
+	background  myui.Color
+	bgHex       string
+	textColor   myui.Color
+	textHex     string
+	headingCol  myui.Color
+	headingHex  string
+	accentCol   myui.Color
+	accentHex   string
+	heading     string
+	body        string
+	quote       string
+	listItems   string
+	imagePath   string
+	imagePct    float64
 }
 
 func (t *RichTextTool) ID() string      { return ToolRichText }
@@ -1390,6 +1419,10 @@ func (t *RichTextTool) Name() string    { return "富文本制图" }
 func (t *RichTextTool) Icon() *myui.SVG { return lucide.Type() }
 
 func (t *RichTextTool) ensure() {
+	if t.initialised {
+		return
+	}
+	t.initialised = true
 	if t.width == 0 {
 		t.width = 800
 	}
@@ -1430,7 +1463,7 @@ func (t *RichTextTool) ensure() {
 		t.heading = "ImageFlow"
 	}
 	if t.body == "" {
-		t.body = "在 Go 与 Lobe 组件上重写的原生图像工作台。"
+		t.body = "记录灵感，分享此刻。"
 	}
 	if t.imagePct == 0 {
 		t.imagePct = 100
@@ -1463,7 +1496,9 @@ func (t *RichTextTool) Panel(c *myui.Context, a *App) {
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "配图路径（可选）")
 			myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
-				textField(c, &t.imagePath, "一张图片的完整路径")
+				myui.Box(c).Grow(1).MinWidth(0).Children(func() {
+					textField(c, &t.imagePath, "一张图片的完整路径")
+				})
 				a.ghostButton(c, st, "选择", lucide.Image(), func() {
 					a.pickRichTextImage(&t.imagePath)
 				})
@@ -1502,7 +1537,7 @@ func (t *RichTextTool) Panel(c *myui.Context, a *App) {
 		themes := engine.RichTextThemes
 		selected := indexOf(engine.RichTextThemeKeys, t.theme)
 		segmented(c, &selected, themes)
-		if selected >= 0 && selected < len(engine.RichTextThemeKeys) {
+		if selected >= 0 && selected < len(engine.RichTextThemeKeys) && t.theme != engine.RichTextThemeKeys[selected] {
 			t.theme = engine.RichTextThemeKeys[selected]
 			t.applyRichTextTheme()
 		}
@@ -1615,47 +1650,71 @@ func (t *RichTextTool) blocks() []engine.RichTextBlock {
 
 func (t *RichTextTool) Run(a *App) {
 	t.ensure()
-	blocks := t.blocks()
-	width, padding := t.width, t.padding
-	fontSize, lineHeight, theme, fontName := t.fontSize, t.lineHeight, t.theme, t.fontName
-	bgHex, textHex, headingHex, accentHex := t.bgHex, t.textHex, t.headingHex, t.accentHex
+	request := t.request()
+	if a.Session.Len() == 0 {
+		if a.outputFolder() == "" {
+			a.finishRun()
+			a.SetStatus("先选择输出文件夹")
+			return
+		}
+		cancel := a.beginWholeList()
+		anchor := filepath.Join(a.outputFolder(), "richtext.png")
+		out, skipped := a.outputPathFor(batch.Item{Path: anchor}, "richtext", "png", 1)
+		if skipped {
+			a.finishRun()
+			a.endWholeList(cancel, nil)
+			a.SetStatus("制图已跳过：目标文件已存在")
+			return
+		}
+		request.OutputPath = out
+		go func() {
+			defer a.finishRun()
+			if cancel.Cancelled() {
+				a.endWholeList(cancel, nil)
+				return
+			}
+			result := engine.RenderRichText(request)
+			if a.endWholeList(cancel, nil, result) {
+				return
+			}
+			a.reportWhole(result, ToolRichText)
+			if result.Success && a.Session.SettingsSnapshot().OpenOutputOnComplete {
+				a.openCompletedPath(result.OutputPath)
+			}
+		}()
+		return
+	}
 	a.runBatch("制图", func(index int, item batch.Item) engine.Result {
 		out, skipped := a.outputPathFor(item, "richtext", "png", index+1)
 		if skipped {
 			return engine.Skip("目标已存在")
 		}
-		res := engine.RenderRichText(engine.RichTextRequest{
-			Blocks:       blocks,
-			OutputPath:   out,
-			OutputFormat: "png",
-			Width:        int(width),
-			Padding:      int(padding),
-			Background:   bgHex,
-			TextColor:    textHex,
-			HeadingColor: headingHex,
-			AccentColor:  accentHex,
-			FontSize:     int(fontSize),
-			LineHeight:   lineHeight,
-			Theme:        theme,
-			Family:       fontName,
-		})
-		if res.Success {
-			if img, err := engine.RenderRichTextImage(engine.RichTextRequest{
-				Blocks:       blocks,
-				Width:        int(width),
-				Padding:      int(padding),
-				Background:   bgHex,
-				TextColor:    textHex,
-				HeadingColor: headingHex,
-				AccentColor:  accentHex,
-				FontSize:     int(fontSize),
-				LineHeight:   lineHeight,
-				Theme:        theme,
-				Family:       fontName,
-			}); err == nil {
-				a.SetPreview(img)
-			}
-		}
-		return res
+		req := request
+		req.OutputPath = out
+		return engine.RenderRichText(req)
 	})
+}
+
+func (t *RichTextTool) request() engine.RichTextRequest {
+	return engine.RichTextRequest{
+		Blocks: t.blocks(), OutputFormat: "png", Width: int(t.width), Padding: int(t.padding),
+		Background: t.bgHex, TextColor: t.textHex, HeadingColor: t.headingHex, AccentColor: t.accentHex,
+		FontSize: int(t.fontSize), LineHeight: t.lineHeight, Family: t.fontName,
+	}
+}
+
+func qualityRelevant(a *App, format string) bool {
+	if format != "" {
+		return engine.QualityFormats[format]
+	}
+	rows := a.Session.Snapshot()
+	if len(rows) == 0 {
+		return true
+	}
+	for _, row := range rows {
+		if engine.QualityFormats[strings.TrimPrefix(strings.ToLower(filepath.Ext(row.Path)), ".")] {
+			return true
+		}
+	}
+	return false
 }

@@ -14,8 +14,6 @@ import (
 
 	myui "github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/lucide"
-
-	"github.com/lllll081926i/imageflow-go/internal/upscale"
 )
 
 // homeFavourites is the quick row: the pages an ordinary user opens to get one task
@@ -65,8 +63,7 @@ func (a *App) homeHeader(c *myui.Context, st style) {
 	})
 }
 
-// homeSearch is the landing page's search box: the same query the rail's compact box
-// edits, so the two never disagree.
+// homeSearch 仅搜索首页工具卡片。
 func (a *App) homeSearch(c *myui.Context, st style) {
 	row := myui.Row(c).FillWidth().Height(48).PaddingX(14).Gap(10).
 		AlignItems(myui.Center).Radius(st.RadiusControl).
@@ -95,7 +92,7 @@ func (a *App) homeSearchResults(c *myui.Context, st style) {
 	}
 	myui.Text(c, fmt.Sprintf("找到 %d 个工具", len(matches))).FontSize(12).
 		FontWeight(600).TextColor(st.TextSub)
-	myui.Grid(c).FillWidth().Columns(2).GapX(12).GapY(12).Children(func() {
+	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
 		for _, idx := range matches {
 			a.homeToolCard(c, st, idx)
 		}
@@ -105,7 +102,7 @@ func (a *App) homeSearchResults(c *myui.Context, st style) {
 // homeFavouriteRow is the quick row of the six most common jobs.
 func (a *App) homeFavouriteRow(c *myui.Context, st style) {
 	sectionTitle(c, st, "常用")
-	myui.Grid(c).FillWidth().Columns(3).GapX(12).GapY(12).Children(func() {
+	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
 		for _, id := range homeFavourites {
 			idx := a.toolIndex(id)
 			if idx < 0 {
@@ -124,7 +121,7 @@ func (a *App) homeGroups(c *myui.Context, st style) {
 			continue
 		}
 		sectionTitleIcon(c, st, group.Icon(), group.Label)
-		myui.Grid(c).FillWidth().Columns(3).GapX(12).GapY(12).Children(func() {
+		myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
 			for _, idx := range tools {
 				a.homeToolCard(c, st, idx)
 			}
@@ -146,11 +143,18 @@ func (a *App) toolsInGroup(key string) []int {
 	return out
 }
 
+func (a *App) homeColumns() int {
+	if a.windowWidth > 0 && a.windowWidth < 1180 {
+		return 2
+	}
+	return 3
+}
+
 // homeToolCard 显示可点击的工具图标与名称。
 func (a *App) homeToolCard(c *myui.Context, st style, idx int) {
 	tool := a.Tools[idx]
-	card := myui.ButtonBase(c).Key("home-card-" + tool.ID()).FillWidth().MinHeight(64).
-		Padding(12).Gap(8).Radius(st.RadiusPanel).
+	card := myui.ButtonBase(c).Key("home-card-" + tool.ID()).FillWidth().MinHeight(132).
+		Padding(20).Gap(14).Radius(st.RadiusPanel).
 		Cursor(myui.CursorPointer).Label(tool.Name()).
 		FocusRingColor(st.Brand).FocusRingOffset(2).
 		Transition(motion(springTap))
@@ -164,16 +168,16 @@ func (a *App) homeToolCard(c *myui.Context, st style, idx int) {
 		card.Background(st.Card).Border(1, st.Divider)
 	}
 	card.Children(func() {
-		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(9).Children(func() {
-			myui.Row(c).Size(30, 30).Shrink(0).Radius(st.RadiusPill).
+		myui.Column(c).FillWidth().Gap(14).Children(func() {
+			myui.Row(c).Size(44, 44).Shrink(0).Radius(st.RadiusControl).
 				Justify(myui.Center).AlignItems(myui.Center).
 				Background(featureTintPlate(idx, st)).Children(func() {
 				if icon := tool.Icon(); icon != nil {
-					myui.Icon(c, icon).Width(16).Height(16).
+					myui.Icon(c, icon).Width(24).Height(24).
 						TextColor(featureTint(idx, st))
 				}
 			})
-			myui.Text(c, tool.Name()).FontSize(13).FontWeight(600).
+			myui.Text(c, tool.Name()).FontSize(16).FontWeight(600).
 				TextColor(st.Text).SingleLine()
 		})
 	})
@@ -192,6 +196,11 @@ func (a *App) openTool(idx int) {
 	a.ShowHome = false
 	a.ShowSettings = false
 	a.searchQuery = ""
+	group := toolGroupKey(a.Tools[idx])
+	if a.collapsedGroups[group] {
+		a.collapsedGroups[group] = false
+		a.persistCollapsedGroups()
+	}
 	a.railRevealTool = idx
 	a.Invalidate()
 }
@@ -200,9 +209,16 @@ func (a *App) openTool(idx int) {
 // is installed. It is the honest counterpart of the AI card below it: a user who
 // clicks 放大 and finds "组件未安装" should have been told here first.
 func (a *App) homeComponentState(c *myui.Context, st style) {
-	models := upscale.RegistrySnapshot()
 	tint := st.TextDim
-	text := "AI 高清放大：未就绪"
+	text := "AI 高清放大：尚未检查"
+	for _, tool := range a.Tools {
+		if page, ok := tool.(*UpscaleTool); ok && page.detected {
+			text = "AI 高清放大：未就绪"
+			if page.busy {
+				text = "AI 高清放大：正在检查"
+			}
+		}
+	}
 	if a.upscaleAvailable() {
 		tint = st.Success
 		text = "AI 高清放大：引擎可用"
@@ -212,8 +228,7 @@ func (a *App) homeComponentState(c *myui.Context, st style) {
 		myui.Icon(c, lucide.Sparkles()).Width(14).Height(14).TextColor(tint)
 		myui.Text(c, text).FontSize(11).TextColor(st.TextSub)
 		myui.Spacer(c).Grow(1)
-		myui.Text(c, fmt.Sprintf("%d 个登记模型", len(models))).
-			FontSize(10.5).TextColor(st.TextDim)
+		a.ghostButton(c, st, "打开", lucide.ArrowUpRight(), func() { a.openTool(a.toolIndex(ToolUpscale)) })
 	})
 }
 
@@ -255,51 +270,5 @@ func (a *App) homeEntry(c *myui.Context, st style, labelAlpha float32) {
 		a.ShowHome = true
 		a.ShowSettings = false
 		a.searchQuery = ""
-	})
-}
-
-// railSearch is the sidebar's own filter box.
-//
-// In the collapsed strip it becomes a single icon button that opens the landing
-// page's full-width box: 72 DIP has no room for a text field, and a squeezed input
-// would be a control that cannot be used.
-func (a *App) railSearch(c *myui.Context, st style, labelAlpha float32) {
-	if labelAlpha <= 0.02 {
-		btn := myui.ButtonBase(c).Key("rail-search-icon").FillWidth().Height(34).
-			Radius(st.RadiusPill).Justify(myui.Center).AlignItems(myui.Center).
-			Cursor(myui.CursorPointer).Label("搜索工具")
-		if btn.Hovered() {
-			btn.Background(st.Recessed)
-		}
-		btn.Children(func() {
-			myui.Icon(c, lucide.Search()).Width(16).Height(16).TextColor(st.TextSub)
-		})
-		if btn.Clicked() {
-			a.ShowHome = true
-			a.ShowSettings = false
-		}
-		return
-	}
-	row := myui.Row(c).FillWidth().Height(34).PaddingX(8).Gap(6).
-		AlignItems(myui.Center).Radius(st.RadiusPill).
-		Background(st.Recessed).Border(1, st.Divider)
-	row.Opacity(labelAlpha)
-	row.Children(func() {
-		myui.Icon(c, lucide.Search()).Width(13).Height(13).TextColor(st.TextDim)
-		input := myui.TextInput(c, &a.searchQuery).Grow(1).Height(30).
-			Border(0, myui.RGBA(0, 0, 0, 0)).Background(myui.RGBA(0, 0, 0, 0)).FontSize(12).
-			Placeholder("搜索工具")
-		input.PlaceholderColor(st.TextDim).FocusRing(false)
-		if strings.TrimSpace(a.searchQuery) != "" {
-			btn := myui.ButtonBase(c).Key("rail-search-clear").Size(18, 18).
-				Radius(999).Justify(myui.Center).AlignItems(myui.Center).
-				Cursor(myui.CursorPointer).Label("清除搜索")
-			btn.Children(func() {
-				myui.Icon(c, lucide.X()).Width(11).Height(11).TextColor(st.TextDim)
-			})
-			if btn.Clicked() {
-				a.searchQuery = ""
-			}
-		}
 	})
 }

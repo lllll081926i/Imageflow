@@ -2,18 +2,22 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"image/png"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/lllll081926i/imageflow-go/internal/appcache"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 	appui "github.com/lllll081926i/imageflow-go/internal/ui"
+	"github.com/lllll081926i/imageflow-go/internal/upscale"
 )
 
 // capturePath is set by -capture: the app opens its window, saves a PNG of what
@@ -43,6 +47,22 @@ func main() {
 	}
 
 	cfg := settings.Load()
+	var migrationErrors []string
+	if !capturing {
+		if err := appcache.PruneExpired(context.Background(), cfg.AIModelsDir, time.Now()); err != nil {
+			log.Printf("过期临时图片清理失败：%v", err)
+		}
+		roots := []string{cfg.AIModelsDir}
+		if path, err := settings.Path(); err == nil {
+			roots = append(roots, filepath.Join(filepath.Dir(path), "models"))
+		}
+		for _, root := range roots {
+			if err := upscale.MigrateLegacyModels(context.Background(), root); err != nil {
+				log.Printf("旧 AI 组件迁移失败：%v", err)
+				migrationErrors = append(migrationErrors, err.Error())
+			}
+		}
+	}
 
 	// With window state memory off, the window must not reuse the last geometry.
 	// MyGo keys the saved rectangle by StateKey, so an empty key means nothing is
@@ -54,6 +74,9 @@ func main() {
 
 	mygo.App.WhenReady(func() {
 		app := appui.NewApp(cfg)
+		if len(migrationErrors) > 0 {
+			app.SetStatus("旧 AI 组件未完全清理：" + strings.Join(migrationErrors, "；"))
+		}
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "ImageFlow",
 			Width:     1440,
@@ -69,6 +92,11 @@ func main() {
 			Content: ui.View(app.View),
 		})
 		app.Window = win
+		mygo.App.OnQuit(func() {
+			app.Cancel()
+			app.CancelStudioWork()
+			app.CancelCollageWork()
+		})
 		selectStartupTool(app, *toolIndex)
 		if *openPaths != "" {
 			app.AddPaths(strings.Split(*openPaths, ","))

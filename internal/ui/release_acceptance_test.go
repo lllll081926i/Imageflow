@@ -32,6 +32,9 @@ func TestReleaseSearchAndNavigateEveryTool(t *testing.T) {
 	app.Settings.UIReducedMotion = true
 	tester := myui.NewTester(app.View, 1440, 900)
 	for _, tool := range app.Tools {
+		if err := tester.Click("首页"); err != nil {
+			t.Fatal(err)
+		}
 		acceptanceTypeSearch(t, tester, tool.Name())
 		if err := tester.Click(tool.Name()); err != nil {
 			t.Fatalf("%s 无法从搜索结果打开：%v", tool.Name(), err)
@@ -41,9 +44,12 @@ func TestReleaseSearchAndNavigateEveryTool(t *testing.T) {
 			t.Fatalf("搜索后切换到错误工具：%s", tool.Name())
 		}
 	}
+	if err := tester.Click("首页"); err != nil {
+		t.Fatal(err)
+	}
 	acceptanceTypeSearch(t, tester, "不存在的工具abc123")
-	if tester.HasText("专业调色") {
-		t.Fatal("无结果搜索仍保留无关工具")
+	if !tester.HasText("没有匹配的工具") {
+		t.Fatal("无结果搜索未显示空状态")
 	}
 	if err := tester.Click("首页"); err != nil {
 		t.Fatal(err)

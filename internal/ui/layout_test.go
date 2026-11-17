@@ -113,9 +113,7 @@ func TestShellGeometryAtMinimumSize(t *testing.T) {
 }
 
 // TestToolsUseWorkbenchColumns asserts every real tool page keeps the same three
-// cards and the same actions. The cancel action is deliberately absent while the
-// list is empty: there is nothing to cancel, and the disabled primary already
-// says so. TestCancelAppearsOnceThereAreFiles covers the other half.
+// cards and the same actions.
 func TestToolsUseWorkbenchColumns(t *testing.T) {
 	a := newTestApp(t)
 	for i := range a.Tools {
@@ -144,15 +142,23 @@ func TestToolsUseWorkbenchColumns(t *testing.T) {
 	}
 }
 
-// TestCancelAppearsOnceThereAreFiles pins the other half of the action bar: as
-// soon as the list has an item, 取消 is offered next to the primary action.
-func TestCancelAppearsOnceThereAreFiles(t *testing.T) {
+func TestStopAppearsOnlyWhileRunning(t *testing.T) {
 	a := newTestApp(t)
 	seedInputs(t, a, 1)
 	a.Active = 0
 	tt := myui.NewTester(a.View, 1440, 900)
-	if !tt.HasText("取消") {
-		t.Fatalf("取消 missing with one input: %v", tt.Texts())
+	if tt.HasText("取消") || tt.HasText("停止处理") {
+		t.Fatal("空闲时显示了取消操作")
+	}
+	a.SetRunning(true)
+	tt.Frame()
+	if !tt.HasText("停止处理") {
+		t.Fatal("处理中缺少停止操作")
+	}
+	a.SetRunning(false)
+	tt.Frame()
+	if tt.HasText("停止处理") {
+		t.Fatal("处理结束后仍显示停止操作")
 	}
 }
 

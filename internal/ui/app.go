@@ -7,6 +7,7 @@ import (
 	"image"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -14,6 +15,7 @@ import (
 	"github.com/lobehub/lobe-mygo/pkg/lucide"
 	"github.com/lobehub/lobe-mygo/pkg/theme"
 
+	"github.com/lllll081926i/imageflow-go/internal/appcache"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 	"github.com/lllll081926i/imageflow-go/internal/thumbs"
@@ -53,28 +55,33 @@ type previewWidget interface {
 // outside the UI thread, so those four are guarded by mu; the view reads them
 // through the accessors below.
 type App struct {
-	mu      sync.Mutex
-	Session *batch.Session
-	Thumbs  *thumbs.Cache
-	Window  *mygo.Window
+	clipboardCache appcache.Session
+	cacheJob       studioJob[appcache.Report]
+	cacheVersion   uint64
+	cacheNextScan  time.Time
+	cacheCleaning  atomic.Bool
+	mu             sync.Mutex
+	Session        *batch.Session
+	Thumbs         *thumbs.Cache
+	Window         *mygo.Window
 
 	Active       int
 	ShowSettings bool
 	// ShowHome draws the landing page instead of a tool. It is the app's start
 	// state: twenty-five rows in a column is a list to read, not a place to start.
 	ShowHome bool
-	// searchQuery filters the navigation. It is the rail's own box, so it searches
-	// tools only — never the user's pictures.
+	// searchQuery 保存首页工具搜索，不改变侧栏导航。
 	searchQuery string
 	// collapsedGroups holds the sidebar groups the user folded away, keyed by
 	// group. A missing key means open.
 	collapsedGroups map[string]bool
 	Tools           []Tool
 
-	Status       string
-	Progress     float32
-	ProgressText string
-	Running      bool
+	Status        string
+	Progress      float32
+	ProgressText  string
+	Running       bool
+	canvasOutputs map[string]string
 
 	// planMu guards planned, the output paths already reserved by the batch in
 	// flight, so two rows never resolve to the same file name.
@@ -91,6 +98,8 @@ type App struct {
 	previewFocusPending bool
 	previewLoadMu       sync.Mutex
 	previewFocus        myui.Handle
+	fileLayout          int
+	fileSelection       int
 	studioPreview       studioJob[image.Image]
 	studioOutput        image.Image
 	studioSourceVersion uint64
@@ -796,15 +805,7 @@ func (a *App) rail(c *myui.Context, st style, width float32) {
 	labelAlpha := railLabelAlpha(width)
 
 	rail.Children(func() {
-		// No "工具箱" caption: the icons and their labels already say what the
-		// column is, and the heading pushed the first tool down for nothing.
-		//
-		// The search box is the list's own filter, so it sits above the list rather
-		// than in the header: a query narrows the column in place, and the group
-		// headers give way to a single ranked answer.
-		a.railSearch(c, st, labelAlpha)
-
-		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
+		myui.Scroll(c).Key("rail-scroll").FillWidth().Grow(1).Scrollbars(false).Children(func() {
 			a.railList(c, st, labelAlpha)
 		})
 
@@ -928,8 +929,7 @@ func (a *App) railList(c *myui.Context, st style, labelAlpha float32) {
 // railGroupHeader draws one section heading: its glyph, its label, and a chevron
 // that says whether the section is open.
 //
-// In the collapsed strip there is no room for a label, so the heading shrinks to a
-// hairline rule: the groups stay visually separated without wasting the width.
+// 收起侧栏时不构建标题或分组占位。
 func (a *App) railGroupHeader(c *myui.Context, st style, key string, labelAlpha float32) {
 	group, ok := groupByKey(key)
 	if !ok {
@@ -937,19 +937,18 @@ func (a *App) railGroupHeader(c *myui.Context, st style, key string, labelAlpha 
 	}
 	open := a.groupExpanded(key)
 	if labelAlpha <= 0.02 {
-		myui.Row(c).FillWidth().Height(railHeaderHeight).
-			Justify(myui.Center).AlignItems(myui.Center).Children(func() {
-			myui.Row(c).Width(16).Height(1).Background(st.Divider)
-		})
 		return
 	}
 	row := myui.ButtonBase(c).Key("rail-group-" + key).FillWidth().
 		Height(railHeaderHeight).Gap(6).AlignItems(myui.Center).
 		Radius(st.RadiusPill).Cursor(myui.CursorPointer).
-		Label(group.Label).FocusRingColor(st.Brand).FocusRingOffset(1)
+		Label(group.Label).Expanded(open).FocusRingColor(st.Brand).FocusRingOffset(1)
 	row = row.Justify(myui.Start).PaddingX(railItemPadding)
 	if row.Hovered() {
 		row.Background(st.Recessed)
+	}
+	if !open && !a.ShowHome && !a.ShowSettings && a.ActiveTool() != nil && toolGroupKey(a.ActiveTool()) == key {
+		row.Background(st.BrandSoft)
 	}
 	row.Opacity(labelAlpha)
 	row.Children(func() {
@@ -1006,6 +1005,9 @@ func (a *App) railItem(c *myui.Context, st style, row railRow, tool Tool, labelA
 		Cursor(myui.CursorPointer).Label(tool.Name()).
 		FocusRingColor(st.Brand).FocusRingOffset(1).
 		Transition(motion(springTap))
+	if labelAlpha <= 0.02 {
+		item.Tooltip(tool.Name())
+	}
 
 	// Where the row belongs, and where the drag has taken it. Positions are
 	// ordinals among the visible tool rows: a group header is a label, not a slot,
@@ -1192,6 +1194,9 @@ func (a *App) railFooterItem(c *myui.Context, st style, key string, icon *myui.S
 		Radius(st.RadiusControl).Cursor(myui.CursorPointer).
 		Label(text).FocusRingColor(st.Brand).FocusRingOffset(1).
 		Transition(motion(springTap))
+	if labelAlpha <= 0.02 {
+		item.Tooltip(text)
+	}
 	// The same fixed alignment as the tool rows, so the footer's icons land on the
 	// tool plates' axis and stay there while the rail animates.
 	item = item.Justify(myui.Start).PaddingX(railItemPadding)
@@ -1256,6 +1261,10 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	// meant the arrows silently switched a preview nobody can see and the canvas
 	// never received the nudge it advertised.
 	tool := a.ActiveTool()
+	if upscaleTool, ok := tool.(*UpscaleTool); ok {
+		services := c.Services()
+		card.OnShortcut(myui.Ctrl, myui.KeyV, func() { upscaleTool.pasteClipboard(a, services) })
+	}
 	if _, ownPreview := tool.(previewWidget); !ownPreview || a.Session.Len() == 0 {
 		card = card.
 			OnShortcut(0, myui.KeyLeft, func() { a.movePreview(-1) }).
@@ -1272,6 +1281,12 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	}
 	card.Children(func() {
 		a.inputHeader(c, st)
+		if toolPreviewMode(tool.ID()) == previewNone {
+			myui.Row(c).FillWidth().Grow(1).MinHeight(0).Padding(4, 16, 16, 16).Clip().AlignItems(myui.Stretch).Children(func() {
+				a.dropArea(c, st)
+			})
+			return
+		}
 		a.requestStudioPreview(tool)
 		if a.studioPreviewError != "" && a.studioToolID == tool.ID() {
 			warnAlert(c, "预览失败："+a.studioPreviewError)
@@ -1283,12 +1298,12 @@ func (a *App) inputCard(c *myui.Context, st style) {
 		// list keeps the shared dashed target: with nothing to compose, the canvas
 		// would be a large empty frame next to a hint saying what to do.
 		if widget, ok := tool.(previewWidget); ok && widget != nil && (a.Session.Len() > 0 || tool.ID() == ToolCompare) {
-			myui.Row(c).FillWidth().Grow(1).Padding(16, 16, 0, 16).
+			myui.Row(c).FillWidth().Grow(1).MinHeight(0).Padding(16, 16, 0, 16).Clip().AlignItems(myui.Stretch).Label("预览边界").
 				Key(fmt.Sprintf("preview-%d", a.Active)).
 				Transition(motion(springSoft)).Children(func() {
 				widget.PreviewPanel(c, a)
 			})
-			myui.Row(c).FillWidth().Padding(16, 0, 16, 16).
+			myui.Row(c).FillWidth().Padding(12, 16, 16, 16).
 				AlignItems(myui.Stretch).Children(func() {
 				a.dropAreaCompact(c, st)
 			})
@@ -1300,18 +1315,35 @@ func (a *App) inputCard(c *myui.Context, st style) {
 			// preview takes the room the drag target does not: it grows, so the
 			// picture stays large while the drop area keeps its minimum. The key
 			// is the tool index so a switch lifts the new frame in.
-			myui.Row(c).FillWidth().Padding(16, 16, 0, 16).
-				Key(fmt.Sprintf("preview-%d", a.Active)).
-				Transition(motion(springSoft)).Children(func() {
+			preview := myui.Row(c).FillWidth().MinHeight(0).Padding(16, 16, 0, 16).Clip().AlignItems(myui.Stretch).Label("预览边界").
+				Key(fmt.Sprintf("preview-%d", a.Active)).Transition(motion(springSoft))
+			compact := toolPreviewMode(tool.ID()) == previewCompact
+			if compact {
+				_, height := c.Size()
+				preview.Height(min(256, height*.3))
+			} else {
+				preview.Grow(1)
+			}
+			preview.Children(func() {
 				caption := ""
 				if tool := a.ActiveTool(); tool != nil {
 					caption = tool.PreviewCaption(a)
 				}
 				a.previewArea(c, st, img, caption)
 			})
-			myui.Row(c).FillWidth().Grow(1).Padding(16, 0, 16, 16).
-				AlignItems(myui.Stretch).Children(func() {
-				a.dropArea(c, st)
+			if (tool.ID() == ToolRichText || tool.ID() == ToolStudio) && a.Session.Len() == 0 {
+				return
+			}
+			files := myui.Row(c).FillWidth().Padding(12, 16, 16, 16).AlignItems(myui.Stretch)
+			if compact {
+				files.Grow(1).MinHeight(0).Clip()
+			}
+			files.Children(func() {
+				if compact {
+					a.dropArea(c, st)
+				} else {
+					a.dropAreaCompact(c, st)
+				}
 			})
 			return
 		}
@@ -1325,28 +1357,48 @@ func (a *App) inputCard(c *myui.Context, st style) {
 	})
 }
 
+type previewMode uint8
+
+const (
+	previewLarge previewMode = iota
+	previewCompact
+	previewNone
+)
+
+func toolPreviewMode(toolID string) previewMode {
+	switch toolID {
+	case ToolPDF, ToolGIF, ToolAnalysis:
+		return previewNone
+	case ToolConvert, ToolResize, ToolCompress, ToolIcon, ToolGrid, ToolLayoutPage, ToolStitch, ToolPalette:
+		return previewCompact
+	default:
+		return previewLarge
+	}
+}
+
 // dropAreaCompact is the file list under a tool that draws its own preview:
 // the list keeps its rows and its add action, but gives the canvas the room.
 func (a *App) dropAreaCompact(c *myui.Context, st style) {
 	items := a.Session.Snapshot()
-	area := myui.Column(c).FillWidth().Height(168).Gap(8).Padding(12).
+	height := float32(168)
+	if a.fileLayout != 0 {
+		height = 228
+	}
+	area := myui.Column(c).FillWidth().Height(height).MinHeight(0).Gap(8).Padding(12).Clip().
 		Radius(st.RadiusPanel).Border(1, st.Divider).Background(st.Recessed).
 		Label("拖放区")
 	area.Children(func() {
-		myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
+		myui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(myui.Center).Children(func() {
 			myui.Text(c, fmt.Sprintf("%d 个文件", len(items))).FontSize(11).
 				FontWeight(500).TextColor(st.TextDim)
 			myui.Spacer(c).Grow(1)
+			myui.Box(c).Width(156).Key("file-layout").Children(func() {
+				segmented(c, &a.fileLayout, []string{"列表", "网格", "紧凑"})
+			})
 			a.ghostButton(c, st, "添加更多", lucide.Plus(), a.pickFiles)
 			a.ghostButton(c, st, "选择文件夹", lucide.FolderOpen(), a.pickDirectory)
 		})
-		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			myui.Column(c).FillWidth().Gap(2).Children(func() {
-				for i := range items {
-					a.fileRow(c, st, &items[i])
-				}
-			})
-		})
+		a.fileBrowser(c, st, items)
 	})
 	if files := area.DroppedFiles(); len(files) > 0 {
 		a.AddPaths(files)
@@ -1354,24 +1406,29 @@ func (a *App) dropAreaCompact(c *myui.Context, st style) {
 }
 
 func (a *App) inputHeader(c *myui.Context, st style) {
-	myui.Row(c).FillWidth().Height(52).PaddingX(18).Gap(10).AlignItems(myui.Center).
+	myui.Row(c).FillWidth().MinHeight(52).Wrap().Padding(10, 18).Gap(10).AlignItems(myui.Center).
 		Children(func() {
-			myui.Text(c, "输入项").FontSize(14).FontWeight(600).TextColor(st.Text).NoWrap()
+			title := "输入项"
+			if (a.ActiveTool().ID() == ToolRichText || a.ActiveTool().ID() == ToolStudio) && a.Session.Len() == 0 {
+				title = "画布"
+			}
+			myui.Text(c, title).FontSize(14).FontWeight(600).TextColor(st.Text).NoWrap()
 			count := fmt.Sprintf("%d", a.Session.Len())
-			myui.Row(c).Height(20).PaddingX(7).Radius(999).
-				Justify(myui.Center).AlignItems(myui.Center).
-				Background(st.Recessed).Children(func() {
-				myui.Text(c, count).FontSize(11).FontWeight(600).TextColor(st.TextSub)
-			})
-			myui.Spacer(c).Grow(1)
-			a.ghostButton(c, st, "选择输出位置", lucide.FolderOpen(), a.pickOutputDirectory)
-			if a.Session.Len() > 0 {
-				a.ghostButton(c, st, "清空", lucide.Trash2(), func() {
-					a.CancelImport()
-					a.Session.Clear()
-					a.SetPreview(nil)
-					a.SetStatus("已清空")
+			if title == "输入项" {
+				myui.Row(c).Height(20).PaddingX(7).Radius(999).
+					Justify(myui.Center).AlignItems(myui.Center).
+					Background(st.Recessed).Children(func() {
+					myui.Text(c, count).FontSize(11).FontWeight(600).TextColor(st.TextSub)
 				})
+			}
+			myui.Spacer(c).Grow(1)
+			a.ghostButtonState(c, st, "选择输出位置", lucide.FolderOpen(), a.IsRunning(), false, a.pickOutputDirectory)
+			if tool, ok := a.ActiveTool().(*UpscaleTool); ok {
+				services := c.Services()
+				a.ghostButtonState(c, st, "粘贴图片", lucide.ClipboardPaste(), a.IsRunning(), false, func() { tool.pasteClipboard(a, services) })
+			}
+			if a.Session.Len() > 0 {
+				a.ghostButtonState(c, st, "清空", lucide.Trash2(), a.IsRunning(), false, a.clearInputs)
 			}
 		})
 }
@@ -1424,8 +1481,8 @@ func (a *App) ghostButtonState(c *myui.Context, st style, text string, icon *myu
 // showed a live preview above its drop zone. The image sits on a chequerboard so
 // a transparent PNG reads as transparent instead of as a white picture.
 func (a *App) previewArea(c *myui.Context, st style, img image.Image, caption string) {
-	box := myui.Column(c).FillWidth().Grow(1).Padding(12).Gap(8).
-		Radius(st.RadiusPanel).Background(st.Recessed).Label("图片预览").
+	box := myui.Column(c).Fill().Grow(1).Padding(12).Gap(8).
+		MinHeight(0).Clip().Radius(st.RadiusPanel).Background(st.Recessed).Label("图片预览").
 		OnClick(func() { a.previewFocus.Focus(c) })
 	box.Children(func() {
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
@@ -1433,9 +1490,12 @@ func (a *App) previewArea(c *myui.Context, st style, img image.Image, caption st
 			myui.Text(c, "预览").FontSize(11).FontWeight(500).TextColor(st.TextSub)
 			a.previewMu.Lock()
 			loading := a.previewLoading
+			updating := a.studioPreviewBusy && a.studioToolID == a.ActiveTool().ID()
 			a.previewMu.Unlock()
 			if loading {
 				myui.Text(c, "加载中…").FontSize(11).TextColor(st.TextDim)
+			} else if updating {
+				myui.Text(c, "更新中…").FontSize(11).TextColor(st.TextDim)
 			}
 			if caption != "" {
 				myui.Row(c).Width(1).Height(10).Background(st.Divider).MarginX(2)
@@ -1448,8 +1508,8 @@ func (a *App) previewArea(c *myui.Context, st style, img image.Image, caption st
 		})
 		// Contain keeps the whole picture visible instead of cropping it to the
 		// box, which is what a preview must do.
-		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).
-			Radius(st.RadiusControl).Fit(myui.Contain)
+		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().
+			Radius(st.RadiusControl).Fit(myui.Contain).Label("预览图像")
 	})
 }
 
@@ -1459,7 +1519,7 @@ func (a *App) dropArea(c *myui.Context, st style) {
 	items := a.Session.Snapshot()
 	// The frame is drawn by hand: the framework's dashes are 3:1 and thin out at
 	// the corners, which on a panel this tall reads as a broken line.
-	area := myui.Column(c).FillWidth().Grow(1).Gap(10).Padding(18).
+	area := myui.Column(c).Fill().Grow(1).MinHeight(0).Clip().Gap(10).Padding(18).
 		Radius(st.RadiusPanel).Label("拖放区").Transition(motion(springSoft))
 	dragging := area.FileDragOver()
 	if len(items) > 0 || dragging {
@@ -1501,19 +1561,16 @@ func (a *App) dropArea(c *myui.Context, st style) {
 		// With files present the header row carries the count and the add action;
 		// the rows below need no repeated hint because right-click removal is
 		// discoverable on hover.
-		myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).PaddingY(2).Children(func() {
+		myui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(myui.Center).PaddingY(2).Children(func() {
 			myui.Text(c, fmt.Sprintf("%d 个文件", len(items))).FontSize(11).
 				FontWeight(500).TextColor(st.TextDim)
 			myui.Spacer(c).Grow(1)
+			myui.Box(c).Width(156).Key("file-layout").Children(func() {
+				segmented(c, &a.fileLayout, []string{"列表", "网格", "紧凑"})
+			})
 			a.ghostButton(c, st, "添加更多", lucide.Plus(), a.pickFiles)
 		})
-		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			myui.Column(c).FillWidth().Gap(2).Children(func() {
-				for i := range items {
-					a.fileRow(c, st, &items[i])
-				}
-			})
-		})
+		a.fileBrowser(c, st, items)
 	})
 	if files := area.DroppedFiles(); len(files) > 0 {
 		a.AddPaths(files)
@@ -1547,6 +1604,9 @@ func (a *App) settingsCard(c *myui.Context, st style, tool Tool) {
 // a tooltip instead of stretching the action bar.
 func (a *App) operationFeedback(c *myui.Context, st style) {
 	text := a.StatusLine()
+	if text == "拖入图片或文件夹开始" && (a.ActiveTool().ID() == ToolRichText || a.ActiveTool().ID() == ToolStudio) {
+		return
+	}
 	if text == "" {
 		return
 	}
@@ -1627,8 +1687,8 @@ func (a *App) actionBar(c *myui.Context, st style) {
 			}
 			primaryButton(c, st, "开始处理", lucide.Play(), a.Session.Len() == 0 && !toolRunsWithoutList(a.ActiveTool()), false, a.Start).
 				Grow(1).Height(46)
-			if a.Session.Len() > 0 {
-				a.ghostButton(c, st, "取消", lucide.X(), a.Cancel)
+			if a.completedOutputPath() != "" {
+				a.ghostButton(c, st, "查看结果", lucide.FolderOpen(), a.openCompletedOutput)
 			}
 		})
 	})

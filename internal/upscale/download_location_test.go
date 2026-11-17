@@ -15,7 +15,7 @@ func TestDownloadArchiveStaysInModelsDirectory(t *testing.T) {
 	root := t.TempDir()
 	var found atomic.Bool
 	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		entries, _ := filepath.Glob(filepath.Join(root, ".imageflow-model-bundle-*.zip"))
+		entries, _ := filepath.Glob(filepath.Join(root, ".imageflow-upscayl-*"))
 		found.Store(len(entries) == 1)
 		writer.WriteHeader(http.StatusBadGateway)
 	}))

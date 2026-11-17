@@ -24,7 +24,7 @@ func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 	row := myui.Row(c).FillWidth().Height(62).Gap(11).Padding(7, 9, 7, 9).
 		AlignItems(myui.Center).Radius(st.RadiusControl).Transition(motion(springSoft)).
 		Focusable().Cursor(myui.CursorPointer).Label("预览 " + item.Name).
-		OnClick(func() { a.selectPreview(item.Path) })
+		OnClick(func() { a.selectBrowserPreview(item.Path) })
 	if a.selectedPreviewPath() == item.Path {
 		row.Background(st.BrandSoft).Border(1, st.Brand)
 		a.previewMu.Lock()
@@ -43,8 +43,8 @@ func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 		a.thumbBox(c, st, item)
 		myui.Column(c).Grow(1).Gap(3).Children(func() {
 			myui.Row(c).FillWidth().Gap(6).AlignItems(myui.Center).Children(func() {
-				myui.Text(c, truncate(item.Name, 24)).FontSize(13).
-					FontWeight(500).TextColor(st.Text).SingleLine()
+				myui.Text(c, item.Name).Grow(1).FontSize(13).
+					FontWeight(500).TextColor(st.Text).SingleLine().Tooltip(item.Path)
 				if item.Format != "" {
 					myui.Row(c).PaddingX(5).PaddingY(1).Radius(4).
 						Background(st.Recessed).Children(func() {
@@ -68,10 +68,110 @@ func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 				}
 			})
 		}
+		myui.ButtonBase(c).Size(28, 28).Label("移除 " + item.Name).
+			Tooltip("从列表移除，不删除文件").Disabled(a.IsRunning()).
+			AlignItems(myui.Center).Justify(myui.Center).
+			OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
+			myui.Icon(c, lucide.X()).Size(14, 14).TextColor(st.TextDim)
+		})
 	})
-	if row.RightClicked() {
-		a.removeByPath(item.Path)
+}
+
+func (a *App) selectBrowserPreview(path string) {
+	a.selectPreview(path)
+	a.previewMu.Lock()
+	a.previewFocusPending = false
+	a.previewMu.Unlock()
+}
+
+func (a *App) fileBrowser(c *myui.Context, st style, items []batch.Item) {
+	c.Key("file-browser")
+	holder := myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip()
+	grid := myui.Local(holder, "grid", func() myui.GridState { return myui.GridState{} })
+	holder.Children(func() { a.fileBrowserGrid(c, st, items, grid) })
+}
+
+func (a *App) fileBrowserGrid(c *myui.Context, st style, items []batch.Item, grid *myui.GridState) {
+	selected := a.selectedPreviewPath()
+	a.fileSelection = -1
+	for index := range items {
+		if items[index].Path == selected {
+			a.fileSelection = index
+			break
+		}
 	}
+	grid.Key = func(index int) any { return items[index].Path }
+	grid.Label = func(index int) string { return items[index].Name }
+	grid.Selected = &a.fileSelection
+	grid.Reorder = nil
+	if !a.IsRunning() && !a.IsImporting() {
+		grid.Reorder = func(moving []int, to int) { a.reorderInputs(items, moving, to) }
+	}
+	a.previewMu.Lock()
+	reveal := a.previewRevealPath == selected && selected != ""
+	if reveal {
+		a.previewRevealPath = ""
+	}
+	a.previewMu.Unlock()
+	if reveal && a.fileSelection >= 0 {
+		grid.ScrollIntoView(a.fileSelection)
+	}
+	width, height := float32(100000), float32(62)
+	if a.fileLayout == 1 {
+		width, height = 132, 136
+	} else if a.fileLayout == 2 {
+		width, height = 210, 64
+	}
+	c.Key(fmt.Sprintf("file-browser-%d", a.fileLayout))
+	myui.GridView(c, grid, len(items), width, height, func(index int) {
+		item := &items[index]
+		if a.fileLayout == 0 {
+			a.fileRow(c, st, item)
+			return
+		}
+		c.Key("input-tile-" + item.Path)
+		tile := myui.Column(c).Fill().MinWidth(0).Clip().Padding(6).Gap(4).
+			Radius(st.RadiusControl).Background(st.Card).Border(1, st.Divider).
+			Label("预览 " + item.Name).Tooltip(item.Path).Cursor(myui.CursorPointer).
+			OnClick(func() { a.selectBrowserPreview(item.Path) })
+		if selected == item.Path {
+			tile.Background(st.BrandSoft).Border(1, st.Brand)
+		}
+		tile.Children(func() {
+			if a.fileLayout == 1 {
+				myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().Children(func() {
+					if bitmap, err := myui.DecodeBitmap([]byte(item.Thumb)); err == nil {
+						myui.Image(c, bitmap).Fill().Fit(myui.Contain)
+					}
+				})
+			}
+			myui.Row(c).FillWidth().MinWidth(0).Gap(4).AlignItems(myui.Center).Children(func() {
+				if a.fileLayout == 2 {
+					a.thumbBox(c, st, item)
+				}
+				myui.Column(c).Grow(1).MinWidth(0).Clip().Children(func() {
+					myui.Text(c, item.Name).FillWidth().FontSize(11).SingleLine().TextColor(st.Text)
+					if item.Status != "" {
+						myui.Text(c, statusLabel(item.Status)).FontSize(10).TextColor(statusColor(item.Status, st)).SingleLine().Tooltip(item.Message)
+					}
+				})
+				myui.ButtonBase(c).Size(24, 24).Label("移除 " + item.Name).
+					Disabled(a.IsRunning()).AlignItems(myui.Center).Justify(myui.Center).
+					OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
+					myui.Icon(c, lucide.X()).Size(12, 12).TextColor(st.TextDim)
+				})
+			})
+		})
+	}).FillWidth().Grow(1).MinHeight(0).Clip().Label("图片列表").
+		OnShortcut(0, myui.KeyDelete, func() {
+			if !a.IsRunning() && !a.IsImporting() {
+				a.removeByPath(a.selectedPreviewPath())
+			}
+		}).OnChange(func() {
+		if a.fileSelection >= 0 && a.fileSelection < len(items) {
+			a.selectBrowserPreview(items[a.fileSelection].Path)
+		}
+	})
 }
 
 func (a *App) thumbBox(c *myui.Context, st style, item *batch.Item) {
@@ -80,12 +180,42 @@ func (a *App) thumbBox(c *myui.Context, st style, item *batch.Item) {
 	box.Children(func() {
 		if item.Thumb != "" {
 			if bmp, err := myui.DecodeBitmap([]byte(item.Thumb)); err == nil {
-				myui.Image(c, bmp).Size(48, 48)
+				myui.Image(c, bmp).Size(48, 48).Fit(myui.Contain)
 				return
 			}
 		}
 		myui.Icon(c, lucide.FileImage()).Width(17).Height(17).TextColor(st.TextDim)
 	})
+}
+
+func (a *App) reorderInputs(items []batch.Item, moving []int, to int) {
+	if a.IsRunning() || a.IsImporting() || to < 0 || to > len(items) || len(moving) == 0 {
+		return
+	}
+	chosen := make(map[int]bool, len(moving))
+	for _, index := range moving {
+		if index < 0 || index >= len(items) {
+			return
+		}
+		chosen[index] = true
+	}
+	order := make([]string, 0, len(items))
+	for index := 0; index <= len(items); index++ {
+		if index == to {
+			for source, item := range items {
+				if chosen[source] {
+					order = append(order, item.Path)
+				}
+			}
+		}
+		if index < len(items) && !chosen[index] {
+			order = append(order, items[index].Path)
+		}
+	}
+	if a.Session.ReorderFiles(order) {
+		a.SetStatus("图片顺序已更新")
+		a.Invalidate()
+	}
 }
 
 func humanSize(bytes int64) string {
@@ -157,8 +287,23 @@ func (a *App) removeByPath(path string) {
 	a.Invalidate()
 }
 
+func (a *App) clearInputs() {
+	if a.IsRunning() {
+		return
+	}
+	a.CancelImport()
+	a.Session.Clear()
+	a.SetPreview(nil)
+	a.SetStatus("已清空")
+	a.Invalidate()
+}
+
 // AddPaths expands dropped or picked paths into the session.
 func (a *App) AddPaths(raw []string) int {
+	if a.cacheCleaning.Load() {
+		a.SetStatus("正在清理缓存，请稍后添加图片")
+		return 0
+	}
 	if a.Window != nil {
 		a.ImportPaths(raw)
 		return 0
@@ -315,6 +460,10 @@ func (a *App) pickOutputDirectory() {
 
 // Start runs the active tool over every row.
 func (a *App) Start() {
+	if a.cacheCleaning.Load() {
+		a.SetStatus("正在清理缓存，请稍后开始处理")
+		return
+	}
 	if a.IsImporting() {
 		a.SetStatus("正在导入图片，请等待导入完成")
 		return
@@ -337,13 +486,14 @@ func (a *App) Start() {
 		return
 	}
 	a.Running = true
+	delete(a.canvasOutputs, tool.ID())
 	a.mu.Unlock()
 	a.SetProgress(0, "准备中")
 	tool.Run(a)
 }
 
 func toolRunsWithoutList(tool Tool) bool {
-	return tool != nil && (tool.ID() == ToolCompare || tool.ID() == ToolAnalysis || tool.ID() == ToolStudio)
+	return tool != nil && (tool.ID() == ToolCompare || tool.ID() == ToolAnalysis || tool.ID() == ToolStudio || tool.ID() == ToolRichText)
 }
 
 // Cancel asks the running batch to stop taking new items.

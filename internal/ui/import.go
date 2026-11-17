@@ -30,6 +30,10 @@ func (a *App) IsImporting() bool {
 
 // ImportPaths 在后台遍历和解码，通过窗口更新提交结果。
 func (a *App) ImportPaths(raw []string) {
+	if a.cacheCleaning.Load() {
+		a.SetStatus("正在清理缓存，请稍后添加图片")
+		return
+	}
 	win := a.Window
 	if win == nil {
 		return

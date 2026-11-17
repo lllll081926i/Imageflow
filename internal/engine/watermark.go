@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"image/draw"
@@ -48,23 +49,63 @@ func Watermark(req WatermarkRequest) Result {
 	if strings.TrimSpace(req.InputPath) == "" || strings.TrimSpace(req.OutputPath) == "" {
 		return Fail("BAD_INPUT", "缺少输入或输出路径")
 	}
+	if strings.TrimSpace(req.Text) == "" {
+		return Fail("WM_NO_TEXT", "水印内容为空")
+	}
+	opened, err := codec.Open(req.InputPath)
+	if err != nil {
+		return Fail("READ_FAILED", err.Error())
+	}
+	layer, result := renderWatermarkImage(opened.Image, req)
+	if !result.Success {
+		return result
+	}
+	format := normalizeFormat(req.OutputForm)
+	if format == "" {
+		format = normalizeFormat(strings.TrimPrefix(filepath.Ext(req.OutputPath), "."))
+	}
+	if format == "" {
+		format = "png"
+	}
+	target := ensureExtension(req.OutputPath, format)
+	quality := req.Quality
+	if quality <= 0 {
+		quality = 95
+	}
+	if err := codec.Save(layer, target, codec.SaveOptions{Quality: quality, MetadataSource: req.InputPath}); err != nil {
+		return Fail("WRITE_FAILED", err.Error())
+	}
+	out := OK()
+	out.OutputPath = target
+	out.Width = layer.Bounds().Dx()
+	out.Height = layer.Bounds().Dy()
+	return withSizes(out, req.InputPath, target)
+}
+
+func RenderWatermarkImage(base image.Image, req WatermarkRequest) (image.Image, error) {
+	img, result := renderWatermarkImage(base, req)
+	if !result.Success {
+		return nil, errors.New(result.Error)
+	}
+	return img, nil
+}
+
+func renderWatermarkImage(base image.Image, req WatermarkRequest) (image.Image, Result) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
-		return Fail("WM_NO_TEXT", "水印内容为空")
+		return nil, Fail("WM_NO_TEXT", "水印内容为空")
 	}
 	position := strings.ToLower(strings.TrimSpace(req.Position))
 	if !watermarkPositions[position] {
 		position = "br"
 	}
 
-	opened, err := codec.Open(req.InputPath)
-	if err != nil {
-		return Fail("READ_FAILED", err.Error())
+	if base == nil {
+		return nil, Fail("BAD_INPUT", "缺少水印底图")
 	}
-	base := opened.Image
 	b := base.Bounds()
 	if err := output.CheckImage(base); err != nil {
-		return Fail("OUTPUT_TOO_LARGE", err.Error())
+		return nil, Fail("OUTPUT_TOO_LARGE", err.Error())
 	}
 
 	size := req.FontSize
@@ -104,7 +145,7 @@ func Watermark(req WatermarkRequest) Result {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	face, ferr := FontFace(req.FontName, size, 72, false)
 	if ferr != nil {
-		return Fail("FONT_FAILED", ferr.Error())
+		return nil, Fail("FONT_FAILED", ferr.Error())
 	}
 	lineHeight := MeasureHeight(face) * 1.15
 	blockW := float32(0)
@@ -126,14 +167,14 @@ func Watermark(req WatermarkRequest) Result {
 	// A single very long watermark line makes a wide stamp; reject it before the
 	// allocation rather than letting the runtime try to allocate a huge image.
 	if err := output.CheckSize(int(blockW)+style.Stroke*4+8, int(blockH)+style.Stroke*4+8); err != nil {
-		return Fail("OUTPUT_TOO_LARGE", err.Error())
+		return nil, Fail("OUTPUT_TOO_LARGE", err.Error())
 	}
 	stamp := image.NewNRGBA(image.Rect(0, 0, int(blockW)+style.Stroke*4+8, int(blockH)+style.Stroke*4+8))
 	for i, line := range lines {
 		x := float32(style.Stroke*2 + 4)
 		y := float32(style.Stroke*2+4) + float32(i)*lineHeight + float32(size)
 		if _, err := DrawText(stamp, line, x, y, style); err != nil {
-			return Fail("FONT_FAILED", err.Error())
+			return nil, Fail("FONT_FAILED", err.Error())
 		}
 	}
 
@@ -167,26 +208,7 @@ func Watermark(req WatermarkRequest) Result {
 		draw.Draw(layer, image.Rect(x, y, x+stamp.Bounds().Dx(), y+stamp.Bounds().Dy()), stamp, image.Point{}, draw.Over)
 	}
 
-	format := normalizeFormat(req.OutputForm)
-	if format == "" {
-		format = normalizeFormat(strings.TrimPrefix(filepath.Ext(req.OutputPath), "."))
-	}
-	if format == "" {
-		format = "png"
-	}
-	target := ensureExtension(req.OutputPath, format)
-	quality := req.Quality
-	if quality <= 0 {
-		quality = 95
-	}
-	if err := codec.Save(layer, target, codec.SaveOptions{Quality: quality, MetadataSource: req.InputPath}); err != nil {
-		return Fail("WRITE_FAILED", err.Error())
-	}
-	out := OK()
-	out.OutputPath = target
-	out.Width = b.Dx()
-	out.Height = b.Dy()
-	return withSizes(out, req.InputPath, target)
+	return layer, OK()
 }
 
 // anchorFor places a stamp box inside the canvas for one of nine positions.

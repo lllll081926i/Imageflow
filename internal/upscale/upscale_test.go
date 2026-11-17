@@ -12,6 +12,24 @@ import (
 	"time"
 )
 
+func TestRunRefusesToOverwriteInput(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "source.png")
+	before := []byte("原图必须保留")
+	if err := os.WriteFile(input, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, double := range []bool{false, true} {
+		_, err := Run(context.Background(), Request{InputPath: input, OutputPath: input, Double: double})
+		if failure, ok := err.(*Error); !ok || failure.Code != CodeBadRequest || !strings.Contains(failure.Message, "覆盖原图") {
+			t.Fatalf("未拒绝原图覆盖：%v", err)
+		}
+	}
+	after, err := os.ReadFile(input)
+	if err != nil || string(after) != string(before) {
+		t.Fatal("原图被更改")
+	}
+}
+
 // TestDetectWithoutEngineReportsTheMissingComponent is E2E-13's precondition: with
 // no engine configured the package must answer with a reason, not panic and not
 // claim an acceleration it does not have.
@@ -54,6 +72,9 @@ func TestRunRefusesAModelWithoutARecordedHash(t *testing.T) {
 	dir := t.TempDir()
 	models := dir + "/models"
 	model := RegistrySnapshot()[0]
+	model.SHA256 = ""
+	SetRegistry([]Model{model})
+	t.Cleanup(func() { SetRegistry(defaultRegistry()) })
 	if err := os.MkdirAll(model.Dir(models), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -155,8 +176,8 @@ func TestRegistryEntriesCarryLicenceAndPurpose(t *testing.T) {
 		if m.Scale < 2 {
 			t.Errorf("%s: implausible native scale %d", m.Name, m.Scale)
 		}
-		if m.SHA256 != "" {
-			t.Errorf("%s: the shipping build must not preload an unapproved hash", m.Name)
+		if len(m.SHA256) != 64 || m.Backend != "upscayl" {
+			t.Errorf("%s：缺少固定摘要或 Upscayl 后端", m.Name)
 		}
 	}
 }

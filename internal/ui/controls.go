@@ -229,6 +229,28 @@ func segmented(c *myui.Context, selected *int, options []string) {
 	segmentedSwitch(c, selected, options)
 }
 
+func choiceGrid(c *myui.Context, selected *int, options []string, columns int) {
+	st := styles(c)
+	myui.Grid(c).FillWidth().Columns(columns).Gap(6).Children(func() {
+		for index, option := range options {
+			c.Key(option)
+			button := myui.ButtonBase(c).FillWidth().Height(32).Radius(st.RadiusControl).
+				Label(option).Cursor(myui.CursorPointer).FocusRingColor(st.Brand)
+			color := st.TextSub
+			if *selected == index {
+				button.Background(st.Brand)
+				color = myui.RGB(255, 255, 255)
+			} else {
+				button.Background(st.Recessed).Border(1, st.Divider)
+			}
+			button.Center().Children(func() {
+				myui.Text(c, option).FontSize(12).TextColor(color)
+			})
+			button.OnClick(func() { *selected = index })
+		}
+	})
+}
+
 func selectField(c *myui.Context, selected *string, options []string) {
 	selectFieldState(c, selected, options, false)
 }

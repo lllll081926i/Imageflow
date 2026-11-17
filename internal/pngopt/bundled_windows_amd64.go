@@ -16,7 +16,11 @@ var bundled []byte
 
 const executableSHA256 = "421ce9013342db4a2d9ee6c595adc673d4fe0c69bb0b5c6b9a8794c83226093d"
 
-var initExecutable = sync.OnceValues(func() (string, error) {
+var executableMu sync.Mutex
+
+func executable() (string, error) {
+	executableMu.Lock()
+	defer executableMu.Unlock()
 	if fmt.Sprintf("%x", sha256.Sum256(bundled)) != executableSHA256 {
 		return "", fmt.Errorf("内置 OxiPNG 校验失败")
 	}
@@ -30,6 +34,4 @@ var initExecutable = sync.OnceValues(func() (string, error) {
 	}
 	err = output.Atomic(path, func(f *os.File) error { _, err := f.Write(bundled); return err })
 	return path, err
-})
-
-func executable() (string, error) { return initExecutable() }
+}

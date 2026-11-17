@@ -51,6 +51,9 @@ func readManifest(path string) ([]Model, error) {
 	}
 	seen := map[string]bool{}
 	for _, model := range models {
+		if model.Backend != "" && model.Backend != "upscayl" {
+			return nil, fmt.Errorf("未知模型后端：%s", model.Backend)
+		}
 		for _, name := range []string{model.Name, model.ParamFile, model.BinFile} {
 			if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) || filepath.Base(name) != name {
 				return nil, fmt.Errorf("模型名称和文件名不能包含路径：%q", name)
@@ -88,6 +91,9 @@ func Models(root string) ([]Model, error) {
 		return models, err
 	}
 	for _, model := range trusted {
+		if isLegacyModel(model.Name) {
+			continue
+		}
 		replaced := false
 		for index := range models {
 			if strings.EqualFold(models[index].Name, model.Name) {

@@ -1,13 +1,4 @@
-// Package upscale is the optional AI super-resolution adapter.
-//
-// The design follows the PRD's boundary exactly: the core build never needs an
-// inference engine, and this package is the only place that talks to one. It
-// speaks the Real-ESRGAN-ncnn-vulkan command line through an absolute path and an
-// explicit argument list — never a shell string — and it treats the engine as
-// untrusted: the output is verified by decoding it before the result is accepted.
-//
-// Everything here is inert until a user points the app at an engine binary and a
-// model directory. There is no download, no auto-install and no bundled weight.
+// Package upscale 提供可选的本地 AI 推理、固定资源下载和输出校验。
 package upscale
 
 import (
@@ -30,6 +21,7 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/lllll081926i/imageflow-go/internal/codec"
 	"github.com/lllll081926i/imageflow-go/internal/output"
+	"github.com/lllll081926i/imageflow-go/internal/paths"
 )
 
 // Error codes the UI maps to its recovery hints.
@@ -75,6 +67,7 @@ type Model struct {
 	Purpose string `json:"purpose"`
 	// License names the weight licence and where it came from.
 	License string `json:"license"`
+	Backend string `json:"backend,omitempty"`
 }
 
 // Dir resolves the model's directory inside modelsRoot.
@@ -142,7 +135,7 @@ func DetectContext(parent context.Context, enginePath, modelsRoot string) Enviro
 		return env
 	}
 	if env.EnginePath == "" {
-		env.Reason = "未配置本地推理引擎；AI 高清放大需要单独安装可选的 Real-ESRGAN-ncnn-vulkan 组件"
+		env.Reason = "未配置本地推理引擎，请在 AI 高清放大页面一键下载"
 		return env
 	}
 	info, err := os.Stat(env.EnginePath)
@@ -291,7 +284,12 @@ type Request struct {
 	// GPU is the device id, -1 for automatic.
 	GPU int `json:"gpu"`
 	// Format is the engine's output format: png, jpg or webp.
-	Format string `json:"format"`
+	Format      string            `json:"format"`
+	CustomWidth int               `json:"custom_width,omitempty"`
+	Double      bool              `json:"double,omitempty"`
+	Compression int               `json:"compression,omitempty"`
+	GPUs        string            `json:"gpus,omitempty"`
+	Progress    func(int, string) `json:"-"`
 
 	// Timeout bounds the run. Zero means five minutes.
 	Timeout time.Duration `json:"-"`
@@ -321,6 +319,12 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 	}
 	if strings.TrimSpace(req.InputPath) == "" || strings.TrimSpace(req.OutputPath) == "" {
 		return nil, newError(CodeBadRequest, "缺少输入或输出路径")
+	}
+	if paths.SamePath(req.InputPath, req.OutputPath) {
+		return nil, newError(CodeBadRequest, "输出路径不能覆盖原图")
+	}
+	if req.Double {
+		return runDouble(ctx, req)
 	}
 	if strings.TrimSpace(req.EnginePath) == "" {
 		return nil, newError(CodeEngineMissing, "未配置本地推理引擎")
@@ -379,13 +383,24 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 	if scale == 0 {
 		scale = model.Scale
 	}
-	if scale < 2 || scale > 4 || model.Scale < 2 || model.Scale > 4 {
-		return nil, newError(CodeBadRequest, "倍率必须介于 2 与 4")
+	if scale < 1 || scale > 16 || model.Scale < 2 || model.Scale > 4 {
+		return nil, newError(CodeBadRequest, "倍率必须介于 1 与 16")
+	}
+	targetWidth, targetHeight, err := targetSize(inputWidth, inputHeight, scale, req.CustomWidth)
+	if err != nil {
+		return nil, err
+	}
+	if req.Compression < 0 || req.Compression > 100 {
+		return nil, newError(CodeBadRequest, "压缩必须介于 0 与 100")
+	}
+	gpuIDs, err := validateGPUIds(req.GPUs)
+	if err != nil {
+		return nil, err
 	}
 	if err := output.CheckSize(inputWidth*model.Scale, inputHeight*model.Scale); err != nil {
 		return nil, newError(CodeBadRequest, "原生输出超限：%v", err)
 	}
-	if err := output.CheckSize(inputWidth*scale, inputHeight*scale); err != nil {
+	if err := output.CheckSize(targetWidth, targetHeight); err != nil {
 		return nil, newError(CodeBadRequest, "目标输出超限：%v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(req.OutputPath), 0o755); err != nil {
@@ -433,13 +448,22 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 	// The scale flag is the model's native factor: passing anything else makes the
 	// engine fail or silently use its own, so it is never mapped from the UI.
 	args = append(args, "-s", fmt.Sprint(model.Scale))
-	if tile > 0 {
-		args = append(args, "-t", fmt.Sprint(tile))
+	if model.Backend == "upscayl" {
+		args = append(args, "-z", fmt.Sprint(model.Scale))
+	}
+	if tile > 0 || strings.Contains(gpuIDs, ",") {
+		tileValues := make([]string, strings.Count(gpuIDs, ",")+1)
+		for index := range tileValues {
+			tileValues[index] = fmt.Sprint(tile)
+		}
+		args = append(args, "-t", strings.Join(tileValues, ","))
 	}
 	if req.TTA {
 		args = append(args, "-x")
 	}
-	if req.GPU >= 0 {
+	if gpuIDs != "" {
+		args = append(args, "-g", gpuIDs)
+	} else if strings.TrimSpace(req.GPUs) == "" && req.GPU >= 0 {
 		args = append(args, "-g", fmt.Sprint(req.GPU))
 	}
 	cmd := exec.CommandContext(runCtx, req.EnginePath, args...)
@@ -451,8 +475,8 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 		return nil
 	}
 	cmd.WaitDelay = 3 * time.Second
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
+	stderr := &inferenceLog{notify: req.Progress}
+	cmd.Stderr = stderr
 	started := time.Now()
 	runErr := cmd.Run()
 	elapsed := time.Since(started)
@@ -498,11 +522,12 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 			return nil, newError(CodeCancelled, "已取消")
 		}
 	}
-	if scale != model.Scale {
-		finalImage = imaging.Resize(finalImage, inputWidth*scale, inputHeight*scale, imaging.Lanczos)
+	resized := targetWidth != width || targetHeight != height
+	if resized {
+		finalImage = imaging.Resize(finalImage, targetWidth, targetHeight, imaging.Lanczos)
 	}
-	if scale != model.Scale || alphaRestored {
-		if err := codec.SaveContext(runCtx, finalImage, temporaryPath, codec.SaveOptions{Quality: 95, SRGB: true}); err != nil {
+	if resized || alphaRestored || req.Compression > 0 {
+		if err := codec.SaveContext(runCtx, finalImage, temporaryPath, codec.SaveOptions{Quality: max(1, 100-req.Compression), SRGB: true}); err != nil {
 			if runCtx.Err() != nil {
 				return nil, newError(CodeCancelled, "已取消")
 			}
@@ -537,7 +562,7 @@ func Run(ctx context.Context, req Request) (*Report, error) {
 		Model:        model.Name,
 		NativeScale:  model.Scale,
 		AppliedScale: scale,
-		Width:        inputWidth * scale, Height: inputHeight * scale,
+		Width:        targetWidth, Height: targetHeight,
 		Elapsed: elapsed,
 	}
 	if req.Scale > 0 && req.Scale != model.Scale {
@@ -571,23 +596,7 @@ var (
 // the app ships no weights, and a user who installs a set must record its hash in
 // the settings before the page will run it.
 func defaultRegistry() []Model {
-	return []Model{
-		{
-			Name: "realesrgan-x4plus", ParamFile: "realesrgan-x4plus.param",
-			BinFile: "realesrgan-x4plus.bin", Scale: 4, Purpose: "照片",
-			License: "上游项目 BSD-3-Clause；引擎 MIT；权重授权请核对上游",
-		},
-		{
-			Name: "realesrgan-x4plus-anime", ParamFile: "realesrgan-x4plus-anime.param",
-			BinFile: "realesrgan-x4plus-anime.bin", Scale: 4, Purpose: "插画 / 动漫",
-			License: "上游项目 BSD-3-Clause；引擎 MIT；权重授权请核对上游",
-		},
-		{
-			Name: "realesr-animevideov3", ParamFile: "realesr-animevideov3-x2.param",
-			BinFile: "realesr-animevideov3-x2.bin", Scale: 2, Purpose: "动漫视频帧",
-			License: "上游项目 BSD-3-Clause；引擎 MIT；权重授权请核对上游",
-		},
-	}
+	return UpscaylModels()
 }
 
 // SetRegistry replaces the catalogue, for a caller that recorded verified hashes.

@@ -303,23 +303,22 @@ func TestRailReorderKeepsThePlateAxis(t *testing.T) {
 	}
 }
 
-// TestRailGroupsFoldAndKeepTheActivePageVisible pins the grouped sidebar: a header
-// folds its tools away, and the group holding the current page cannot be folded.
+// TestRailGroupsFoldAndKeepTheActivePageVisible 验证折叠分组不关闭当前页面。
 func TestRailGroupsFoldAndKeepTheActivePageVisible(t *testing.T) {
 	a := newTestApp(t)
 	a.Active = a.toolIndex(ToolCollage)
 	tt := myui.NewTester(a.View, 1440, 900)
 	tt.Frame()
 
-	// The group holding the current page refuses to fold: its row must stay visible.
 	before := a.railToolCount()
 	a.toggleGroup(GroupCreator)
-	if !a.groupExpanded(GroupCreator) {
-		t.Fatal("the group holding the current page must stay open")
+	if a.groupExpanded(GroupCreator) || a.ActiveTool().ID() != ToolCollage {
+		t.Fatal("当前分组未折叠或当前页面发生变化")
 	}
-	if a.railToolCount() != before {
-		t.Fatalf("the active group folded anyway: %d rows", a.railToolCount())
+	if a.railToolRowY(a.Active) >= 0 {
+		t.Fatal("折叠后仍存在当前工具行")
 	}
+	a.toggleGroup(GroupCreator)
 
 	// Another group does fold: its rows disappear from the row table and the frame.
 	studioRows := len(a.toolsInGroup(GroupStudio))

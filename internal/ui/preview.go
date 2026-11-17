@@ -68,6 +68,12 @@ func (a *App) selectPreview(path string) {
 	if !found {
 		return
 	}
+	a.previewMu.Lock()
+	unchanged := a.previewPath == path && (a.previewLoading || a.lastPreview != nil)
+	a.previewMu.Unlock()
+	if unchanged {
+		return
+	}
 	version := a.beginPreview(path)
 	win := a.Window
 	a.Invalidate()

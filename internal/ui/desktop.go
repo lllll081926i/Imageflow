@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/lllll081926i/imageflow-go/internal/batch"
 )
 
 // desktop.go holds the shell's platform wiring: the tray icon, the quit path and
@@ -117,6 +120,60 @@ func (a *App) openOutputFolder() {
 	}
 }
 
+func (a *App) completedOutputPath() string {
+	if tool := a.ActiveTool(); tool != nil {
+		a.mu.Lock()
+		independent := a.canvasOutputs[tool.ID()]
+		a.mu.Unlock()
+		if independent != "" || tool.ID() == ToolCompare || tool.ID() == ToolAnalysis {
+			return independent
+		}
+	}
+	selected := a.selectedPreviewPath()
+	fallback := ""
+	for _, item := range a.Session.Snapshot() {
+		if item.Status != "ok" || item.Output == "" {
+			continue
+		}
+		if item.Path == selected {
+			return item.Output
+		}
+		if fallback == "" {
+			fallback = item.Output
+		}
+	}
+	return fallback
+}
+
+func (a *App) rememberOutput(toolID, path string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.canvasOutputs == nil {
+		a.canvasOutputs = make(map[string]string)
+	}
+	a.canvasOutputs[toolID] = path
+}
+
+func (a *App) openCompletedOutput() {
+	a.openCompletedPath(a.completedOutputPath())
+}
+
+func (a *App) openCompletedPath(path string) {
+	if path == "" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		a.SetStatus("结果文件不可用：" + err.Error())
+		a.Invalidate()
+		return
+	}
+	if !info.IsDir() {
+		path = filepath.Dir(path)
+	}
+	openPath(path)
+}
+
 // outputFolder resolves where results land: the configured directory, else the
 // first input's own directory.
 func (a *App) outputFolder() string {
@@ -128,7 +185,7 @@ func (a *App) outputFolder() string {
 	a.Session.Mu.Lock()
 	defer a.Session.Mu.Unlock()
 	if len(a.Session.Items) > 0 {
-		return parentDir(a.Session.Items[0].Path)
+		return batch.OutputDirFor(a.Session.Settings, a.Session.Items[0].Path, "")
 	}
 	return ""
 }

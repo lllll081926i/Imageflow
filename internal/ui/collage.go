@@ -617,7 +617,7 @@ func (t *CollageTool) PreviewPanel(c *myui.Context, a *App) {
 	st := styles(c)
 	rows := a.Session.Snapshot()
 	box := myui.Column(c).Fill().Padding(12).Gap(8).Radius(st.RadiusPanel).
-		Background(st.Recessed).Label("拼图预览区")
+		MinHeight(0).Clip().Background(st.Recessed).Label("拼图预览区")
 	box.Children(func() {
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
 			myui.Icon(c, lucide.LayoutTemplate()).Width(13).Height(13).TextColor(st.TextDim)
@@ -667,10 +667,9 @@ func (t *CollageTool) PreviewPanel(c *myui.Context, a *App) {
 		// The canvas element takes the canvas's own ratio and sits centred in the
 		// room the card has: a full-boxed picture with Contain letterboxing read as
 		// a picture floating in a large empty card once the window grew.
-		myui.Row(c).FillWidth().Grow(1).Justify(myui.Center).
+		myui.Row(c).FillWidth().Grow(1).MinHeight(0).Clip().Justify(myui.Center).
 			AlignItems(myui.Center).Children(func() {
-			canvas := myui.Box(c).AspectRatio(float32(aspect.W / aspect.H)).
-				MaxWidthPercent(100).MaxHeightPercent(100).
+			canvas := myui.Box(c).Fill().MinWidth(0).MinHeight(0).
 				Radius(st.RadiusControl).Background(st.Card).Clip().
 				Focusable().FocusRingColor(st.Brand).FocusRingOffset(2).
 				Cursor(myui.CursorPointer).Label("拼图画布").Bind(&t.handle)
@@ -891,6 +890,9 @@ func (t *CollageTool) canvasInput(c *myui.Context, a *App, canvas myui.Element, 
 		}
 		switch ev.Kind {
 		case myui.InputPointerDown:
+			if ev.Button != 0 || ev.X < box.X || ev.X > box.X+box.W || ev.Y < box.Y || ev.Y > box.Y+box.H {
+				return false
+			}
 			// The canvas takes the keyboard on a press: its arrow keys and Delete act
 			// on the selected cell, and the input card around it no longer binds the
 			// arrows to the file preview.

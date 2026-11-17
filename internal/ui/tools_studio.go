@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	myui "github.com/egoist/mygo/ui"
 	"github.com/lobehub/lobe-mygo/pkg/lucide"
@@ -25,6 +28,7 @@ import (
 	"github.com/lllll081926i/imageflow-go/internal/engine"
 	"github.com/lllll081926i/imageflow-go/internal/history"
 	"github.com/lllll081926i/imageflow-go/internal/output"
+	"github.com/lllll081926i/imageflow-go/internal/settings"
 	"github.com/lllll081926i/imageflow-go/internal/upscale"
 )
 
@@ -187,7 +191,7 @@ func (t *EditTool) Panel(c *myui.Context, a *App) {
 		selected := idx
 		segmented(c, &selected, labels)
 		t.rotation = selected * 90
-		myui.Row(c).FillWidth().Gap(8).Children(func() {
+		grid2(c, func() {
 			flipH, flipV := t.flipH, t.flipV
 			switchField(c, &flipH, "左右镜像")
 			switchField(c, &flipV, "上下翻转")
@@ -212,30 +216,8 @@ func (t *EditTool) Panel(c *myui.Context, a *App) {
 		})
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "图片位置")
-			positions := []string{"tl", "tc", "tr", "cl", "c", "cr", "bl", "bc", "br"}
-			myui.Row(c).FillWidth().Gap(5).Children(func() {
-				for i, p := range positions {
-					index := i
-					glyph := positionGlyph(p)
-					btn := myui.ButtonBase(c).Grow(1).Height(28).Radius(st.RadiusPill).
-						Justify(myui.Center).AlignItems(myui.Center).
-						Cursor(myui.CursorPointer).Label(p)
-					if t.anchor == index {
-						btn.Gradient(st.Brand, st.BrandGradientTo, 90)
-					} else {
-						btn.Border(1, st.Divider).Background(st.Recessed)
-					}
-					btn.Children(func() {
-						col := st.TextSub
-						if t.anchor == index {
-							col = myui.RGB(255, 255, 255)
-						}
-						myui.Text(c, glyph).FontSize(11).TextColor(col)
-					})
-					if btn.Clicked() {
-						t.anchor = index
-					}
-				}
+			anchorPicker(c, anchorPosition(t.anchor), func(position string) {
+				t.anchor = indexOf(engine.CropAnchors, position)
 			})
 		})
 		myui.Column(c).Gap(5).Children(func() {
@@ -403,7 +385,7 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 		})
 		labels := make([]string, 0, len(engine.CanvasPresets)+1)
 		keys := make([]string, 0, len(engine.CanvasPresets)+1)
-		labels = append(labels, "空白")
+		labels = append(labels, "自定义")
 		keys = append(keys, "")
 		for _, p := range engine.CanvasPresets {
 			labels = append(labels, p.Label)
@@ -455,6 +437,7 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 		myui.Row(c).FillWidth().Gap(6).Children(func() {
 			a.ghostButton(c, st, "加图片", lucide.ImagePlus(), func() {
 				t.addLayer(engine.LayerImage)
+				t.layers[t.selected].Path = a.selectedPreviewPath()
 			})
 			a.ghostButton(c, st, "加文字", lucide.Type(), func() {
 				t.addLayer(engine.LayerText)
@@ -502,7 +485,9 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 				myui.Column(c).Gap(5).Children(func() {
 					label(c, "图片路径")
 					myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
-						textField(c, &layer.Path, "选择一张图片")
+						myui.Box(c).Grow(1).MinWidth(0).Children(func() {
+							textField(c, &layer.Path, "选择一张图片")
+						})
 						a.ghostButton(c, st, "选择", lucide.FolderOpen(), func() {
 							a.pickImageInto(&layer.Path, func() { t.previewKey = "" })
 						})
@@ -613,7 +598,7 @@ func (t *CollageStudioTool) addLayer(kind string) {
 	}
 	switch kind {
 	case engine.LayerText:
-		layer.Text = "双击编辑文字"
+		layer.Text = "输入文字"
 		layer.FontSize = int(t.height / 16)
 		layer.Font = defaultFontFamily()
 		layer.Color = "#111827"
@@ -657,7 +642,15 @@ func layerLabel(layer engine.CanvasLayer) string {
 	case engine.LayerText:
 		return "文字：" + truncate(layer.Text, 12)
 	case engine.LayerShape:
-		return "形状：" + layer.Shape
+		switch layer.Shape {
+		case engine.ShapeRect:
+			return "形状：矩形"
+		case engine.ShapeEllipse:
+			return "形状：椭圆"
+		case engine.ShapeLine:
+			return "形状：直线"
+		}
+		return "形状"
 	}
 	if layer.Path != "" {
 		return filepath.Base(layer.Path)
@@ -684,68 +677,68 @@ func (t *CollageStudioTool) Run(a *App) {
 	}
 	layers := append([]engine.CanvasLayer(nil), t.layers...)
 	width, height, bg := int(t.width), int(t.height), t.bgHex
-	a.SetRunning(true)
+	if a.Session.Len() > 0 {
+		a.runBatch("布局", func(index int, row batch.Item) engine.Result {
+			out, skipped := a.outputPathFor(row, "layout", "png", index+1)
+			if skipped {
+				return engine.Skip("目标已存在")
+			}
+			return engine.Layout(engine.CanvasRequest{
+				Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
+			})
+		})
+		return
+	}
+	if a.outputFolder() == "" {
+		a.finishRun()
+		a.SetStatus("先选择输出文件夹")
+		return
+	}
 	cancel := a.beginWholeList()
-	// beginWholeList clears the row statuses and bumps the generation the rows carry,
-	// so the snapshot must be taken after it: a row captured before the reset no
-	// longer matches any current row and its result would be dropped.
-	rows := a.Session.Snapshot()
+	anchor := filepath.Join(a.outputFolder(), "layout.png")
+	out, skipped := a.outputPathFor(batch.Item{Path: anchor}, "layout", "png", 1)
+	if skipped {
+		a.endWholeList(cancel, nil)
+		a.finishRun()
+		a.SetStatus("布局已跳过：目标文件已存在")
+		return
+	}
 	go func() {
 		defer a.finishRun()
-		defer a.endWholeList(cancel, nil)
-		if len(rows) == 0 {
-			// Without inputs the canvas is still a valid output: the layers carry
-			// their own pictures. The path comes from the first layer that names a
-			// file, or the output directory.
-			anchor := filepath.Join(a.outputFolder(), "layout")
-			out, skipped := a.outputPathFor(batch.Item{Path: anchor + ".png"}, "layout", "png", 1)
-			if skipped {
-				a.SetStatus("布局已跳过：目标文件已存在")
-				return
-			}
-			res := engine.Layout(engine.CanvasRequest{
-				Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
-			})
-			a.reportWhole(res, nil)
+		if cancel.Cancelled() {
+			a.endWholeList(cancel, nil)
 			return
 		}
-		for i, row := range rows {
-			if cancel.Cancelled() {
-				a.endWholeList(cancel, rows)
-				return
-			}
-			out, skipped := a.outputPathFor(row, "layout", "png", i+1)
-			if skipped {
-				a.Session.SetItemStatus(row, "skipped", "目标已存在", "")
-				continue
-			}
-			res := engine.Layout(engine.CanvasRequest{
-				Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
-			})
-			if !res.Success {
-				a.Session.SetItemStatus(row, "failed", res.Error, "")
-				continue
-			}
-			a.Session.SetItemStatus(row, "ok", "", res.OutputPath)
+		res := engine.Layout(engine.CanvasRequest{
+			Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
+		})
+		if a.endWholeList(cancel, nil, res) {
+			return
 		}
-		a.SetStatus(fmt.Sprintf("布局完成：%d 张", len(rows)))
-		a.Invalidate()
+		a.reportWhole(res, ToolStudio)
+		if res.Success && a.Session.SettingsSnapshot().OpenOutputOnComplete {
+			a.openCompletedPath(res.OutputPath)
+		}
 	}()
 }
 
 // reportWhole records a single-file result that is not attached to one input row.
-func (a *App) reportWhole(res engine.Result, rows []batch.Item) {
+func (a *App) reportWhole(res engine.Result, toolID string) {
 	if !res.Success {
 		a.SetStatus("处理失败：" + res.Error)
 		a.SetProgress(0, "")
 		a.Invalidate()
 		return
 	}
-	a.SetStatus("已生成：" + res.OutputPath)
-	a.SetProgress(100, a.StatusLine())
-	if img, err := loadPreviewImage(res.OutputPath); err == nil {
-		a.SetPreview(img)
+	if res.Skipped {
+		a.SetStatus("已跳过：" + res.Message)
+		a.SetProgress(0, "")
+		a.Invalidate()
+		return
 	}
+	a.rememberOutput(toolID, res.OutputPath)
+	a.SetStatus("已生成：" + filepath.Base(res.OutputPath))
+	a.SetProgress(100, "")
 	a.Invalidate()
 }
 
@@ -1008,7 +1001,7 @@ func (t *AnnotateTool) PreviewPanel(c *myui.Context, a *App) {
 		return
 	}
 	box := myui.Column(c).Fill().Padding(12).Gap(8).Radius(st.RadiusPanel).
-		Background(st.Recessed).Label("标注画布")
+		MinHeight(0).Clip().Background(st.Recessed).Label("标注预览区")
 	box.Children(func() {
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
 			myui.Icon(c, lucide.PenTool()).Width(13).Height(13).TextColor(st.TextDim)
@@ -1018,9 +1011,8 @@ func (t *AnnotateTool) PreviewPanel(c *myui.Context, a *App) {
 			myui.Text(c, fmt.Sprintf("%d × %d", img.Bounds().Dx(), img.Bounds().Dy())).
 				FontSize(11).TextColor(st.TextDim)
 		})
-		myui.Row(c).FillWidth().Grow(1).Justify(myui.Center).AlignItems(myui.Center).Children(func() {
-			canvas := myui.Box(c).AspectRatio(float32(img.Bounds().Dx()) / float32(img.Bounds().Dy())).
-				MaxWidthPercent(100).MaxHeightPercent(100).
+		myui.Row(c).FillWidth().Grow(1).MinHeight(0).Clip().Justify(myui.Center).AlignItems(myui.Center).Children(func() {
+			canvas := myui.Box(c).Fill().MinWidth(0).MinHeight(0).
 				Radius(st.RadiusControl).Background(st.Card).Clip().
 				Focusable().FocusRingColor(st.Brand).FocusRingOffset(2).
 				Cursor(myui.CursorCrosshair).Label("标注画布").Bind(&t.canvasHandle)
@@ -1046,12 +1038,15 @@ func (t *AnnotateTool) pointer(c *myui.Context, a *App, ev myui.InputEvent, img 
 		if rect.W <= 0 || rect.H <= 0 {
 			return 0, 0
 		}
-		return float64((x - rect.X) / rect.W * float32(img.Bounds().Dx())),
-			float64((y - rect.Y) / rect.H * float32(img.Bounds().Dy()))
+		return clampFloat64(float64((x-rect.X)/rect.W), 0, 1) * float64(img.Bounds().Dx()),
+			clampFloat64(float64((y-rect.Y)/rect.H), 0, 1) * float64(img.Bounds().Dy())
 	}
 	kind := annotateTools[t.tool%len(annotateTools)].Key
 	switch ev.Kind {
 	case myui.InputPointerDown:
+		if ev.Button != 0 || ev.X < rect.X || ev.X > rect.X+rect.W || ev.Y < rect.Y || ev.Y > rect.Y+rect.H {
+			return false
+		}
 		x, y := toSource(ev.X, ev.Y)
 		mark := engine.AnnotateMark{
 			Kind: kind, X1: x, Y1: y, X2: x, Y2: y,
@@ -1090,9 +1085,9 @@ func (t *AnnotateTool) pointer(c *myui.Context, a *App, ev myui.InputEvent, img 
 		if len(t.marks) > 0 {
 			last := &t.marks[len(t.marks)-1]
 			if last.Kind != engine.AnnotateFree && last.Kind != engine.AnnotateText && last.Kind != engine.AnnotateNumber {
-				if last.X2-last.X1 < 4 && last.Y2-last.Y1 < 4 {
-					last.X2 = last.X1 + float64(img.Bounds().Dx())/6
-					last.Y2 = last.Y1 + float64(img.Bounds().Dy())/8
+				if math.Abs(last.X2-last.X1) < 4 && math.Abs(last.Y2-last.Y1) < 4 {
+					last.X2 = math.Min(float64(img.Bounds().Dx()), last.X1+float64(img.Bounds().Dx())/6)
+					last.Y2 = math.Min(float64(img.Bounds().Dy()), last.Y1+float64(img.Bounds().Dy())/8)
 				}
 			}
 		}
@@ -1342,7 +1337,7 @@ func (t *GradeTool) Panel(c *myui.Context, a *App) {
 		for _, p := range engine.GradePresets {
 			labels = append(labels, p.Label)
 		}
-		segmented(c, &t.preset, labels)
+		choiceGrid(c, &t.preset, labels, 4)
 		if t.preset != t.appliedPreset && t.preset >= 0 && t.preset < len(engine.GradePresets) {
 			t.appliedPreset = t.preset
 			t.applyPreset(engine.GradePresets[t.preset].Params)
@@ -1564,15 +1559,15 @@ func (t *FilterTool) ensure() {
 	if t.kind == "" {
 		t.kind = "grayscale"
 	}
+	if !t.initialised && t.amount == 0 {
+		t.amount = 50
+	}
 	if !t.initialised {
 		// 0 is a legitimate strength (it means "leave the picture alone"), so the
 		// default is seeded once instead of whenever the value reads zero. Writing
 		// it every frame made 0% unreachable: the slider snapped back to 100.
 		t.strength = 100
 		t.initialised = true
-	}
-	if t.amount == 0 {
-		t.amount = 50
 	}
 	if t.radius == 0 {
 		t.radius = 4
@@ -1717,6 +1712,9 @@ func (t *CompareTool) Icon() *myui.SVG { return lucide.ScanEye() }
 var compareAligns = []engine.AlignMode{engine.AlignNone, engine.AlignStretch, engine.AlignFit}
 
 func (t *CompareTool) ensure() {
+	if t.align < 0 || t.align >= len(compareAligns) {
+		t.align = 0
+	}
 	if t.gain == 0 {
 		t.gain = 2
 	}
@@ -1755,12 +1753,27 @@ func (t *CompareTool) Panel(c *myui.Context, a *App) {
 			})
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "尺寸不一致时")
+			previous := t.align
 			segmented(c, &t.align, []string{"不对齐", "拉伸对齐", "等比适配"})
+			if previous != t.align {
+				t.recompute(a)
+			}
 		})
-		a.ghostButton(c, st, "计算指标", lucide.Activity(), func() { t.recompute(a) })
+		myui.Row(c).FillWidth().Gap(8).Children(func() {
+			missing := t.reference == "" || t.result == ""
+			a.ghostButtonState(c, st, "交换两图", lucide.ArrowLeftRight(), missing, false, func() {
+				t.reference, t.result = t.result, t.reference
+				t.recompute(a)
+			})
+			a.ghostButtonState(c, st, "计算指标", lucide.Activity(), missing || t.busy, false, func() { t.recompute(a) })
+		})
 	})
 
 	sectionCard(c, "指标", func() {
+		if t.busy {
+			myui.Text(c, "正在计算…").FontSize(11).TextColor(st.TextDim)
+			return
+		}
 		if t.err != "" {
 			warnAlert(c, t.err)
 		}
@@ -1776,8 +1789,12 @@ func (t *CompareTool) Panel(c *myui.Context, a *App) {
 		metricRow(c, st, "SSIM", fmt.Sprintf("%.4f", t.metrics.SSIM))
 		metricRow(c, st, "最大通道差", fmt.Sprintf("%d", t.metrics.MaxChannelDelta))
 		metricRow(c, st, "平均通道差", fmt.Sprintf("%.2f", t.metrics.MeanDelta))
-		metricRow(c, st, "对齐方式", string(t.metrics.Align))
+		metricRow(c, st, "对齐方式", compareAlignLabel(t.metrics.Align))
+		previous := t.gain
 		sliderRow(c, "差异放大", &t.gain, 1, 10, 1, "%.0f×")
+		if previous != t.gain {
+			t.recompute(a)
+		}
 		switchField(c, &t.showDiff, "显示差异图")
 	})
 }
@@ -1829,7 +1846,7 @@ func metricRow(c *myui.Context, st style, name, value string) {
 }
 
 func psnrText(r engine.CompareResult) string {
-	if r.PSNR == 0 {
+	if !r.Computable {
 		return "—"
 	}
 	if r.MaxChannelDelta == 0 {
@@ -1838,8 +1855,23 @@ func psnrText(r engine.CompareResult) string {
 	return fmt.Sprintf("%.2f dB", r.PSNR)
 }
 
+func compareAlignLabel(mode engine.AlignMode) string {
+	switch mode {
+	case engine.AlignStretch:
+		return "拉伸对齐"
+	case engine.AlignFit:
+		return "等比适配"
+	default:
+		return "不对齐"
+	}
+}
+
 // recompute loads both pictures and measures them off the UI thread.
 func (t *CompareTool) recompute(a *App) {
+	t.ensure()
+	t.metrics = engine.CompareResult{}
+	t.diff = nil
+	t.err = ""
 	if t.busy {
 		return
 	}
@@ -1899,7 +1931,7 @@ func (t *CompareTool) PreviewPanel(c *myui.Context, a *App) {
 	t.ensure()
 	st := styles(c)
 	box := myui.Column(c).Fill().Padding(12).Gap(8).Radius(st.RadiusPanel).
-		Background(st.Recessed).Label("对比区")
+		MinHeight(0).Clip().Background(st.Recessed).Label("对比区")
 	box.Children(func() {
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
 			myui.Icon(c, lucide.ScanEye()).Width(13).Height(13).TextColor(st.TextDim)
@@ -1909,7 +1941,7 @@ func (t *CompareTool) PreviewPanel(c *myui.Context, a *App) {
 				loadingIcon(c, 12, st.Brand)
 			}
 		})
-		grid := myui.Grid(c).FillWidth().Grow(1).Columns(2).GapX(8).Children(func() {
+		grid := myui.Grid(c).FillWidth().Grow(1).MinHeight(0).Clip().Columns(2).GapX(8).Children(func() {
 			t.showTile(c, a, st, "参考图", t.reference, &t.referencePreview)
 			if t.showDiff && t.diff != nil {
 				t.showImage(c, st, "差异图", t.diff)
@@ -1923,7 +1955,7 @@ func (t *CompareTool) PreviewPanel(c *myui.Context, a *App) {
 
 // showTile loads and shows one path in a letterboxed box.
 func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path string, job *studioJob[image.Image]) {
-	holder := myui.Column(c).Fill().Gap(6).Radius(st.RadiusControl).
+	holder := myui.Column(c).Fill().MinHeight(0).Clip().Gap(6).Radius(st.RadiusControl).
 		Background(st.Card).Padding(8).Children(func() {
 		myui.Text(c, caption).FontSize(10.5).TextColor(st.TextDim)
 		if path == "" {
@@ -1932,7 +1964,7 @@ func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path 
 		}
 		img, busy, err := job.request(a, path, func(context.Context) (image.Image, error) { return loadPreviewImage(path) })
 		if img != nil {
-			myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).Fit(myui.Contain).
+			myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().Fit(myui.Contain).
 				Radius(st.RadiusPill)
 		} else if busy {
 			myui.Text(c, "正在读取").FontSize(11).TextColor(st.TextDim)
@@ -1945,10 +1977,10 @@ func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path 
 
 // showImage shows an already-decoded picture in a labelled box.
 func (t *CompareTool) showImage(c *myui.Context, st style, caption string, img image.Image) {
-	myui.Column(c).Fill().Gap(6).Radius(st.RadiusControl).Background(st.Card).
+	myui.Column(c).Fill().MinHeight(0).Clip().Gap(6).Radius(st.RadiusControl).Background(st.Card).
 		Padding(8).Children(func() {
 		myui.Text(c, caption).FontSize(10.5).TextColor(st.TextDim)
-		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).Fit(myui.Contain).
+		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().Fit(myui.Contain).
 			Radius(st.RadiusPill)
 	})
 }
@@ -1956,6 +1988,10 @@ func (t *CompareTool) showImage(c *myui.Context, st style, caption string, img i
 func (t *CompareTool) Run(a *App) {
 	defer a.finishRun()
 	t.ensure()
+	if t.busy {
+		a.SetStatus("正在计算指标，请稍后导出")
+		return
+	}
 	// The comparison page writes its own report as a text file, which is the one
 	// artefact that belongs to it: the metrics are the result.
 	if !t.metrics.Computable {
@@ -1974,13 +2010,15 @@ func (t *CompareTool) Run(a *App) {
 	}
 	report := fmt.Sprintf(
 		"参考图：%s\n结果图：%s\n尺寸：%d×%d\n对齐：%s\nPSNR：%s\nSSIM：%.4f\n最大通道差：%d\n平均通道差：%.2f\n",
-		t.reference, t.result, t.metrics.Width, t.metrics.Height, t.metrics.Align,
+		t.reference, t.result, t.metrics.Width, t.metrics.Height, compareAlignLabel(t.metrics.Align),
 		psnrText(t.metrics), t.metrics.SSIM, t.metrics.MaxChannelDelta, t.metrics.MeanDelta)
 	if err := output.Atomic(path, func(file *os.File) error { _, err := file.WriteString(report); return err }); err != nil {
 		a.SetStatus("写入报告失败：" + err.Error())
 		return
 	}
-	a.SetStatus("对比报告已保存：" + path)
+	a.rememberOutput(ToolCompare, path)
+	a.SetStatus("对比报告已保存：" + filepath.Base(path))
+	a.SetProgress(100, "")
 }
 
 // ---------------------------------------------------------------------------
@@ -1989,16 +2027,16 @@ func (t *CompareTool) Run(a *App) {
 
 // AnalysisTool shows the histograms and the sampled statistics.
 type AnalysisTool struct {
-	samplePreview studioJob[image.Image]
-	result        engine.AnalysisResult
-	path          string
-	logY          bool
-	showRGB       bool
-	probeX        float64
-	probeY        float64
-	busy          bool
-	err           string
-	initialised   bool
+	sample      image.Image
+	result      engine.AnalysisResult
+	path        string
+	logY        bool
+	showRGB     bool
+	probeX      float64
+	probeY      float64
+	busy        bool
+	err         string
+	initialised bool
 }
 
 func (t *AnalysisTool) ID() string      { return ToolAnalysis }
@@ -2017,12 +2055,11 @@ func (t *AnalysisTool) ensure() {
 func (t *AnalysisTool) Panel(c *myui.Context, a *App) {
 	t.ensure()
 	st := styles(c)
-	rows := a.Session.Snapshot()
 	sectionCard(c, "取样", func() {
 		fileRowActions(c, st, "图片来源", pathLabel(t.path, "尚未选择图片"), []rowAction{
-			{Label: "分析首张", Icon: lucide.Image(), OnClick: func() {
-				if len(rows) > 0 {
-					t.analyse(a, rows[0].Path)
+			{Label: "分析选中", Icon: lucide.Image(), OnClick: func() {
+				if path := a.selectedPreviewPath(); path != "" {
+					t.analyse(a, path)
 				}
 			}},
 			{Label: "选择", Icon: lucide.FolderOpen(), OnClick: func() {
@@ -2034,6 +2071,10 @@ func (t *AnalysisTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "直方图", func() {
+		if t.busy {
+			myui.Text(c, "正在分析…").FontSize(11).TextColor(st.TextDim)
+			return
+		}
 		if t.err != "" {
 			warnAlert(c, t.err)
 			return
@@ -2059,6 +2100,9 @@ func (t *AnalysisTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "像素取样", func() {
+		if t.busy || t.err != "" {
+			return
+		}
 		if t.result.Width == 0 {
 			warnAlert(c, "先分析一张图片")
 			return
@@ -2073,8 +2117,7 @@ func (t *AnalysisTool) Panel(c *myui.Context, a *App) {
 		}
 		sliderRow(c, "X", &t.probeX, 0, maxX, 1, "%.0f")
 		sliderRow(c, "Y", &t.probeY, 0, maxY, 1, "%.0f")
-		path := t.path
-		img, _, _ := t.samplePreview.request(a, path, func(context.Context) (image.Image, error) { return loadPreviewImage(path) })
+		img := t.sample
 		if img != nil {
 			if probe, ok := engine.SamplePixel(img, int(t.probeX), int(t.probeY)); ok {
 				swatch := myui.RGBA(probe.R, probe.G, probe.B, 1)
@@ -2150,11 +2193,18 @@ func histogramBars(c *myui.Context, st style, hist engine.Histogram, tint myui.C
 
 // analyse measures one picture off the UI thread.
 func (t *AnalysisTool) analyse(a *App, path string) {
-	if path == "" || t.busy {
+	if path == "" {
 		return
 	}
 	t.path = path
+	t.err = ""
+	t.result = engine.AnalysisResult{}
+	t.sample = nil
+	if t.busy {
+		return
+	}
 	t.busy = true
+	a.SetStatus("正在分析：" + filepath.Base(path))
 	go func() {
 		img, err := openSRGB(path)
 		var res engine.AnalysisResult
@@ -2163,11 +2213,18 @@ func (t *AnalysisTool) analyse(a *App, path string) {
 		}
 		publish := func() {
 			t.busy = false
+			if path != t.path {
+				t.analyse(a, t.path)
+				return
+			}
 			if err != nil {
 				t.err = err.Error()
+				a.SetStatus("分析失败：" + err.Error())
 			} else {
 				t.err = ""
 				t.result = res
+				t.sample = img
+				a.SetStatus("已分析：" + filepath.Base(path))
 			}
 			a.Invalidate()
 		}
@@ -2182,11 +2239,13 @@ func (t *AnalysisTool) PreviewCaption(a *App) string {
 func (t *AnalysisTool) Run(a *App) {
 	defer a.finishRun()
 	if t.path == "" {
+		t.path = a.selectedPreviewPath()
+	}
+	if t.path == "" {
 		a.SetStatus("先选择一张图片")
 		return
 	}
 	t.analyse(a, t.path)
-	a.SetStatus("已分析：" + filepath.Base(t.path))
 }
 
 // ---------------------------------------------------------------------------
@@ -2258,7 +2317,7 @@ func (t *PixelTool) Panel(c *myui.Context, a *App) {
 		for _, p := range pixelPresets {
 			labels = append(labels, p.Label)
 		}
-		segmented(c, &t.preset, labels)
+		choiceGrid(c, &t.preset, labels, 3)
 		if t.preset != t.appliedPreset && t.preset >= 0 && t.preset < len(pixelPresets) {
 			t.appliedPreset = t.preset
 			p := pixelPresets[t.preset]
@@ -2299,7 +2358,7 @@ func (t *PixelTool) Panel(c *myui.Context, a *App) {
 		sliderRow(c, "强度", &t.strength, 0, 100, 1, "%.0f%%")
 		labels := make([]string, 0, len(engine.DitherLabels))
 		labels = append(labels, engine.DitherLabels...)
-		segmented(c, &t.dither, labels)
+		choiceGrid(c, &t.dither, labels, 2)
 		sliderRow(c, "亮度阈值", &t.threshold, 0, 255, 1, "%.0f")
 		switchField(c, &t.invert, "反相")
 	})
@@ -2575,30 +2634,53 @@ func (t *EmoteTool) Run(a *App) {
 // UpscaleTool is the optional AI page. Everything on it degrades to an explanation
 // when the component is absent: the core build must stay fully usable.
 type UpscaleTool struct {
-	modelDownload    studioJob[upscale.Model]
-	downloadVersion  uint64
-	downloadApplied  uint64
-	downloadProgress modelDownloadProgress
-	downloadModel    string
-	modelName        string
-	probe            studioJob[upscale.Environment]
-	probeVersion     uint64
-	manifestImport   studioJob[string]
-	manifestPath     string
-	manifestVersion  uint64
-	manifestApplied  uint64
-	initialised      bool
-	env              upscale.Environment
-	detected         bool
-	engine           string
-	models           string
-	model            int
-	scale            int
-	tile             float64
-	tta              bool
-	gpu              float64
-	format           int
-	busy             bool
+	clipboardImport                       studioJob[string]
+	pasteVersion                          uint64
+	pasteApplied                          uint64
+	results                               sync.Map
+	runState                              upscaleRunState
+	resultPreview                         studioJob[upscalePair]
+	comparisonHandle                      myui.Handle
+	zoom, split, centerX, centerY         float64
+	draggingComparison, panningComparison bool
+	pointerX, pointerY                    float64
+	preferencesLoaded                     bool
+	preferencesMu                         sync.Mutex
+	preferencesTimer                      *time.Timer
+	lastPreferences                       settings.Upscale
+	pendingPreferences                    *settings.Upscale
+	gpuIDs                                string
+	skipPreview                           bool
+	notifyComplete                        bool
+	advanced                              bool
+	modelImport                           studioJob[upscale.Model]
+	importVersion                         uint64
+	importApplied                         uint64
+	importScale                           int
+	double                                bool
+	customWidth                           float64
+	useCustomWidth                        bool
+	compression                           float64
+	modelDownload                         studioJob[upscale.Model]
+	downloadVersion                       uint64
+	downloadApplied                       uint64
+	downloadProgress                      modelDownloadProgress
+	downloadModel                         string
+	modelName                             string
+	probe                                 studioJob[upscale.Environment]
+	probeVersion                          uint64
+	initialised                           bool
+	env                                   upscale.Environment
+	detected                              bool
+	engine                                string
+	models                                string
+	model                                 int
+	scale                                 int
+	tile                                  float64
+	tta                                   bool
+	gpu                                   float64
+	format                                int
+	busy                                  bool
 }
 
 func (t *UpscaleTool) ID() string      { return ToolUpscale }
@@ -2617,7 +2699,13 @@ func (t *UpscaleTool) ensure() {
 
 func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 	t.ensure()
-	t.engine, t.models = a.Settings.AIEnginePath, a.Settings.AIModelsDir
+	t.loadPreferences(a)
+	t.applyClipboard(a)
+	t.models = a.Settings.AIModelsDir
+	if t.downloadModel == "" {
+		t.downloadModel = upscale.UpscaylModels()[0].Name
+	}
+	t.engine = upscale.EnginePathForModel(t.models, upscale.UpscaylModels()[0])
 	st := styles(c)
 	if !t.detected {
 		t.detected = true
@@ -2632,131 +2720,25 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 	if !probing {
 		t.env = env
 	}
-	_, importing, importErr := t.manifestImport.snapshot()
-	_, downloading, _ := t.modelDownload.snapshot()
-	if t.manifestVersion != t.manifestApplied && !importing {
-		t.manifestApplied = t.manifestVersion
-		t.detected = false
-	}
-	sectionCard(c, "组件状态", func() {
-		if t.busy {
-			myui.Text(c, "正在探测组件").FontSize(11).TextColor(st.TextDim)
-		}
-		if t.env.Available {
-			statusPill(c, "引擎可用", st.Success)
-		} else {
-			statusPill(c, "组件缺失", st.Warning)
-		}
-		if t.env.Reason != "" {
-			warnAlert(c, t.env.Reason)
-		}
-		if t.env.Version != "" {
-			myui.Text(c, truncate(t.env.Version, 48)).FontSize(10.5).TextColor(st.TextDim)
-		}
-		myui.Column(c).Gap(5).Children(func() {
-			label(c, "引擎可执行文件")
-			myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
-				textField(c, &a.Settings.AIEnginePath, "选择 realesrgan-ncnn-vulkan")
-				a.ghostButton(c, st, "选择", lucide.FolderOpen(), func() {
-					a.pickExecutable(&a.Settings.AIEnginePath, func() {
-						t.detected = false
-						a.Invalidate()
-					})
-				})
-			})
-		})
-		myui.Column(c).Gap(5).Children(func() {
-			label(c, "模型目录")
-			myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
-				textField(c, &a.Settings.AIModelsDir, "模型根目录（按模型名称分子目录）")
-				a.ghostButton(c, st, "选择", lucide.FolderOpen(), func() {
-					a.pickDirectoryInto(&a.Settings.AIModelsDir, func() {
-						t.detected = false
-						a.Invalidate()
-					})
-				})
-			})
-		})
-		a.ghostButton(c, st, "重新探测", lucide.RefreshCw(), func() {
-			t.detected = false
-		})
-		label(c, "可信模型清单（JSON）")
-		textField(c, &t.manifestPath, "输入可信来源的模型清单路径")
-		warnAlert(c, "仅导入可信来源的模型清单")
-		a.ghostButtonState(c, st, "导入模型清单", lucide.FilePlus(), importing || downloading || t.manifestPath == "" || t.models == "", false, func() {
-			t.manifestVersion++
-			source, root := t.manifestPath, t.models
-			t.manifestImport.request(a, fmt.Sprint(t.manifestVersion), func(ctx context.Context) (string, error) {
-				if ctx.Err() != nil {
-					return "", ctx.Err()
-				}
-				return source, upscale.ImportManifestContext(ctx, source, root)
-			})
-		})
-		if importing {
-			myui.Text(c, "正在核验模型清单").FontSize(11).TextColor(st.TextDim)
-		}
-		if importErr != nil {
-			warnAlert(c, "导入失败："+importErr.Error())
-		}
-		if t.manifestApplied > 0 && !importing && importErr == nil {
-			myui.Text(c, "模型清单已核验并保存").FontSize(11).TextColor(st.Success)
-		}
-	})
-
-	t.downloadPanel(c, a, st, importing)
-	sectionCard(c, "模型", func() {
-		if len(t.env.Models) == 0 {
-			warnAlert(c, "没有登记任何模型")
-			return
-		}
-		// A model name is long (realesrgan-x4plus-anime), so the picker is a select,
-		// not a segmented row: three labels in one 420 DIP row each lose their tail,
-		// and the tail is the part that says which model is which.
-		labels := make([]string, 0, len(t.env.Models))
-		for _, m := range t.env.Models {
-			labels = append(labels, m.Name)
-		}
-		if t.modelName == "" && t.model >= 0 && t.model < len(labels) {
-			t.modelName = labels[t.model]
-		}
-		selectField(c, &t.modelName, labels)
-		if idx := indexOf(labels, t.modelName); idx >= 0 {
-			t.model = idx
-		}
-		if t.model >= 0 && t.model < len(t.env.Models) {
-			m := t.env.Models[t.model]
-			metricRow(c, st, "适用", m.Purpose)
-			metricRow(c, st, "原生倍率", fmt.Sprintf("%d×", m.Scale))
-			state := "未安装"
-			switch {
-			case m.Installed && m.HashOK:
-				state = "已安装并校验"
-			case m.Installed:
-				state = "已安装但哈希未通过"
-			}
-			metricRow(c, st, "状态", state)
-			myui.Text(c, m.License).FontSize(10.5).TextColor(st.TextDim)
-			if m.Note != "" {
-				warnAlert(c, m.Note)
-			}
-		}
-	})
+	t.downloadPanel(c, a, st)
 
 	sectionCard(c, "参数", func() {
-		labels := []string{"2×", "3×", "4×"}
-		values := []int{2, 3, 4}
-		idx := 2
-		for i, v := range values {
-			if v == t.scale {
-				idx = i
+		factor := float64(t.scale)
+		sliderRow(c, "放大倍率", &factor, 1, 16, 1, "%.0f×")
+		t.scale = int(factor)
+		switchField(c, &t.double, "双重放大")
+		switchField(c, &t.useCustomWidth, "自定义输出宽度")
+		if t.useCustomWidth {
+			if t.customWidth < 1 {
+				t.customWidth = 1920
 			}
+			label(c, "输出宽度（px）")
+			numberField(c, &t.customWidth, 1, 16000, 1, "1920")
 		}
-		segmented(c, &idx, labels)
-		t.scale = values[idx]
 		sliderRow(c, "Tile（0 = 自动）", &t.tile, 0, 512, 32, "%.0f")
 		switchField(c, &t.tta, "TTA（更慢，画质略好）")
-		sliderRow(c, "GPU 设备（-1 = 自动）", &t.gpu, -1, 8, 1, "%.0f")
+		label(c, "GPU ID")
+		textField(c, &t.gpuIDs, "自动，或 0,1")
 		if t.scale != 4 {
 			statusPill(c, "含推理后缩放", st.TextDim)
 		}
@@ -2764,7 +2746,13 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 
 	sectionCard(c, "输出", func() {
 		segmented(c, &t.format, []string{"png", "jpg", "webp"})
+		sliderRow(c, "压缩", &t.compression, 0, 100, 1, "%.0f%%")
 	})
+	t.advancedPanel(c, a, st)
+	if name, percent, _ := t.runState.snapshot(); a.IsRunning() && name != "" {
+		myui.Text(c, fmt.Sprintf("%s · %d%%", name, percent)).FontSize(11).TextColor(st.TextSub).SingleLine()
+	}
+	t.persistPreferences(a)
 }
 
 func (t *UpscaleTool) PreviewCaption(a *App) string {
@@ -2776,8 +2764,15 @@ func (t *UpscaleTool) PreviewCaption(a *App) string {
 
 func (t *UpscaleTool) Run(a *App) {
 	t.ensure()
+	t.loadPreferences(a)
+	t.persistPreferences(a)
 	if _, downloading, _ := t.modelDownload.snapshot(); downloading {
 		a.SetStatus("请等待模型下载完成")
+		a.finishRun()
+		return
+	}
+	if _, importing, _ := t.modelImport.snapshot(); importing {
+		a.SetStatus("请等待模型导入完成")
 		a.finishRun()
 		return
 	}
@@ -2787,20 +2782,51 @@ func (t *UpscaleTool) Run(a *App) {
 		a.finishRun()
 		return
 	}
-	modelName := ""
-	if t.model >= 0 && t.model < len(models) {
-		modelName = models[t.model].Name
+	modelName := t.downloadModel
+	found := false
+	for _, model := range models {
+		if model.Name == modelName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.SetStatus("所选模型未登记，请重新选择或导入")
+		a.finishRun()
+		return
 	}
 	format := []string{"png", "jpg", "webp"}[t.format%3]
 	req := upscale.Request{EnginePath: t.engine, ModelsRoot: t.models, Model: modelName,
-		Scale: t.scale, Tile: int(t.tile), TTA: t.tta, GPU: int(t.gpu), Format: format}
+		Scale: t.scale, Tile: int(t.tile), TTA: t.tta, GPU: int(t.gpu), Format: format,
+		Double: t.double, Compression: int(t.compression), GPUs: t.gpuIDs}
+	if t.useCustomWidth {
+		req.CustomWidth = int(t.customWidth)
+	}
+	batchSize := a.Session.Len()
+	inference := make(chan struct{}, 1)
 	a.runBatchContext("AI 放大", func(ctx context.Context, index int, item batch.Item) engine.Result {
+		select {
+		case inference <- struct{}{}:
+			defer func() { <-inference }()
+		case <-ctx.Done():
+			return engine.Fail("CANCELLED", "已取消")
+		}
 		out, skipped := a.outputPathFor(item, "upscale", extOf(format), index+1)
 		if skipped {
 			return engine.Skip("目标已存在")
 		}
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
+		info, statErr := os.Stat(item.Path)
+		if statErr != nil {
+			return engine.Fail("INPUT_MISSING", statErr.Error())
+		}
+		t.runState.start(item.Name)
+		one.Progress = func(percent int, line string) {
+			if t.runState.record(percent, line) {
+				a.Invalidate()
+			}
+		}
 		report, err := upscale.Run(ctx, one)
 		if err != nil {
 			code := "ENGINE_FAILED"
@@ -2810,6 +2836,23 @@ func (t *UpscaleTool) Run(a *App) {
 			return engine.Fail(code, err.Error())
 		}
 		res := engine.OK()
+		t.runState.record(100, "")
+		t.results.Store(item.Path, upscaleResult{report: *report, sourceSize: info.Size(), sourceMod: info.ModTime().UnixNano()})
+		statsErr := a.Session.UpdateSettings(func(next *settings.Settings) {
+			next.UpscaleStats.Images++
+			if batchSize > 1 {
+				next.UpscaleStats.BatchImages++
+			}
+			if req.Double {
+				next.UpscaleStats.DoubleImages++
+			}
+			next.UpscaleStats.LastMillis = report.Elapsed.Milliseconds()
+			next.UpscaleStats.TotalMillis += report.Elapsed.Milliseconds()
+			next.UpscaleStats.LastUsed = time.Now().Format("2006-01-02 15:04")
+		})
+		if statsErr != nil {
+			report.Warnings = append(report.Warnings, "本地统计保存失败："+statsErr.Error())
+		}
 		res.OutputPath = out
 		res.Width, res.Height = report.Width, report.Height
 		if len(report.Warnings) > 0 {

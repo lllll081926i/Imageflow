@@ -12,7 +12,7 @@ func TestModelDownloadSettingsControlsPersist(t *testing.T) {
 	tester := myui.NewTester(func(c *myui.Context) {
 		app.modelDownloadSettings(c, newStyle(false), &app.Settings)
 	}, 1000, 1200)
-	for _, text := range []string{"AI 模型下载", "系统代理", "代理地址（默认端口 7890）", "模型保存目录", "本地推理引擎"} {
+	for _, text := range []string{"AI 模型下载", "系统代理", "代理地址（默认端口 7890）"} {
 		if !tester.HasText(text) {
 			t.Fatalf("设置项缺失：%s", text)
 		}
@@ -26,12 +26,14 @@ func TestModelDownloadSettingsControlsPersist(t *testing.T) {
 			t.Fatalf("代理选择未保存：%s", choice.label)
 		}
 	}
-	if err := tester.Click("国内加速直连"); err != nil {
-		t.Fatal(err)
-	}
-	tester.Frame()
-	if app.Settings.AIModelSource != "mirror" {
-		t.Fatal("下载源选择未保存")
+	for _, choice := range []struct{ label, source string }{{"国内加速直连", "mirror"}, {"普通 GitHub", "github"}, {"国内加速直连", "mirror"}} {
+		if err := tester.Click(choice.label); err != nil {
+			t.Fatal(err)
+		}
+		tester.Frame()
+		if app.Settings.AIModelSource != choice.source {
+			t.Fatal("下载源不能反复切换")
+		}
 	}
 	if err := settings.Save(app.Settings); err != nil {
 		t.Fatal(err)

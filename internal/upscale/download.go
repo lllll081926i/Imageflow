@@ -107,19 +107,28 @@ func downloadClient(options DownloadOptions) (*http.Client, error) {
 }
 
 func DownloadableModels() []Model {
-	models := defaultRegistry()
-	hashes := []string{
-		"e0adbaf6c011eabe0e70b7da569482465bae42eba7a86ef58e23d0917f5c5edc",
-		"3946c072129fa71e38c2d2f2a63bb4db67d3981622d693de24e59de5e5cf2445",
-		"ea8b9ba4d93a0cc2bba7bacc9c4e3a20c618a76917a5560cbc1360c16e212280",
-	}
-	for index := range models {
-		models[index].SHA256 = hashes[index]
-	}
-	return models
+	return UpscaylModels()
 }
 
 func DownloadModel(ctx context.Context, root, name string, options DownloadOptions, progress func(int64, int64)) (Model, error) {
+	for _, model := range UpscaylModels() {
+		if model.Name == name {
+			return downloadUpscayl(ctx, root, model, options, progress, false)
+		}
+	}
+	return Model{}, fmt.Errorf("不支持的 Upscayl 模型：%s", name)
+}
+
+func DownloadComponent(ctx context.Context, root, name string, options DownloadOptions, progress func(int64, int64)) (Model, error) {
+	for _, model := range UpscaylModels() {
+		if model.Name == name {
+			return downloadUpscayl(ctx, root, model, options, progress, true)
+		}
+	}
+	return Model{}, fmt.Errorf("不支持的 Upscayl 模型：%s", name)
+}
+
+func downloadModel(ctx context.Context, root, name string, options DownloadOptions, progress func(int64, int64), component bool) (Model, error) {
 	var model Model
 	for _, candidate := range DownloadableModels() {
 		if candidate.Name == name {
@@ -210,6 +219,11 @@ func DownloadModel(ctx context.Context, root, name string, options DownloadOptio
 	}
 	if progress != nil {
 		progress(received, response.ContentLength)
+	}
+	if component {
+		if err := installEngineArchive(ctx, archivePath, root); err != nil {
+			return model, err
+		}
 	}
 	return model, installModelArchive(ctx, archivePath, root, model)
 }

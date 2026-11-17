@@ -29,8 +29,7 @@ func TestHomePageRenders(t *testing.T) {
 	}
 }
 
-// TestHomeSearchFiltersTheSidebarAndThePage pins that the two search boxes are one
-// query: typing in the landing page narrows the sidebar list too.
+// TestHomeSearchFiltersTheSidebarAndThePage 验证首页搜索不改变侧栏导航。
 func TestHomeSearchFiltersTheSidebarAndThePage(t *testing.T) {
 	a := newTestApp(t)
 	a.ShowHome = true
@@ -40,12 +39,11 @@ func TestHomeSearchFiltersTheSidebarAndThePage(t *testing.T) {
 	if !tt.HasText("找到") {
 		t.Errorf("the result count is missing: %v", tt.Texts())
 	}
-	// The sidebar shows the match and hides an unrelated tool.
 	if !tt.HasText("专业调色") {
 		t.Error("the matching tool is not in the sidebar")
 	}
-	if tt.HasText("转 PDF") {
-		t.Error("an unrelated tool survived the filter")
+	if !tt.HasText("转 PDF") || a.railToolCount() != len(a.Tools) {
+		t.Error("首页搜索改变了侧栏导航")
 	}
 }
 
@@ -116,10 +114,7 @@ func TestGroupHeaderFoldsTheSection(t *testing.T) {
 	}
 }
 
-// TestCollapsedRailSearchOpensTheLandingPage pins the narrow-window behaviour: the
-// 72 DIP strip has no room for a text box, so its search button leads to the page
-// that does.
-func TestCollapsedRailSearchOpensTheLandingPage(t *testing.T) {
+func TestCollapsedRailHasNoSearchOrGroupGaps(t *testing.T) {
 	a := newTestApp(t)
 	a.Active = 2
 	tt := myui.NewTester(a.View, 900, 800)
@@ -127,11 +122,13 @@ func TestCollapsedRailSearchOpensTheLandingPage(t *testing.T) {
 	if !a.railCollapsedAuto() {
 		t.Fatalf("a 900 DIP window should render the collapsed rail")
 	}
-	if err := tt.Click("搜索工具"); err != nil {
-		t.Fatalf("click search icon: %v", err)
+	if _, found := tt.Access("搜索工具"); found {
+		t.Fatal("收起侧栏仍包含搜索按钮")
 	}
-	if !a.ShowHome {
-		t.Fatal("the collapsed search button did not open the landing page")
+	for index, row := range a.railRows() {
+		if row.Header || row.Y != float32(index*(railRowHeight+railRowGap)) {
+			t.Fatalf("收起侧栏包含分组空隙：%+v", row)
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lllll081926i/imageflow-go/internal/appcache"
 	"github.com/lllll081926i/imageflow-go/internal/engine"
 	"github.com/lllll081926i/imageflow-go/internal/paths"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
@@ -35,22 +36,25 @@ type Item struct {
 
 // Session is the mutable state shared by the UI and the batch runners.
 type Session struct {
-	Mu         sync.Mutex
-	settingsMu sync.Mutex
-	Items      []*Item
-	Settings   settings.Settings
-	OutputOp   string
-	Cancel     *Cancel
-	Progress   Progress
-	Running    bool
-	LastRun    time.Time
-	nextItemID uint64
-	runID      uint64
+	Mu              sync.Mutex
+	settingsMu      sync.Mutex
+	settingsPath    string
+	settingsPathErr error
+	Items           []*Item
+	Settings        settings.Settings
+	OutputOp        string
+	Cancel          *Cancel
+	Progress        Progress
+	Running         bool
+	LastRun         time.Time
+	nextItemID      uint64
+	runID           uint64
 }
 
 // NewSession creates an empty session with the given settings.
 func NewSession(s settings.Settings) *Session {
-	return &Session{Settings: cloneSettings(s)}
+	path, err := settings.Path()
+	return &Session{Settings: cloneSettings(s), settingsPath: path, settingsPathErr: err}
 }
 
 // Add merges expanded files into the session, keeping existing rows.
@@ -91,6 +95,29 @@ func (s *Session) Remove(index int) {
 		return
 	}
 	s.Items = append(s.Items[:index], s.Items[index+1:]...)
+}
+
+func (s *Session) ReorderFiles(order []string) bool {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	if s.Running || len(order) != len(s.Items) {
+		return false
+	}
+	byPath := make(map[string]*Item, len(s.Items))
+	for _, item := range s.Items {
+		byPath[item.Path] = item
+	}
+	reordered := make([]*Item, len(order))
+	for index, path := range order {
+		item, exists := byPath[path]
+		if !exists {
+			return false
+		}
+		reordered[index] = item
+		delete(byPath, path)
+	}
+	s.Items = reordered
+	return true
 }
 
 // Clear empties the file list.
@@ -200,7 +227,10 @@ func (s *Session) UpdateSettings(change func(*settings.Settings)) error {
 	defer s.settingsMu.Unlock()
 	next := s.SettingsSnapshot()
 	change(&next)
-	if err := settings.Save(next); err != nil {
+	if s.settingsPathErr != nil {
+		return s.settingsPathErr
+	}
+	if err := settings.SaveTo(s.settingsPath, next); err != nil {
 		return err
 	}
 	s.Mu.Lock()
@@ -246,6 +276,9 @@ func (s *Session) SettingsSnapshot() settings.Settings {
 // preserved position.
 func OutputDirFor(s settings.Settings, inputPath, relPath string) string {
 	if s.DefaultOutputDir == "" {
+		if appcache.IsClipboardInput(s.AIModelsDir, inputPath) {
+			return filepath.Join(filepath.Dir(s.AIModelsDir), "outputs")
+		}
 		return filepath.Dir(inputPath)
 	}
 	base := s.DefaultOutputDir
@@ -275,7 +308,7 @@ func BuildOutputPath(s settings.Settings, inputPath, relPath, op, ext string, se
 	target := filepath.Join(dir, name)
 	root := s.DefaultOutputDir
 	if root == "" {
-		root = filepath.Dir(inputPath)
+		root = OutputDirFor(s, inputPath, "")
 	}
 	if err := paths.CheckContained(root, target); err != nil {
 		return ""

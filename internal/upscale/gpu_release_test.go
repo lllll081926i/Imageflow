@@ -19,25 +19,24 @@ func TestRealGPUReleaseAcceptance(t *testing.T) {
 	if os.Getenv("IMAGEFLOW_GPU_RELEASE") != "1" {
 		t.Skip("需要显式启用发布前真实 GPU 验收")
 	}
-	base := os.Getenv("IMAGEFLOW_GPU_DIRECTORY")
 	directory := os.Getenv("IMAGEFLOW_GPU_RELEASE_DIRECTORY")
-	if !filepath.IsAbs(base) || !filepath.IsAbs(directory) {
-		t.Fatal("必须指定引擎目录和独立验收输出目录绝对路径")
+	if !filepath.IsAbs(directory) {
+		t.Fatal("必须指定独立验收输出目录绝对路径")
 	}
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		t.Fatal(err)
 	}
-	engine := filepath.Join(base, "realesrgan-ncnn-vulkan.exe")
-	root := filepath.Join(base, "trusted-models")
+	root := filepath.Join(directory, "models")
+	engine := prepareUpscaylLive(t, root)
 	fixtures := filepath.Join("..", "..", "docs", "Go_Image_Toolbox_Full_Delivery_v2.0", "assets", "fixtures")
 	scenarios := []struct {
 		name, input  string
 		model, scale int
 	}{
 		{"screenshot-4x", "screenshot_text_1600x900.png", 0, 4},
-		{"odd-anime-4x", "odd_1001x667_crop.png", 1, 4},
-		{"alpha-video-2x", "alpha_512x512.png", 2, 2},
-		{"icon-alpha-4x", "icon_alpha_256.png", 1, 4},
+		{"odd-digital-art-4x", "odd_1001x667_crop.png", 6, 4},
+		{"alpha-lite-2x", "alpha_512x512.png", 1, 2},
+		{"icon-alpha-4x", "icon_alpha_256.png", 6, 4},
 	}
 	if photos := os.Getenv("IMAGEFLOW_GPU_PHOTO_FIXTURES"); photos != "" {
 		photo, err := imaging.Open(filepath.Join(photos, "flowers.png"))
@@ -82,7 +81,7 @@ func TestRealGPUReleaseAcceptance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario.name == "alpha-video-2x" || scenario.name == "icon-alpha-4x" {
+			if scenario.name == "alpha-lite-2x" || scenario.name == "icon-alpha-4x" {
 				original, err := imaging.Open(input)
 				if err != nil {
 					t.Fatal(err)

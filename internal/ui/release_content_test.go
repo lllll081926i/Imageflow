@@ -97,7 +97,7 @@ func TestReleaseSettingsScrollAndSave(t *testing.T) {
 		tester := myui.NewTester(app.View, width, 620)
 		clicked := false
 		for attempt := 0; attempt < 20; attempt++ {
-			if control, found := tester.AccessByRole(myui.RoleSwitch, "减弱动效"); found && !control.Offscreen && control.Bounds.Y > 68 && control.Bounds.Y+control.Bounds.H < 500 {
+			if control, found := tester.AccessByRole(myui.RoleSwitch, "后台运行"); found && !control.Offscreen && control.Bounds.Y > 68 && control.Bounds.Y+control.Bounds.H < 500 {
 				tester.ClickAt(control.Bounds.X+control.Bounds.W/2, control.Bounds.Y+control.Bounds.H/2)
 				tester.Frame()
 				clicked = true
@@ -106,13 +106,13 @@ func TestReleaseSettingsScrollAndSave(t *testing.T) {
 			tester.Scroll(float32(width-200), 300, 0, 180)
 			tester.Frame()
 		}
-		if !clicked || !app.Settings.UIReducedMotion {
-			t.Fatalf("宽度 %d：设置页滚动后无法修改减弱动效", width)
+		if !clicked || !app.Settings.BackgroundRunning {
+			t.Fatalf("宽度 %d：设置页滚动后无法修改后台运行", width)
 		}
 		if err := tester.Click("保存设置"); err != nil {
 			t.Fatalf("宽度 %d：固定保存按钮不可操作：%v", width, err)
 		}
-		if !settings.Load().UIReducedMotion {
+		if !settings.Load().BackgroundRunning {
 			t.Fatal("界面修改没有保存到设置文件")
 		}
 		app.CancelStudioWork()

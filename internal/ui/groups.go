@@ -132,7 +132,7 @@ var toolSummary = map[string]string{
 	ToolConvert:  "转成 JPG、PNG、WebP、AVIF、TIFF、BMP 或 ICO，可选保留元数据",
 	ToolResize:   "按比例、长边、短边缩放，或一次导出多种尺寸",
 	ToolCrop:     "常用比例与九宫取景，可加圆角与填充色",
-	ToolCompress: "质量优先、体积优先或无损优化，保持像素尺寸",
+	ToolCompress: "调整编码质量，或使用 PNG / WebP 无损压缩，保持像素尺寸",
 	ToolEdit:     "旋转、翻转、画布、边框、圆角、投影与基础调色，可撤销",
 
 	ToolGrid:       "把一张图切成 2×2 到 5×5 的等分宫格",
@@ -156,7 +156,7 @@ var toolSummary = map[string]string{
 	ToolPixel:   "严格黑白与抖动点阵，可选真正的 1-bit PNG",
 	ToolEmote:   "上下字幕、居中大字与对话气泡，动图可按帧加字",
 
-	ToolUpscale: "可选的本地推理放大；需另装引擎与模型",
+	ToolUpscale: "一键下载 Upscayl 组件，本地放大与拖线对比",
 
 	ToolPDF: "纸张、方向、边距与网格拼版（冻结维护）",
 }
@@ -204,28 +204,11 @@ func (a *App) groupExpanded(key string) bool {
 	if a.collapsedGroups == nil {
 		return true
 	}
-	// The group that holds the current page is always open: hiding the row of the
-	// page you are on leaves the selection pill with nothing to point at.
-	for i, tool := range a.Tools {
-		if toolGroupKey(tool) == key && i == a.Active {
-			return true
-		}
-	}
 	return !a.collapsedGroups[key]
 }
 
-// toggleGroup flips one group's open state.
-//
-// The group holding the current page cannot be folded: its rows must stay visible or
-// the selection pill would point at nothing. The click is refused rather than
-// recorded, so the section does not suddenly collapse later when the user switches
-// pages.
+// toggleGroup 切换分组展开状态，不改变当前工具。
 func (a *App) toggleGroup(key string) {
-	for i, tool := range a.Tools {
-		if toolGroupKey(tool) == key && i == a.Active {
-			return
-		}
-	}
 	if a.collapsedGroups == nil {
 		a.collapsedGroups = map[string]bool{}
 	}
@@ -277,7 +260,7 @@ type railRow struct {
 // Row metrics. A header is shorter than a tool row because it carries no plate: the
 // heading plus the column's gap is enough separation between two sections, and an
 // extra spacer would be a second source of y arithmetic.
-const railHeaderHeight = 28
+const railHeaderHeight = 36
 
 // railRows computes the visible navigation as a list of positioned rows.
 //
@@ -314,7 +297,7 @@ func (a *App) railRowsKey() string {
 			expanded = append(expanded, '0')
 		}
 	}
-	return fmt.Sprintf("%s|%s|%v|%d|%v", a.searchQuery, string(expanded), a.railOrderIDs, a.Active, sortedFoldKeys(a.collapsedGroups))
+	return fmt.Sprintf("%s|%v|%d|%v|%t", string(expanded), a.railOrderIDs, a.Active, sortedFoldKeys(a.collapsedGroups), a.railCollapsedAuto())
 }
 
 // sortedFoldKeys renders the folded set in a stable order, so the memo key does
@@ -348,13 +331,6 @@ func (a *App) buildRailRows() []railRow {
 		return append(rows, row)
 	}
 
-	if strings.TrimSpace(a.searchQuery) != "" {
-		rows := make([]railRow, 0, len(a.Tools))
-		for _, idx := range a.matchedTools() {
-			rows = push(rows, railRow{Tool: idx, Group: toolGroupKey(a.Tools[idx])}, railRowHeight)
-		}
-		return rows
-	}
 	// The tools of one group, in the saved order.
 	byGroup := map[string][]int{}
 	for _, idx := range a.railOrderSnapshot() {
@@ -370,8 +346,10 @@ func (a *App) buildRailRows() []railRow {
 		if len(tools) == 0 {
 			continue
 		}
-		rows = push(rows, railRow{Header: true, Group: g.Key, Tool: -1}, railHeaderHeight)
-		if !a.groupExpanded(g.Key) {
+		if !a.railCollapsedAuto() {
+			rows = push(rows, railRow{Header: true, Group: g.Key, Tool: -1}, railHeaderHeight)
+		}
+		if !a.railCollapsedAuto() && !a.groupExpanded(g.Key) {
 			continue
 		}
 		for _, idx := range tools {

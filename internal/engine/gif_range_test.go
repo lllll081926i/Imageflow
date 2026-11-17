@@ -67,4 +67,7 @@ func TestGIFFrameRangeRejectsEmptyRange(t *testing.T) {
 	if res.ErrorCode != "GIF_BAD_REQUEST" {
 		t.Errorf("code = %s", res.ErrorCode)
 	}
+	if _, err := os.Stat(filepath.Join(dir, "x")); !os.IsNotExist(err) {
+		t.Fatal("无效帧范围不应创建输出目录")
+	}
 }

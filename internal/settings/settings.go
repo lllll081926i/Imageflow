@@ -54,7 +54,59 @@ type Settings struct {
 	// Collage keeps the collage page's parameters across sessions: a template, a
 	// canvas ratio and a set of annotations take minutes to put together, and
 	// losing them on every launch made the page expensive to use.
-	Collage Collage `json:"collage"`
+	Collage      Collage      `json:"collage"`
+	Upscale      Upscale      `json:"upscale"`
+	UpscaleStats UpscaleStats `json:"upscale_stats"`
+}
+
+type Upscale struct {
+	Model          string `json:"model"`
+	Scale          int    `json:"scale"`
+	Double         bool   `json:"double"`
+	UseCustomWidth bool   `json:"use_custom_width"`
+	CustomWidth    int    `json:"custom_width"`
+	Tile           int    `json:"tile"`
+	TTA            bool   `json:"tta"`
+	GPU            string `json:"gpu"`
+	Format         int    `json:"format"`
+	Compression    int    `json:"compression"`
+	SkipPreview    bool   `json:"skip_preview"`
+	NotifyComplete bool   `json:"notify_complete"`
+}
+
+type UpscaleStats struct {
+	Images       int64  `json:"images"`
+	BatchImages  int64  `json:"batch_images"`
+	DoubleImages int64  `json:"double_images"`
+	TotalMillis  int64  `json:"total_millis"`
+	LastMillis   int64  `json:"last_millis"`
+	LastUsed     string `json:"last_used"`
+}
+
+func DefaultUpscale() Upscale {
+	return Upscale{Model: "upscayl-standard-4x", Scale: 4, CustomWidth: 1920, NotifyComplete: true}
+}
+
+func (preferences *Upscale) Normalize() {
+	defaults := DefaultUpscale()
+	if preferences.Scale < 1 || preferences.Scale > 16 {
+		preferences.Scale = defaults.Scale
+	}
+	if preferences.Model == "" || strings.HasPrefix(preferences.Model, "realesr") {
+		preferences.Model = defaults.Model
+	}
+	if preferences.CustomWidth < 1 || preferences.CustomWidth > 16000 {
+		preferences.CustomWidth = defaults.CustomWidth
+	}
+	if preferences.Tile < 0 || preferences.Tile > 2048 || preferences.Tile > 0 && preferences.Tile < 32 {
+		preferences.Tile = 0
+	}
+	if preferences.Format < 0 || preferences.Format > 2 {
+		preferences.Format = 0
+	}
+	if preferences.Compression < 0 || preferences.Compression > 100 {
+		preferences.Compression = 0
+	}
 }
 
 // Collage is the persisted state of the collage page.
@@ -170,6 +222,7 @@ func Default() Settings {
 		RememberWindowState:     true,
 		UITransparency:          true,
 		Collage:                 DefaultCollage(),
+		Upscale:                 DefaultUpscale(),
 		AIModelsDir:             resolveModelDirectory("", executable, ""),
 		AIModelSource:           "github",
 		AIModelMirror:           "https://ghfast.top/",
@@ -247,6 +300,7 @@ func (s *Settings) normalize() {
 		s.RecentOutputDirs = s.RecentOutputDirs[:4]
 	}
 	s.Collage.normalize()
+	s.Upscale.Normalize()
 }
 
 // normalize repairs a collage block read from an older or hand-edited file, so a
@@ -334,6 +388,10 @@ func Save(s Settings) error {
 	if err != nil {
 		return err
 	}
+	return SaveTo(path, s)
+}
+
+func SaveTo(path string, s Settings) error {
 	s.normalize()
 	if sameModelDirectory(s.AIModelsDir, Default().AIModelsDir) {
 		s.AIModelsDir = "models"

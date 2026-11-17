@@ -9,6 +9,7 @@ package engine
 // team asks for: 1:1, 4:3, 3:2, 16:9, 21:9 and their portrait turns.
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"image/draw"
@@ -77,18 +78,9 @@ func CropBox(req CropRequest) Result {
 	if err != nil {
 		return Fail("READ_FAILED", err.Error())
 	}
-	cropped := cropToRatio(opened.Image, req.RatioW, req.RatioH, req.Anchor)
-	if req.ScaledWidth > 0 && req.ScaledHeight > 0 {
-		if err := output.CheckSize(req.ScaledWidth, req.ScaledHeight); err != nil {
-			return Fail("OUTPUT_TOO_LARGE", err.Error())
-		}
-		cropped = imaging.Resize(cropped, req.ScaledWidth, req.ScaledHeight, imaging.Lanczos)
-	}
-	if err := output.CheckImage(cropped); err != nil {
+	cropped, err := RenderCropImage(opened.Image, req)
+	if err != nil {
 		return Fail("OUTPUT_TOO_LARGE", err.Error())
-	}
-	if radius := clampInt(req.Radius, 0, 50); radius > 0 {
-		cropped = roundCorners(cropped, radius, req.Background)
 	}
 
 	format := normalizeFormat(req.OutputFormat)
@@ -111,6 +103,28 @@ func CropBox(req CropRequest) Result {
 	out.Width = cropped.Bounds().Dx()
 	out.Height = cropped.Bounds().Dy()
 	return withSizes(out, req.InputPath, target)
+}
+
+func RenderCropImage(source image.Image, req CropRequest) (image.Image, error) {
+	if source == nil || req.RatioW <= 0 || req.RatioH <= 0 {
+		return nil, errors.New("裁剪图片或比例无效")
+	}
+	if req.ScaledWidth > 0 && req.ScaledHeight > 0 {
+		if err := output.CheckSize(req.ScaledWidth, req.ScaledHeight); err != nil {
+			return nil, err
+		}
+	}
+	cropped := cropToRatio(source, req.RatioW, req.RatioH, req.Anchor)
+	if req.ScaledWidth > 0 && req.ScaledHeight > 0 {
+		cropped = imaging.Resize(cropped, req.ScaledWidth, req.ScaledHeight, imaging.Lanczos)
+	}
+	if err := output.CheckImage(cropped); err != nil {
+		return nil, err
+	}
+	if radius := clampInt(req.Radius, 0, 50); radius > 0 {
+		cropped = roundCorners(cropped, radius, req.Background)
+	}
+	return cropped, nil
 }
 
 // cropToRatio returns the largest box of the given ratio that fits the source,

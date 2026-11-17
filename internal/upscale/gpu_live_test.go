@@ -2,8 +2,6 @@ package upscale
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -22,25 +20,11 @@ func TestRealGPUInference(t *testing.T) {
 		t.Skip("需要显式启用真实 GPU 推理验证")
 	}
 	directory := os.Getenv("IMAGEFLOW_GPU_DIRECTORY")
-	archivePath := os.Getenv("IMAGEFLOW_GPU_ARCHIVE")
-	if !filepath.IsAbs(directory) || !filepath.IsAbs(archivePath) {
-		t.Fatal("必须指定独立验收目录和已校验的官方归档绝对路径")
-	}
-	archive, err := os.ReadFile(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(archive)
-	if hex.EncodeToString(digest[:]) != ModelBundleSHA256 {
-		t.Fatal("官方归档哈希不匹配")
+	if !filepath.IsAbs(directory) {
+		t.Fatal("必须指定独立验收目录绝对路径")
 	}
 	modelsRoot := filepath.Join(directory, "trusted-models")
-	for _, model := range DownloadableModels() {
-		if err := installModelArchive(context.Background(), archivePath, modelsRoot, model); err != nil {
-			t.Fatal(err)
-		}
-	}
-	engine := filepath.Join(directory, "realesrgan-ncnn-vulkan.exe")
+	engine := prepareUpscaylLive(t, modelsRoot)
 	environment := Detect(engine, modelsRoot)
 	if !environment.Available {
 		t.Fatal(environment.Reason)
@@ -60,8 +44,8 @@ func TestRealGPUInference(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, engine, "-i", inputPath,
 				"-o", filepath.Join(directory, fmt.Sprintf("engine-gpu-%d.png", gpu)),
-				"-m", DownloadableModels()[2].Dir(modelsRoot), "-n", "realesr-animevideov3",
-				"-s", "2", "-t", "64", "-g", fmt.Sprint(gpu), "-f", "png", "-v")
+				"-m", DownloadableModels()[1].Dir(modelsRoot), "-n", DownloadableModels()[1].engineName(),
+				"-z", "4", "-s", "4", "-t", "64", "-g", fmt.Sprint(gpu), "-f", "png", "-v")
 			hideWindow(cmd)
 			started := time.Now()
 			log, runErr := cmd.CombinedOutput()
@@ -83,12 +67,12 @@ func TestRealGPUInference(t *testing.T) {
 		tta    bool
 	}{
 		{"photo-native", 0, 4, "png", 0, false},
-		{"anime-native", 1, 4, "png", 0, false},
-		{"video-native", 2, 2, "png", 0, false},
+		{"digital-art-native", 6, 4, "png", 0, false},
+		{"lite-native", 1, 4, "png", 0, false},
 		{"photo-downscale-jpg", 0, 2, "jpg", 0, false},
 		{"photo-downscale-webp", 0, 3, "webp", 0, false},
-		{"video-tta", 2, 2, "png", 0, true},
-		{"video-amd", 2, 2, "png", 1, false},
+		{"lite-tta", 1, 2, "png", 0, true},
+		{"lite-amd", 1, 2, "png", 1, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			outputPath := filepath.Join(directory, scenario.name+"."+scenario.format)

@@ -32,8 +32,6 @@ func (t *CropTool) ID() string      { return ToolCrop }
 func (t *CropTool) Name() string    { return "图片裁剪" }
 func (t *CropTool) Icon() *myui.SVG { return lucide.Crop() }
 
-var cropAnchorLabels = []string{"↖", "↑", "↗", "←", "·", "→", "↙", "↓", "↘"}
-
 func (t *CropTool) ensure() {
 	if t.customText == "" {
 		t.customText = "5:4"
@@ -75,32 +73,10 @@ func (t *CropTool) Panel(c *myui.Context, a *App) {
 			labels = append(labels, ratio.Label())
 		}
 		labels = append(labels, "自定义")
-		selected := t.ratio
-		if selected < 0 || selected >= len(labels) {
-			selected = 0
-		}
-		// Two rows of pills rather than one: eleven options in a single row
-		// squeeze the labels to two characters each.
-		half := (len(labels) + 1) / 2
-		first := selected
-		segmented(c, &first, labels[:half])
-		if selected < half {
-			t.ratio = first
-			selected = first
-		}
-		if len(labels) > half {
-			second := selected - half
-			if second < 0 {
-				second = 0
-			}
-			segmented(c, &second, labels[half:])
-			if selected >= half {
-				t.ratio = second + half
-			}
-		}
 		if t.ratio < 0 || t.ratio >= len(labels) {
 			t.ratio = 0
 		}
+		choiceGrid(c, &t.ratio, labels, 3)
 		if t.ratio == len(engine.CropRatios) {
 			_, valid := engine.ParseCropRatio(t.customText)
 			myui.Column(c).Gap(5).Children(func() {
@@ -114,39 +90,8 @@ func (t *CropTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "取景位置", func() {
-		myui.Row(c).FillWidth().Gap(6).Children(func() {
-			for i, glyph := range cropAnchorLabels {
-				index := i
-				active := t.anchor == index
-				btn := myui.ButtonBase(c).Grow(1).Height(30).Radius(styles(c).RadiusPill).
-					Justify(myui.Center).AlignItems(myui.Center).
-					Cursor(myui.CursorPointer).Label(engine.CropAnchors[index]).
-					FocusRingColor(styles(c).Brand).FocusRingOffset(1).
-					Transition(motion(springTap))
-				st := styles(c)
-				switch {
-				case active && btn.Pressed():
-					btn.Gradient(st.BrandDeep, st.BrandGradientTo, 90).Scale(0.96, 0.96)
-				case active:
-					btn.Gradient(st.Brand, st.BrandGradientTo, 90)
-				case btn.Pressed():
-					btn.Border(1, st.BrandDeep).Background(st.DividerTop).Scale(0.96, 0.96)
-				case btn.Hovered():
-					btn.Border(1, st.Brand).Background(st.Card)
-				default:
-					btn.Border(1, st.Divider).Background(st.Recessed)
-				}
-				btn.Children(func() {
-					col := st.TextSub
-					if active {
-						col = myui.RGB(255, 255, 255)
-					}
-					myui.Text(c, glyph).FontSize(12).TextColor(col)
-				})
-				if btn.Clicked() {
-					t.anchor = index
-				}
-			}
+		anchorPicker(c, anchorPosition(t.anchor), func(position string) {
+			t.anchor = indexOf(engine.CropAnchors, position)
 		})
 	})
 
@@ -195,28 +140,32 @@ func (t *CropTool) PreviewCaption(a *App) string {
 
 func (t *CropTool) Run(a *App) {
 	t.ensure()
+	request := t.request()
+	a.runBatch("裁剪", func(index int, item batch.Item) engine.Result {
+		req := request
+		out, skipped := a.outputPathFor(item, "crop", extOf(req.OutputFormat), index+1)
+		if skipped {
+			return engine.Skip("目标已存在")
+		}
+		req.InputPath, req.OutputPath = item.Path, out
+		return engine.CropBox(req)
+	})
+}
+
+func (t *CropTool) request() engine.CropRequest {
 	ratio := t.ratioValue()
 	anchor := "c"
 	if t.anchor >= 0 && t.anchor < len(engine.CropAnchors) {
 		anchor = engine.CropAnchors[t.anchor]
 	}
-	scale, w, h, radius, bg, format, quality := t.scale, int(t.outWidth), int(t.outHeight), int(t.radius), t.bgHex, t.format, int(t.quality)
-	a.runBatch("裁剪", func(index int, item batch.Item) engine.Result {
-		ext := extOf(format)
-		out, skipped := a.outputPathFor(item, "crop", ext, index+1)
-		if skipped {
-			return engine.Skip("目标已存在")
-		}
-		req := engine.CropRequest{
-			InputPath: item.Path, OutputPath: out,
-			RatioW: ratio.W, RatioH: ratio.H, Anchor: anchor,
-			Radius: radius, Background: bg, OutputFormat: format, Quality: quality,
-		}
-		if scale == 1 {
-			req.ScaledWidth, req.ScaledHeight = w, h
-		}
-		return engine.CropBox(req)
-	})
+	req := engine.CropRequest{
+		RatioW: ratio.W, RatioH: ratio.H, Anchor: anchor,
+		Radius: int(t.radius), Background: t.bgHex, OutputFormat: t.format, Quality: int(t.quality),
+	}
+	if t.scale == 1 {
+		req.ScaledWidth, req.ScaledHeight = int(t.outWidth), int(t.outHeight)
+	}
+	return req
 }
 
 // IconTool generates an application icon bundle.

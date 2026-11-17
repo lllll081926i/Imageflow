@@ -245,6 +245,14 @@ func (c *Cache) Len() int {
 	return len(c.entries)
 }
 
+func (c *Cache) ClearMemory() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = map[string]*memoryEntry{}
+	c.order = nil
+	c.totalBytes = 0
+}
+
 // OrderLen reports the LRU order's length, for tests: it must equal Len, or an
 // entry would be evicted out of turn.
 func (c *Cache) OrderLen() int {

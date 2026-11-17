@@ -3,8 +3,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
 	"github.com/lllll081926i/imageflow-go/internal/engine"
 	"github.com/lllll081926i/imageflow-go/internal/paths"
@@ -20,6 +22,11 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 }
 
 func (a *App) runBatchContext(verb string, runOne func(context.Context, int, batch.Item) engine.Result) {
+	notify := false
+	if tool, ok := a.ActiveTool().(*UpscaleTool); ok {
+		notify = tool.notifyComplete
+	}
+	window := a.Window
 	a.Session.ResetStatus()
 	a.resetPlan()
 	cancel := &batch.Cancel{}
@@ -112,6 +119,17 @@ func (a *App) runBatchContext(verb string, runOne func(context.Context, int, bat
 		}
 		if a.Session.SettingsSnapshot().OpenOutputOnComplete && ok > 0 {
 			a.openOutputFolder()
+		}
+		if notify && window != nil && cancelled == 0 {
+			body := fmt.Sprintf("成功 %d 张，失败 %d 张，跳过 %d 张", ok, failed, skipped)
+			window.Update(func() {
+				if mygo.NotificationsSupported() {
+					if err := mygo.NewNotification(mygo.NotificationOptions{ID: "imageflow-upscale-complete",
+						Title: "AI 放大完成", Body: body, Silent: true}).Show(); err != nil {
+						log.Printf("完成通知失败：%v", err)
+					}
+				}
+			})
 		}
 		a.Invalidate()
 	}()

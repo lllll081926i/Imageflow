@@ -37,14 +37,14 @@ func (t *CompressTool) Panel(c *myui.Context, a *App) {
 		if t.format == 3 {
 			switchField(c, &t.lossless, "WebP 无损压缩")
 		}
-		if t.format != 2 && !(t.format == 3 && t.lossless) {
+		if t.format != 2 && !(t.format == 3 && t.lossless) && (t.format != 0 || qualityRelevant(a, "")) {
 			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
 		}
 	})
 }
 
 func (t *CompressTool) PreviewCaption(a *App) string {
-	if t.format == 2 || (t.format == 3 && t.lossless) {
+	if t.format == 2 || (t.format == 3 && t.lossless) || (t.format == 0 && !qualityRelevant(a, "")) {
 		return "保持尺寸 · 无损压缩"
 	}
 	return fmt.Sprintf("保持尺寸 · 质量 %.0f", t.quality)

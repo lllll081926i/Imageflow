@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"log"
 	"sync"
+
+	"github.com/disintegration/imaging"
 
 	"github.com/lllll081926i/imageflow-go/internal/batch"
 	"github.com/lllll081926i/imageflow-go/internal/engine"
@@ -110,6 +113,31 @@ func (a *App) requestStudioPreview(tool Tool) {
 	var params any
 	var render func(context.Context) (image.Image, error)
 	switch current := tool.(type) {
+	case *CropTool:
+		current.ensure()
+		req := current.request()
+		if longest := max(req.ScaledWidth, req.ScaledHeight); longest > 2048 {
+			req.ScaledWidth = max(1, req.ScaledWidth*2048/longest)
+			req.ScaledHeight = max(1, req.ScaledHeight*2048/longest)
+		}
+		params = req
+		render = func(context.Context) (image.Image, error) {
+			preview := source
+			if preview != nil && max(preview.Bounds().Dx(), preview.Bounds().Dy()) > 2048 {
+				preview = imaging.Fit(preview, 2048, 2048, imaging.Lanczos)
+			}
+			return engine.RenderCropImage(preview, req)
+		}
+	case *WatermarkTool:
+		current.ensure()
+		req := current.request()
+		params = req
+		render = func(context.Context) (image.Image, error) { return engine.RenderWatermarkImage(source, req) }
+	case *RichTextTool:
+		current.ensure()
+		req := current.request()
+		params = req
+		render = func(context.Context) (image.Image, error) { return engine.RenderRichTextImage(req) }
 	case *AnnotateTool:
 		marks := append([]engine.AnnotateMark(nil), current.marks...)
 		for index := range marks {
@@ -151,11 +179,16 @@ func (a *App) requestStudioPreview(tool Tool) {
 		params = req
 		render = func(context.Context) (image.Image, error) { return engine.RenderCanvas(req) }
 	}
-	if render == nil || source == nil && tool.ID() != ToolStudio {
+	if render == nil || source == nil && tool.ID() != ToolStudio && tool.ID() != ToolRichText {
 		return
 	}
 	key := fmt.Sprintf("%s/%d/%#v", tool.ID(), version, params)
 	img, busy, err := a.studioPreview.request(a, key, render)
+	a.previewMu.Lock()
+	if busy && img == nil && a.studioSourceVersion == version && a.studioToolID == tool.ID() {
+		img = a.studioOutput
+	}
+	a.previewMu.Unlock()
 	if current, ok := tool.(*CollageStudioTool); ok {
 		current.preview, current.busy = img, busy
 		current.previewErr = ""
@@ -173,6 +206,7 @@ func (a *App) requestStudioPreview(tool Tool) {
 }
 
 func (a *App) CancelStudioWork() {
+	a.cacheJob.stop()
 	a.studioPreview.stop()
 	for _, tool := range a.Tools {
 		switch current := tool.(type) {
@@ -181,12 +215,16 @@ func (a *App) CancelStudioWork() {
 		case *CompareTool:
 			current.referencePreview.stop()
 			current.resultPreview.stop()
-		case *AnalysisTool:
-			current.samplePreview.stop()
 		case *UpscaleTool:
+			current.clipboardImport.stop()
+			current.resultPreview.stop()
+			current.flushPreferences(a)
+			current.modelImport.stop()
 			current.probe.stop()
-			current.manifestImport.stop()
 			current.modelDownload.stop()
 		}
+	}
+	if err := a.clipboardCache.Close(); err != nil {
+		log.Printf("临时图片清理失败，下次启动重试：%v", err)
 	}
 }
