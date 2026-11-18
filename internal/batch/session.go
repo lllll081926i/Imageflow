@@ -49,6 +49,7 @@ type Session struct {
 	LastRun         time.Time
 	nextItemID      uint64
 	runID           uint64
+	itemsByID       map[uint64]*Item
 }
 
 // NewSession creates an empty session with the given settings.
@@ -73,14 +74,19 @@ func (s *Session) Add(files []paths.InputFile) int {
 			continue
 		}
 		s.nextItemID++
-		s.Items = append(s.Items, &Item{
+		item := &Item{
 			id:        s.nextItemID,
 			Path:      f.Path,
 			Name:      f.Name,
 			Size:      f.Size,
 			ModTimeNS: f.ModTimeNS,
 			RelPath:   f.RelPath,
-		})
+		}
+		if s.itemsByID == nil {
+			s.itemsByID = make(map[uint64]*Item)
+		}
+		s.itemsByID[item.id] = item
+		s.Items = append(s.Items, item)
 		existing[f.Path] = len(s.Items) - 1
 		added++
 	}
@@ -94,7 +100,26 @@ func (s *Session) Remove(index int) {
 	if index < 0 || index >= len(s.Items) {
 		return
 	}
-	s.Items = append(s.Items[:index], s.Items[index+1:]...)
+	s.removeAt(index)
+}
+
+func (s *Session) RemovePath(path string) int {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	for index, item := range s.Items {
+		if item.Path == path {
+			s.removeAt(index)
+			return index
+		}
+	}
+	return -1
+}
+
+func (s *Session) removeAt(index int) {
+	delete(s.itemsByID, s.Items[index].id)
+	copy(s.Items[index:], s.Items[index+1:])
+	s.Items[len(s.Items)-1] = nil
+	s.Items = s.Items[:len(s.Items)-1]
 }
 
 func (s *Session) ReorderFiles(order []string) bool {
@@ -125,6 +150,7 @@ func (s *Session) Clear() {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	s.Items = nil
+	s.itemsByID = nil
 	s.Progress = Progress{}
 }
 
@@ -151,12 +177,16 @@ func (s *Session) ResetStatus() {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	s.runID++
+	if s.itemsByID == nil {
+		s.itemsByID = make(map[uint64]*Item, len(s.Items))
+	}
 	for _, it := range s.Items {
 		if it.id == 0 {
 			s.nextItemID++
 			it.id = s.nextItemID
 		}
 		it.runID = s.runID
+		s.itemsByID[it.id] = it
 		it.Status = ""
 		it.Message = ""
 		it.Output = ""
@@ -180,13 +210,10 @@ func (s *Session) SetRowStatus(index int, status, message, output string) {
 func (s *Session) SetItemStatus(item Item, status, message, output string) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-	for _, current := range s.Items {
-		if item.id != 0 && current.id == item.id && current.runID == item.runID {
-			current.Status = status
-			current.Message = message
-			current.Output = output
-			return
-		}
+	if current := s.itemsByID[item.id]; current != nil && current.runID == item.runID {
+		current.Status = status
+		current.Message = message
+		current.Output = output
 	}
 }
 

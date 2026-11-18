@@ -207,6 +207,10 @@ func canonicalExt(format string) string {
 	return format
 }
 
+func OutputExtension(format string) string {
+	return canonicalExt(normalizeFormat(format))
+}
+
 func normalizeFormat(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "jpg", "jpeg":

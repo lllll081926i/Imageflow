@@ -190,7 +190,7 @@ func TestNavigationSwitchesTools(t *testing.T) {
 func TestEmptyListShowsPlaceholder(t *testing.T) {
 	a := newTestApp(t)
 	tt := myui.NewTester(a.View, 1440, 900)
-	if !tt.HasText("点击选择文件，或拖入文件夹") {
+	if _, found := tt.Access("拖放区"); !found || !tt.HasText(workflowFor(a.ActiveTool()).input) {
 		t.Errorf("placeholder missing: %v", tt.Texts())
 	}
 	if !tt.HasText("输入项") {

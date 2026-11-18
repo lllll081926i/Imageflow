@@ -275,6 +275,13 @@ func pdfMargin(margin float64, page paperSize) float64 {
 
 // RenderRichText draws structured blocks onto a canvas.
 func RenderRichText(req RichTextRequest) Result {
+	return RenderRichTextContext(context.Background(), req)
+}
+
+func RenderRichTextContext(ctx context.Context, req RichTextRequest) Result {
+	if ctx.Err() != nil {
+		return Fail("CANCELLED", "已取消")
+	}
 	if strings.TrimSpace(req.OutputPath) == "" {
 		return Fail("RT_BAD_REQUEST", "缺少输出路径")
 	}
@@ -282,6 +289,9 @@ func RenderRichText(req RichTextRequest) Result {
 		return Fail("RT_NO_BLOCKS", "内容为空")
 	}
 	canvas, err := RenderRichTextImage(req)
+	if ctx.Err() != nil {
+		return Fail("CANCELLED", "已取消")
+	}
 	if err != nil {
 		return Fail("RT_RENDER_FAILED", err.Error())
 	}
@@ -293,7 +303,10 @@ func RenderRichText(req RichTextRequest) Result {
 		format = "png"
 	}
 	target := ensureExtension(req.OutputPath, format)
-	if err := codec.Save(canvas, target, codec.SaveOptions{Quality: 95, SRGB: true}); err != nil {
+	if err := codec.SaveContext(ctx, canvas, target, codec.SaveOptions{Quality: 95, SRGB: true}); err != nil {
+		if ctx.Err() != nil {
+			return Fail("CANCELLED", "已取消")
+		}
 		return Fail("WRITE_FAILED", err.Error())
 	}
 	out := OK()

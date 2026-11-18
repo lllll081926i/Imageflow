@@ -607,6 +607,9 @@ func (a *App) runCollageGroups(groups [][]batch.Item, requests []engine.CollageR
 		a.SetStatus(fmt.Sprintf("拼图完成：%d 张合成 %d 张，跳过 %d，超出格数 %d", completed, outputs, skipped, dropped))
 	}
 	a.SetProgress(100, a.StatusLine())
+	if outputs > 0 && a.Session.SettingsSnapshot().OpenOutputOnComplete {
+		a.openCompletedPath(a.rowOutputPath(""))
+	}
 }
 
 // PreviewPanel is the tool's own preview widget: an interactive canvas that

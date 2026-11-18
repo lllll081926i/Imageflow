@@ -8,6 +8,9 @@ package ui
 
 import (
 	"image"
+	"sync"
+
+	myui "github.com/egoist/mygo/ui"
 
 	"github.com/lllll081926i/imageflow-go/internal/brand"
 )
@@ -35,3 +38,17 @@ func iconImage(size int) image.Image { return brand.MarkAt(size) }
 
 // iconPNG returns the mark at one size as PNG bytes, for the tray and the platform.
 func iconPNG(size int) []byte { return brand.PNG(size) }
+
+var logoBitmaps sync.Map
+
+func logoBitmap(size int) *myui.Bitmap {
+	if cached, ok := logoBitmaps.Load(size); ok {
+		return cached.(*myui.Bitmap)
+	}
+	mark := iconImage(size)
+	if mark == nil {
+		return nil
+	}
+	bitmap, _ := logoBitmaps.LoadOrStore(size, myui.NewBitmap(mark))
+	return bitmap.(*myui.Bitmap)
+}

@@ -323,7 +323,7 @@ func TestAuditPagesWithInputsAndScrolledParameters(t *testing.T) {
 				tester.Scroll(panel.X+panel.W/2, panel.Y+200, 0, 400)
 				tester.Frame()
 			}
-			button, found := tester.Access("开始处理")
+			button, found := tester.Access(app.actionLabel())
 			if !found || button.Offscreen || button.Bounds.Y+button.Bounds.H > 900 {
 				t.Fatal("滚动参数后开始处理按钮不可见")
 			}

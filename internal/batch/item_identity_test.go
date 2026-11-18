@@ -8,7 +8,7 @@ import (
 )
 
 func TestItemStatusRejectsObsoleteIdentity(t *testing.T) {
-	for _, change := range []string{"删除", "清空", "新任务"} {
+	for _, change := range []string{"删除", "按路径移除", "清空", "新任务"} {
 		t.Run(change, func(t *testing.T) {
 			session := NewSession(settings.Default())
 			files := []paths.InputFile{{Path: "first.png"}, {Path: "second.png"}}
@@ -18,6 +18,8 @@ func TestItemStatusRejectsObsoleteIdentity(t *testing.T) {
 			switch change {
 			case "删除":
 				session.Remove(0)
+			case "按路径移除":
+				session.RemovePath(files[0].Path)
 			case "清空":
 				session.Clear()
 				session.Add(files[:1])

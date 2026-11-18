@@ -27,7 +27,7 @@ func shellGeometry(t *testing.T, width, height int) map[string]myui.Rect {
 		"input":    "输入卡",
 		"drop":     "拖放区",
 		"settings": "参数卡",
-		"action":   "开始处理",
+		"action":   a.actionLabel(),
 	} {
 		info, ok := tt.Access(want)
 		if !ok {
@@ -121,7 +121,7 @@ func TestToolsUseWorkbenchColumns(t *testing.T) {
 		a.ShowSettings = false
 		tt := myui.NewTester(a.View, 1440, 900)
 		for _, want := range []string{
-			"工具卡", "输入卡", "参数卡", "开始处理", "选择输出位置",
+			"工具卡", "输入卡", "参数卡", a.actionLabel(), "选择输出位置",
 		} {
 			if !tt.HasText(want) {
 				t.Errorf("tool %d (%s) missing %q", i, a.Tools[i].Name(), want)
@@ -136,7 +136,7 @@ func TestToolsUseWorkbenchColumns(t *testing.T) {
 		// A control torn by a too-narrow cell wraps its text; the accessible
 		// name is still one string but the drawn text is not. Assert the panel
 		// scrolls rather than clipping: the action bar must stay visible.
-		if info, ok := tt.Access("开始处理"); !ok || info.Bounds.H < 30 {
+		if info, ok := tt.AccessByRole(myui.RoleButton, a.actionLabel()); !ok || info.Bounds.H < 30 {
 			t.Errorf("tool %d action button is clipped: %+v", i, info.Bounds)
 		}
 	}
@@ -225,7 +225,7 @@ func TestOperationFeedbackAndDisabledAction(t *testing.T) {
 	if _, ok := tt.Access("转换失败：编码不可用"); !ok {
 		t.Error("operation feedback has no accessible status")
 	}
-	action, ok := tt.Access("开始处理")
+	action, ok := tt.Access(a.actionLabel())
 	if !ok || !action.Disabled {
 		t.Errorf("empty input action should be disabled: %+v", action)
 	}

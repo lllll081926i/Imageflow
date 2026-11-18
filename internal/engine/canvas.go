@@ -13,6 +13,7 @@ package engine
 // dragging and property panel stay uniform.
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -324,10 +325,20 @@ func applyOpacity(src image.Image, k float64) *image.NRGBA {
 
 // Layout renders the composition and writes it.
 func Layout(req CanvasRequest) Result {
+	return LayoutContext(context.Background(), req)
+}
+
+func LayoutContext(ctx context.Context, req CanvasRequest) Result {
+	if ctx.Err() != nil {
+		return Fail("CANCELLED", "已取消")
+	}
 	if strings.TrimSpace(req.OutputPath) == "" {
 		return Fail("BAD_INPUT", "缺少输出路径")
 	}
 	img, err := RenderCanvas(req)
+	if ctx.Err() != nil {
+		return Fail("CANCELLED", "已取消")
+	}
 	if err != nil {
 		return Fail("LAYOUT_FAILED", err.Error())
 	}
@@ -335,7 +346,10 @@ func Layout(req CanvasRequest) Result {
 	if quality <= 0 {
 		quality = 95
 	}
-	if err := codec.Save(img, req.OutputPath, codec.SaveOptions{Quality: quality}); err != nil {
+	if err := codec.SaveContext(ctx, img, req.OutputPath, codec.SaveOptions{Quality: quality}); err != nil {
+		if ctx.Err() != nil {
+			return Fail("CANCELLED", "已取消")
+		}
 		return Fail("WRITE_FAILED", err.Error())
 	}
 	res := OK()

@@ -51,8 +51,8 @@ func (a *App) homePage(c *myui.Context, st style) {
 func (a *App) homeHeader(c *myui.Context, st style) {
 	myui.Column(c).FillWidth().Gap(6).Children(func() {
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(10).Children(func() {
-			if mark := iconImage(logoHomeSize); mark != nil {
-				myui.Image(c, myui.NewBitmap(mark)).Size(logoHomeSize, logoHomeSize).Fit(myui.Contain)
+			if mark := logoBitmap(logoHomeSize); mark != nil {
+				myui.Image(c, mark).Size(logoHomeSize, logoHomeSize).Fit(myui.Contain)
 			}
 			myui.Column(c).Gap(2).Children(func() {
 				myui.Text(c, "ImageFlow").FontSize(22).FontWeight(700).TextColor(st.Text)

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/lllll081926i/imageflow-go/internal/appcache"
+	"github.com/lllll081926i/imageflow-go/internal/brand"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 	appui "github.com/lllll081926i/imageflow-go/internal/ui"
 	"github.com/lllll081926i/imageflow-go/internal/upscale"
@@ -92,6 +94,11 @@ func main() {
 			Content: ui.View(app.View),
 		})
 		app.Window = win
+		if runtime.GOOS == "windows" {
+			if err := win.SetIcon(brand.PNG(32)); err != nil {
+				log.Printf("设置窗口图标失败：%v", err)
+			}
+		}
 		mygo.App.OnQuit(func() {
 			app.Cancel()
 			app.CancelStudioWork()

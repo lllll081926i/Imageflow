@@ -27,6 +27,16 @@ func targetSize(width, height, scale, customWidth int) (int, int, error) {
 	return targetWidth, targetHeight, nil
 }
 
+func ExpectedOutputSize(width, height, scale, customWidth int, double bool) (int, int, error) {
+	if width < 1 || height < 1 || scale < 1 || scale > 16 {
+		return 0, 0, newError(CodeBadRequest, "输入尺寸或放大倍率无效")
+	}
+	if double {
+		width, height = width*scale, height*scale
+	}
+	return targetSize(width, height, scale, customWidth)
+}
+
 func runDouble(ctx context.Context, req Request) (*Report, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, newError(CodeCancelled, "已取消")
@@ -42,7 +52,7 @@ func runDouble(ctx context.Context, req Request) (*Report, error) {
 	if scale < 1 || scale > 16 {
 		return nil, newError(CodeBadRequest, "倍率必须介于 1 与 16")
 	}
-	if _, _, err := targetSize(width*scale, height*scale, scale, req.CustomWidth); err != nil {
+	if _, _, err := ExpectedOutputSize(width, height, scale, req.CustomWidth, true); err != nil {
 		return nil, err
 	}
 	models, err := Models(req.ModelsRoot)

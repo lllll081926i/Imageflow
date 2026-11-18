@@ -1,12 +1,43 @@
 package paths
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
+
+func BenchmarkBatchOutputPlanning(bench *testing.B) {
+	dir := bench.TempDir()
+	targets := make([]string, 1000)
+	for index := range targets {
+		targets[index] = filepath.Join(dir, fmt.Sprintf("image-%04d.png", index))
+	}
+	bench.Run("逐项扫描", func(bench *testing.B) {
+		for bench.Loop() {
+			reserved := make([]string, 0, len(targets))
+			for _, target := range targets {
+				resolved, _, err := ResolveOutput(target, reserved, "rename")
+				if err != nil {
+					bench.Fatal(err)
+				}
+				reserved = append(reserved, resolved)
+			}
+		}
+	})
+	bench.Run("集合查询", func(bench *testing.B) {
+		for bench.Loop() {
+			var reserved OutputReservations
+			for _, target := range targets {
+				if _, _, err := reserved.Reserve(target, "rename"); err != nil {
+					bench.Fatal(err)
+				}
+			}
+		}
+	})
+}
 
 func TestNormalizeRejectsBadPaths(t *testing.T) {
 	if _, err := Normalize("   "); err == nil {

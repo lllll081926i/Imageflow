@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -129,12 +130,14 @@ func (t *ConvertTool) Run(a *App) {
 	quality, maintain, keepMeta := t.quality, t.maintain, t.keepMeta
 	resize, percent, width, height := t.resize, t.percent, t.width, t.height
 	icoSizes := t.icoSizes
-	a.runBatch("转换", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("转换", func(index int, item batch.Item) (string, engine.Result) {
 		ext := extOf(format)
 		out, skipped := a.outputPathFor(item, "convert", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		spec := engine.ConvertRequest{
 			InputPath:    item.Path,
 			OutputPath:   out,
@@ -321,11 +324,13 @@ func (t *ResizeTool) Run(a *App) {
 			format = "png"
 		}
 		presetHex, quality := t.presetHex, t.quality
-		a.runBatch("多尺寸", func(index int, item batch.Item) engine.Result {
+		a.runOutputBatch("多尺寸", func(index int, item batch.Item) (string, engine.Result) {
 			dir, skipped := a.outputDirectoryFor(item, "_sizes")
 			if skipped {
-				return engine.Skip("目标目录已存在")
+				return "", engine.Skip("目标目录已存在")
 			}
+			return dir, engine.OK()
+		}, func(_ context.Context, index int, item batch.Item, dir string) engine.Result {
 			return engine.ResizeToPresets(engine.PresetRequest{
 				InputPath:    item.Path,
 				OutputDir:    dir,
@@ -341,7 +346,7 @@ func (t *ResizeTool) Run(a *App) {
 	}
 	format, quality := t.format, t.quality
 	percent, edge, modeVal := t.percent, t.edge, t.mode
-	a.runBatch("调整", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("调整", func(index int, item batch.Item) (string, engine.Result) {
 		ext := extOf(format)
 		if format == "" {
 			ext = strings.TrimPrefix(strings.ToLower(itemPathExt(item.Path)), ".")
@@ -351,8 +356,10 @@ func (t *ResizeTool) Run(a *App) {
 		}
 		out, skipped := a.outputPathFor(item, "resize", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		mode := "percent"
 		value := percent
 		switch modeVal {
@@ -428,11 +435,13 @@ func (t *GridTool) PreviewCaption(a *App) string {
 func (t *GridTool) Run(a *App) {
 	t.ensure()
 	grid, format, quality := t.grid, t.format, t.quality
-	a.runBatch("切图", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("切图", func(index int, item batch.Item) (string, engine.Result) {
 		dir, skipped := a.outputDirectoryFor(item, "_grid")
 		if skipped {
-			return engine.Skip("目标目录已存在")
+			return "", engine.Skip("目标目录已存在")
 		}
+		return dir, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, dir string) engine.Result {
 		return engine.CutGrid(engine.GridRequest{
 			InputPath:    item.Path,
 			OutputDir:    dir,
@@ -511,11 +520,13 @@ func (t *LayoutTool) PreviewCaption(a *App) string {
 func (t *LayoutTool) Run(a *App) {
 	t.ensure()
 	square, rows, cols, format, quality := t.square, t.rows, t.cols, t.format, t.quality
-	a.runBatch("布局", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("布局", func(index int, item batch.Item) (string, engine.Result) {
 		dir, skipped := a.outputDirectoryFor(item, "_layout")
 		if skipped {
-			return engine.Skip("目标目录已存在")
+			return "", engine.Skip("目标目录已存在")
 		}
+		return dir, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, dir string) engine.Result {
 		mode := "cover"
 		if square {
 			mode = "square"
@@ -692,7 +703,6 @@ func (t *StitchTool) Run(a *App) {
 				a.Session.SetItemStatus(rows[i], "ok", "", res.OutputPath)
 			}
 			a.SetProgress(100, a.StatusLine())
-			a.loadPreview(out)
 		} else {
 			a.SetStatus("拼接失败：" + res.Error)
 			for i := range rows {
@@ -701,7 +711,7 @@ func (t *StitchTool) Run(a *App) {
 			a.SetProgress(0, a.StatusLine())
 		}
 		if res.Success && a.Session.SettingsSnapshot().OpenOutputOnComplete {
-			a.openOutputFolder()
+			a.openCompletedPath(res.OutputPath)
 		}
 		a.Invalidate()
 	}()
@@ -915,15 +925,17 @@ func (t *WatermarkTool) PreviewCaption(a *App) string {
 func (t *WatermarkTool) Run(a *App) {
 	t.ensure()
 	request := t.request()
-	a.runBatch("水印", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("水印", func(index int, item batch.Item) (string, engine.Result) {
 		ext := strings.TrimPrefix(strings.ToLower(itemPathExt(item.Path)), ".")
 		if ext == "" {
 			ext = "png"
 		}
 		out, skipped := a.outputPathFor(item, "watermark", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		req := request
 		req.InputPath, req.OutputPath = item.Path, out
 		return engine.Watermark(req)
@@ -994,12 +1006,14 @@ func (t *PaletteTool) PreviewCaption(a *App) string { return "色板" }
 func (t *PaletteTool) Run(a *App) {
 	t.ensure()
 	format, swatchHeight, includeText, count := t.format, t.swatchHeight, t.includeText, t.count
-	a.runBatch("取色", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("取色", func(index int, item batch.Item) (string, engine.Result) {
 		ext := extOf(format)
 		out, skipped := a.outputPathFor(item, "palette", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		res, palette := engine.ExtractPalette(engine.PaletteRequest{
 			InputPath:    item.Path,
 			OutputPath:   out,
@@ -1213,7 +1227,7 @@ func (t *PDFTool) Run(a *App) {
 			a.SetProgress(0, a.StatusLine())
 		}
 		if res.Success && a.Session.SettingsSnapshot().OpenOutputOnComplete {
-			a.openOutputFolder()
+			a.openCompletedPath(res.OutputPath)
 		}
 		a.Invalidate()
 	}()
@@ -1346,11 +1360,13 @@ func (t *GIFTool) Run(a *App) {
 			a.SetStatus("结束帧必须大于起始帧")
 			return
 		}
-		a.runBatch("导出帧", func(index int, item batch.Item) engine.Result {
+		a.runOutputBatch("导出帧", func(index int, item batch.Item) (string, engine.Result) {
 			dir, skipped := a.outputDirectoryFor(item, "_frames")
 			if skipped {
-				return engine.Skip("目标目录已存在")
+				return "", engine.Skip("目标目录已存在")
 			}
+			return dir, engine.OK()
+		}, func(_ context.Context, index int, item batch.Item, dir string) engine.Result {
 			return engine.RunGIF(engine.GIFRequest{
 				Action:       "export_frames",
 				InputPath:    item.Path,
@@ -1365,12 +1381,14 @@ func (t *GIFTool) Run(a *App) {
 	}
 	format, speed, quality := t.format, t.speed, t.quality
 	width, height, maintain, loop := t.width, t.height, t.maintain, t.loop
-	a.runBatch("动图处理", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("动图处理", func(index int, item batch.Item) (string, engine.Result) {
 		ext := extOf(format)
 		out, skipped := a.outputPathFor(item, action, ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		return engine.RunGIF(engine.GIFRequest{
 			Action:       action,
 			InputPath:    item.Path,
@@ -1661,9 +1679,10 @@ func (t *RichTextTool) Run(a *App) {
 		anchor := filepath.Join(a.outputFolder(), "richtext.png")
 		out, skipped := a.outputPathFor(batch.Item{Path: anchor}, "richtext", "png", 1)
 		if skipped {
+			if !a.endWholeList(cancel, nil) {
+				a.SetStatus("制图已跳过：目标文件已存在")
+			}
 			a.finishRun()
-			a.endWholeList(cancel, nil)
-			a.SetStatus("制图已跳过：目标文件已存在")
 			return
 		}
 		request.OutputPath = out
@@ -1673,7 +1692,7 @@ func (t *RichTextTool) Run(a *App) {
 				a.endWholeList(cancel, nil)
 				return
 			}
-			result := engine.RenderRichText(request)
+			result := engine.RenderRichTextContext(cancel, request)
 			if a.endWholeList(cancel, nil, result) {
 				return
 			}
@@ -1684,14 +1703,16 @@ func (t *RichTextTool) Run(a *App) {
 		}()
 		return
 	}
-	a.runBatch("制图", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("制图", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "richtext", "png", index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(ctx context.Context, _ int, _ batch.Item, out string) engine.Result {
 		req := request
 		req.OutputPath = out
-		return engine.RenderRichText(req)
+		return engine.RenderRichTextContext(ctx, req)
 	})
 }
 

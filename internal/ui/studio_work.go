@@ -14,14 +14,15 @@ import (
 )
 
 type studioJob[Value any] struct {
-	mu     sync.Mutex
-	work   sync.Mutex
-	key    string
-	value  Value
-	err    error
-	busy   bool
-	closed bool
-	cancel context.CancelFunc
+	mu       sync.Mutex
+	work     sync.Mutex
+	key      string
+	revision uint64
+	value    Value
+	err      error
+	busy     bool
+	closed   bool
+	cancel   context.CancelFunc
 }
 
 func (job *studioJob[Value]) request(a *App, key string, run func(context.Context) (Value, error)) (Value, bool, error) {
@@ -36,25 +37,30 @@ func (job *studioJob[Value]) request(a *App, key string, run func(context.Contex
 	ctx, cancel := context.WithCancel(context.Background())
 	job.cancel = cancel
 	job.key, job.busy, job.err = key, true, nil
+	job.revision++
+	revision := job.revision
 	var empty Value
 	job.value = empty
 	window := a.Window
 	go func() {
 		job.work.Lock()
 		defer job.work.Unlock()
-		if ctx.Err() != nil {
-			return
-		}
 		var value Value
-		err := batch.Execute(func(_ *batch.Cancel) error {
-			var err error
-			value, err = run(ctx)
-			return err
-		}, nil)
+		err := ctx.Err()
+		if err == nil {
+			err = batch.Execute(func(_ *batch.Cancel) error {
+				var err error
+				value, err = run(ctx)
+				return err
+			}, nil)
+		}
 		publish := func() {
 			job.mu.Lock()
-			if ctx.Err() == nil && !job.closed {
-				job.value, job.err, job.busy = value, err, false
+			if job.revision == revision && !job.closed {
+				if ctx.Err() != nil && err != nil {
+					err = ctx.Err()
+				}
+				job.value, job.err, job.busy, job.cancel = value, err, false, nil
 			}
 			job.mu.Unlock()
 			a.Invalidate()
@@ -80,11 +86,10 @@ func (job *studioJob[Value]) stop() {
 func (job *studioJob[Value]) cancelRequest() {
 	job.mu.Lock()
 	defer job.mu.Unlock()
-	if job.cancel != nil {
+	if job.busy && job.cancel != nil {
 		job.cancel()
+		job.err = context.Canceled
 	}
-	var empty Value
-	job.value, job.busy, job.err = empty, false, context.Canceled
 }
 
 func (job *studioJob[Value]) snapshot() (Value, bool, error) {

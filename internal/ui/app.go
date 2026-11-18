@@ -17,6 +17,7 @@ import (
 
 	"github.com/lllll081926i/imageflow-go/internal/appcache"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
+	"github.com/lllll081926i/imageflow-go/internal/paths"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 	"github.com/lllll081926i/imageflow-go/internal/thumbs"
 )
@@ -82,11 +83,13 @@ type App struct {
 	ProgressText  string
 	Running       bool
 	canvasOutputs map[string]string
+	rowResultTool string
 
 	// planMu guards planned, the output paths already reserved by the batch in
 	// flight, so two rows never resolve to the same file name.
-	planMu  sync.Mutex
-	planned []string
+	planMu     sync.Mutex
+	planned    paths.OutputReservations
+	fileThumbs fileThumbnailCache
 
 	// previewMu 保护预览图像、选中路径与请求版本；previewFocus 仅由界面线程使用。
 	lastPreview         image.Image
@@ -1379,7 +1382,7 @@ func toolPreviewMode(toolID string) previewMode {
 // dropAreaCompact is the file list under a tool that draws its own preview:
 // the list keeps its rows and its add action, but gives the canvas the room.
 func (a *App) dropAreaCompact(c *myui.Context, st style) {
-	items := a.Session.Snapshot()
+	items := a.visibleInputRows()
 	height := float32(168)
 	if a.fileLayout != 0 {
 		height = 228
@@ -1516,7 +1519,7 @@ func (a *App) previewArea(c *myui.Context, st style, img image.Image, caption st
 // dropArea is the large dashed target: it holds the empty hint, or the file rows
 // once the tool has inputs.
 func (a *App) dropArea(c *myui.Context, st style) {
-	items := a.Session.Snapshot()
+	items := a.visibleInputRows()
 	// The frame is drawn by hand: the framework's dashes are 3:1 and thin out at
 	// the corners, which on a panel this tall reads as a broken line.
 	area := myui.Column(c).Fill().Grow(1).MinHeight(0).Clip().Gap(10).Padding(18).
@@ -1549,7 +1552,7 @@ func (a *App) dropArea(c *myui.Context, st style) {
 					AlignItems(myui.Center).Background(st.BrandSoft).Children(func() {
 					myui.Icon(c, lucide.Upload()).Width(28).Height(28).TextColor(st.Brand)
 				})
-				myui.Text(c, "点击选择文件，或拖入文件夹").FontSize(13.5).
+				myui.Text(c, workflowFor(a.ActiveTool()).input).FontSize(13.5).
 					FontWeight(500).TextColor(st.TextSub)
 				myui.Row(c).Gap(8).PaddingY(6).Children(func() {
 					a.ghostButton(c, st, "添加文件", lucide.Plus(), a.pickFiles)
@@ -1644,7 +1647,12 @@ func (a *App) operationFeedback(c *myui.Context, st style) {
 // actionBar is the primary action, the cancel action and the progress.
 func (a *App) actionBar(c *myui.Context, st style) {
 	percent, caption := a.ProgressState()
-	running := a.IsRunning() || a.IsImporting()
+	importing := a.IsImporting()
+	running := a.IsRunning() || importing
+	cancelLabel := "停止处理"
+	if importing {
+		cancelLabel = "取消导入"
+	}
 
 	myui.Column(c).FillWidth().Gap(10).Padding(14, 18, 16, 18).Children(func() {
 		if running || percent > 0 {
@@ -1658,6 +1666,12 @@ func (a *App) actionBar(c *myui.Context, st style) {
 				if caption != "" {
 					myui.Text(c, caption).FontSize(11).TextColor(st.TextDim).SingleLine()
 				}
+				if tool, ok := a.ActiveTool().(*UpscaleTool); ok && a.IsRunning() {
+					if name, percent, _ := tool.runState.snapshot(); name != "" {
+						progress := fmt.Sprintf("%s · %d%%", name, percent)
+						myui.Text(c, progress).FontSize(11).TextColor(st.TextSub).SingleLine().Tooltip(progress)
+					}
+				}
 			})
 		}
 		a.operationFeedback(c, st)
@@ -1666,7 +1680,7 @@ func (a *App) actionBar(c *myui.Context, st style) {
 			if running {
 				run := myui.ButtonBase(c).Grow(1).Height(46).Radius(st.RadiusControl).Gap(8).
 					Justify(myui.Center).AlignItems(myui.Center).Cursor(myui.CursorPointer).
-					Label("停止处理").Transition(motion(springTap)).Border(1, st.Divider)
+					Label(cancelLabel).Transition(motion(springTap)).Border(1, st.Divider)
 				switch {
 				case run.Pressed():
 					run.Background(st.DividerTop).Border(1, st.Danger).Scale(0.985, 0.985)
@@ -1678,14 +1692,16 @@ func (a *App) actionBar(c *myui.Context, st style) {
 				}
 				run.Children(func() {
 					myui.Icon(c, lucide.X()).Width(16).Height(16).TextColor(st.Danger)
-					myui.Text(c, "停止处理").FontSize(14).FontWeight(600).TextColor(st.Text)
+					myui.Text(c, cancelLabel).FontSize(14).FontWeight(600).TextColor(st.Text)
 				})
 				if run.Clicked() {
 					a.Cancel()
 				}
 				return
 			}
-			primaryButton(c, st, "开始处理", lucide.Play(), a.Session.Len() == 0 && !toolRunsWithoutList(a.ActiveTool()), false, a.Start).
+			tool := a.ActiveTool()
+			label, icon, disabled, action := a.pageAction(tool)
+			primaryButton(c, st, label, icon, disabled, false, action).
 				Grow(1).Height(46)
 			if a.completedOutputPath() != "" {
 				a.ghostButton(c, st, "查看结果", lucide.FolderOpen(), a.openCompletedOutput)

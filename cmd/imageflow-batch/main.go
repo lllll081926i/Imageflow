@@ -131,6 +131,10 @@ func main() {
 	}
 
 	rep := report{Tool: *tool}
+	reserved := []string{}
+	reserve := func(name string) (string, error) {
+		return plan(filepath.Join(dir, name), &reserved)
+	}
 
 	// Stitch, PDF and collage consume the whole list in one pass, so they run once
 	// and the per-file loop must not repeat them.
@@ -139,18 +143,28 @@ func main() {
 		var res engine.Result
 		switch *tool {
 		case "stitch":
+			target, err := reserve("stitched." + staticExtension(*format))
+			if err != nil {
+				res = engine.Fail("OUTPUT_PATH", err.Error())
+				break
+			}
 			res = engine.Stitch(engine.StitchRequest{
 				InputPaths:   files,
-				OutputPath:   filepath.Join(dir, "stitched."+*format),
+				OutputPath:   target,
 				Direction:    "vertical",
 				Background:   "#FFFFFF",
 				OutputFormat: *format,
 				Quality:      *quality,
 			})
 		case "pdf":
+			target, err := reserve("document.pdf")
+			if err != nil {
+				res = engine.Fail("OUTPUT_PATH", err.Error())
+				break
+			}
 			res = engine.GeneratePDF(engine.PDFRequest{
 				ImagePaths: files,
-				OutputPath: filepath.Join(dir, "document.pdf"),
+				OutputPath: target,
 				Layout:     "2x2",
 				PageSize:   "A4",
 				Landscape:  false,
@@ -169,7 +183,7 @@ func main() {
 					*radius = 8
 				}
 			}
-			res = collageFromFlags(files, dir, *format, *quality, *preset, *aspect,
+			res = collageFromFlags(files, reserve, *format, *quality, *preset, *aspect,
 				*longEdge, *gap, *margin, *radius, *background, *watermark)
 		}
 		rep.Results = append(rep.Results, res)
@@ -181,35 +195,46 @@ func main() {
 		files = nil
 	}
 
-	// reserved holds the outputs already planned, so two inputs with the same
-	// base name do not overwrite each other.
-	reserved := []string{}
 	for _, in := range files {
 		base := strings.TrimSuffix(filepath.Base(in), filepath.Ext(in))
+		candidate, gifFormat := batchDestination(*tool, *format, *action, in, base)
+		var target string
+		if candidate != "" {
+			var err error
+			target, err = reserve(candidate)
+			if err != nil {
+				rep.Results = append(rep.Results, engine.Fail("OUTPUT_PATH", err.Error()))
+				rep.Failed++
+				continue
+			}
+		}
 		var res engine.Result
 		switch *tool {
 		case "compress":
-			ext := engine.CompressionFormat(in, *format)
-			if ext == "" {
+			if target == "" {
 				res = engine.Fail("BAD_INPUT", "图片压缩支持 JPG、PNG、WebP、AVIF")
 				break
 			}
 			res = engine.Compress(engine.CompressRequest{
 				InputPath:  in,
-				OutputPath: plan(filepath.Join(dir, base+"_compressed."+ext), &reserved),
+				OutputPath: target,
 				Format:     *format, Quality: *quality, Lossless: *lossless,
 			})
 		case "convert":
+			if engine.OutputExtension(*format) == "" {
+				res = engine.Fail("BAD_INPUT", "未知的输出格式")
+				break
+			}
 			res = engine.Convert(engine.ConvertRequest{
 				InputPath:  in,
-				OutputPath: plan(filepath.Join(dir, base+"."+*format), &reserved),
+				OutputPath: target,
 				Format:     *format,
 				Quality:    *quality,
 			})
 		case "resize":
 			res = engine.Resize(engine.ResizeRequest{
 				InputPath:    in,
-				OutputPath:   plan(filepath.Join(dir, base+"."+*format), &reserved),
+				OutputPath:   target,
 				Mode:         "long_edge",
 				Value:        640,
 				OutputFormat: *format,
@@ -218,7 +243,7 @@ func main() {
 		case "grid":
 			res = engine.CutGrid(engine.GridRequest{
 				InputPath:    in,
-				OutputDir:    filepath.Join(dir, base+"_grid"),
+				OutputDir:    target,
 				GridSize:     *grid,
 				OutputFormat: *format,
 				Quality:      *quality,
@@ -227,7 +252,7 @@ func main() {
 		case "layout":
 			res = engine.Split(engine.SplitRequest{
 				InputPath:    in,
-				OutputDir:    filepath.Join(dir, base+"_layout"),
+				OutputDir:    target,
 				Rows:         *rows,
 				Cols:         *cols,
 				Mode:         "cover",
@@ -238,7 +263,7 @@ func main() {
 		case "watermark":
 			res = engine.Watermark(engine.WatermarkRequest{
 				InputPath:  in,
-				OutputPath: plan(filepath.Join(dir, base+"_wm.png"), &reserved),
+				OutputPath: target,
 				Text:       *text,
 				FontSize:   48,
 				Color:      "#FFFFFF",
@@ -250,7 +275,7 @@ func main() {
 			var pr engine.PaletteResult
 			res, pr = engine.ExtractPalette(engine.PaletteRequest{
 				InputPath:    in,
-				OutputPath:   plan(filepath.Join(dir, base+"_palette.png"), &reserved),
+				OutputPath:   target,
 				SwatchHeight: 96,
 				IncludeText:  true,
 			})
@@ -267,28 +292,11 @@ func main() {
 				FrameEnd:    *frameEnd,
 			}
 			if *action == "export_frames" {
-				request.OutputDir = filepath.Join(dir, base+"_frames")
+				request.OutputDir = target
 				request.OutputFormat = "png"
 			} else if *action != "probe" {
-				// -format decides the container the animation is written into, so the
-				// CLI can exercise the same three targets the page offers.
-				format := strings.ToLower(*format)
-				if format == "" || format == "png" {
-					if format == "png" && *action != "export_frames" {
-						format = "apng"
-					}
-				}
-				switch format {
-				case "webp", "apng", "gif":
-				default:
-					format = "gif"
-				}
-				ext := format
-				if ext == "apng" {
-					ext = "png"
-				}
-				request.OutputPath = plan(filepath.Join(dir, base+"_anim."+ext), &reserved)
-				request.OutputFormat = format
+				request.OutputPath = target
+				request.OutputFormat = gifFormat
 			}
 			res = engine.RunGIF(request)
 		case "richtext":
@@ -304,7 +312,7 @@ func main() {
 			}
 			res = engine.RenderRichText(engine.RichTextRequest{
 				Blocks:     blocks,
-				OutputPath: plan(filepath.Join(dir, base+"_rich.png"), &reserved),
+				OutputPath: target,
 				Width:      800,
 				Padding:    48,
 				FontSize:   18,
@@ -320,9 +328,6 @@ func main() {
 		rep.Results = append(rep.Results, res)
 		if res.Success {
 			rep.OK++
-			if res.OutputPath != "" {
-				reserved = append(reserved, res.OutputPath)
-			}
 		} else {
 			rep.Failed++
 		}
@@ -357,7 +362,7 @@ func main() {
 // as the command was given: a batch script should not have to name a layout, and
 // the alternative — one full-canvas slot with the rest wrapped — is rarely what
 // the caller wanted.
-func collageFromFlags(files []string, dir, format string, quality int, presetID, aspect string,
+func collageFromFlags(files []string, reserve func(string) (string, error), format string, quality int, presetID, aspect string,
 	longEdge, gap, margin, radius int, background, watermark string) engine.Result {
 	rects, id := collageSkeleton(len(files), presetID)
 	cells := make([]engine.CollageCell, len(rects))
@@ -372,10 +377,14 @@ func collageFromFlags(files []string, dir, format string, quality int, presetID,
 			ratio = collage.Aspect{ID: "1:1", W: 1, H: 1}
 		}
 	}
+	target, err := reserve("collage_" + id + "." + staticExtension(format))
+	if err != nil {
+		return engine.Fail("OUTPUT_PATH", err.Error())
+	}
 	req := engine.CollageRequest{
 		Cells:        cells,
 		Rects:        rects,
-		OutputPath:   filepath.Join(dir, "collage_"+id+"."+format),
+		OutputPath:   target,
 		AspectW:      ratio.W,
 		AspectH:      ratio.H,
 		LongEdge:     longEdge,
@@ -441,11 +450,53 @@ func describe(r engine.Result) string {
 
 // plan resolves a candidate output path against the outputs already planned in
 // this run, so two inputs sharing a base name never write the same file.
-func plan(candidate string, reserved *[]string) string {
+func plan(candidate string, reserved *[]string) (string, error) {
 	resolved, _, err := paths.ResolveOutput(candidate, *reserved, "rename")
 	if err != nil {
-		return candidate
+		return "", err
 	}
 	*reserved = append(*reserved, resolved)
-	return resolved
+	return resolved, nil
+}
+
+func staticExtension(format string) string {
+	if ext := engine.OutputExtension(format); ext != "" {
+		return ext
+	}
+	return "png"
+}
+
+func batchDestination(tool, format, action, input, base string) (string, string) {
+	switch tool {
+	case "convert", "resize":
+		return base + "." + staticExtension(format), ""
+	case "compress":
+		if ext := engine.CompressionFormat(input, format); ext != "" {
+			return base + "_compressed." + ext, ""
+		}
+	case "grid", "layout":
+		return base + "_" + tool, ""
+	case "watermark":
+		return base + "_wm.png", ""
+	case "palette":
+		return base + "_palette.png", ""
+	case "richtext":
+		return base + "_rich.png", ""
+	case "gif":
+		switch action {
+		case "export_frames":
+			return base + "_frames", ""
+		case "probe":
+			return "", ""
+		}
+		switch strings.ToLower(format) {
+		case "png", "apng":
+			return base + "_anim.apng", "apng"
+		case "webp":
+			return base + "_anim.webp", "webp"
+		default:
+			return base + "_anim.gif", "gif"
+		}
+	}
+	return "", ""
 }

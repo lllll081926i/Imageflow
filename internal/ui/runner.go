@@ -9,7 +9,6 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
 	"github.com/lllll081926i/imageflow-go/internal/engine"
-	"github.com/lllll081926i/imageflow-go/internal/paths"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 )
 
@@ -22,56 +21,78 @@ func (a *App) runBatch(verb string, runOne func(index int, item batch.Item) engi
 }
 
 func (a *App) runBatchContext(verb string, runOne func(context.Context, int, batch.Item) engine.Result) {
+	a.runOutputBatch(verb, nil, func(ctx context.Context, index int, item batch.Item, _ string) engine.Result {
+		return runOne(ctx, index, item)
+	})
+}
+
+func (a *App) runOutputBatch(verb string, plan func(int, batch.Item) (string, engine.Result), runOne func(context.Context, int, batch.Item, string) engine.Result) {
+	a.runOutputBatchWithConcurrency(verb, a.Session.SettingsSnapshot().MaxConcurrency, plan, runOne)
+}
+
+func (a *App) runOutputBatchWithConcurrency(verb string, concurrency int, plan func(int, batch.Item) (string, engine.Result), runOne func(context.Context, int, batch.Item, string) engine.Result) {
 	notify := false
 	if tool, ok := a.ActiveTool().(*UpscaleTool); ok {
 		notify = tool.notifyComplete
 	}
 	window := a.Window
-	a.Session.ResetStatus()
+	a.resetRowResults()
 	a.resetPlan()
 	cancel := &batch.Cancel{}
 	rows := a.Session.Snapshot()
 	a.Session.Mu.Lock()
 	a.Session.Cancel = cancel
 	a.Session.Mu.Unlock()
-	jobs := make([]batch.Job, len(rows))
-	for i := range rows {
-		index := i
-		item := rows[i]
-		jobs[i] = func(_ *batch.Cancel) error {
-			var res engine.Result
-			if err := batch.Execute(func(_ *batch.Cancel) error { res = runOne(cancel, index, item); return nil }, nil); err != nil {
-				res = engine.Fail("TASK_PANIC", err.Error())
-			}
-			if !res.Success {
-				if res.ErrorCode == "CANCELLED" {
-					a.Session.SetItemStatus(item, "cancelled", "已取消", "")
-					return context.Canceled
-				}
-				status, msg := batch.FailFromResult(res)
-				a.Session.SetItemStatus(item, status, msg, "")
-				return fmt.Errorf("%s", msg)
-			}
-			if res.Skipped {
-				// The destination was protected by the conflict strategy; nothing was
-				// written, so the row says so and leaves both counters alone.
-				a.Session.SetItemStatus(item, "skipped", res.Message, "")
-				return batch.ErrSkipped
-			}
-			// A tool that writes several files reports their folder; the row keeps
-			// the first path so opening it still lands on something real.
-			out := res.OutputPath
-			if out == "" && len(res.Outputs) > 0 {
-				out = res.Outputs[0]
-			}
-			a.Session.SetItemStatus(item, "ok", res.Message, out)
-			return nil
-		}
-	}
-
 	go func() {
 		defer a.finishRun()
-		results := batch.Run(jobs, a.Session.SettingsSnapshot().MaxConcurrency, cancel, func(p batch.Progress) {
+		jobs := make([]batch.Job, len(rows))
+		for i := range rows {
+			index := i
+			item := rows[i]
+			var target string
+			planned := engine.OK()
+			if plan != nil && !cancel.Cancelled() {
+				if err := batch.Execute(func(_ *batch.Cancel) error { target, planned = plan(index, item); return nil }, nil); err != nil {
+					planned = engine.Fail("TASK_PANIC", err.Error())
+				}
+				if planned.Success && !planned.Skipped && target == "" {
+					planned = engine.Fail("OUTPUT_PATH", "无法规划输出路径，请检查输出目录或命名设置")
+				}
+			}
+			jobs[i] = func(_ *batch.Cancel) error {
+				res := planned
+				if res.Success && !res.Skipped {
+					if err := batch.Execute(func(_ *batch.Cancel) error { res = runOne(cancel, index, item, target); return nil }, nil); err != nil {
+						res = engine.Fail("TASK_PANIC", err.Error())
+					}
+				}
+				if !res.Success {
+					if res.ErrorCode == "CANCELLED" {
+						a.Session.SetItemStatus(item, "cancelled", "已取消", "")
+						return context.Canceled
+					}
+					status, msg := batch.FailFromResult(res)
+					a.Session.SetItemStatus(item, status, msg, "")
+					return fmt.Errorf("%s", msg)
+				}
+				if res.Skipped {
+					// The destination was protected by the conflict strategy; nothing was
+					// written, so the row says so and leaves both counters alone.
+					a.Session.SetItemStatus(item, "skipped", res.Message, "")
+					return batch.ErrSkipped
+				}
+				// A tool that writes several files reports their folder; the row keeps
+				// the first path so opening it still lands on something real.
+				out := res.OutputPath
+				if out == "" && len(res.Outputs) > 0 {
+					out = res.Outputs[0]
+				}
+				a.Session.SetItemStatus(item, "ok", res.Message, out)
+				return nil
+			}
+		}
+
+		results := batch.Run(jobs, concurrency, cancel, func(p batch.Progress) {
 			a.Session.Mu.Lock()
 			a.Session.Progress = p
 			a.Session.Mu.Unlock()
@@ -118,7 +139,7 @@ func (a *App) runBatchContext(verb string, runOne func(context.Context, int, bat
 			a.SetStatus(fmt.Sprintf("%s结束：成功 %d，失败 %d，跳过 %d", verb, ok, failed, skipped))
 		}
 		if a.Session.SettingsSnapshot().OpenOutputOnComplete && ok > 0 {
-			a.openOutputFolder()
+			a.openCompletedPath(a.rowOutputPath(""))
 		}
 		if notify && window != nil && cancelled == 0 {
 			body := fmt.Sprintf("成功 %d 张，失败 %d 张，跳过 %d 张", ok, failed, skipped)
@@ -141,13 +162,24 @@ func (a *App) runBatchContext(verb string, runOne func(context.Context, int, bat
 // previous batch's planned paths could make the conflict strategy skip the job,
 // and 停止处理 had no token to signal at all.
 func (a *App) beginWholeList() *batch.Cancel {
-	a.Session.ResetStatus()
+	a.resetRowResults()
 	a.resetPlan()
 	cancel := &batch.Cancel{}
 	a.Session.Mu.Lock()
 	a.Session.Cancel = cancel
 	a.Session.Mu.Unlock()
 	return cancel
+}
+
+func (a *App) resetRowResults() {
+	a.Session.ResetStatus()
+	tool := a.ActiveTool()
+	a.mu.Lock()
+	a.rowResultTool = ""
+	if tool != nil {
+		a.rowResultTool = tool.ID()
+	}
+	a.mu.Unlock()
 }
 
 // endWholeList 释放取消令牌；只有未提交输出的取消结果才覆盖行状态。
@@ -181,6 +213,9 @@ func (a *App) endWholeList(cancel *batch.Cancel, rows []batch.Item, result ...en
 // over the file it was supposed to protect.
 func (a *App) outputPathFor(item batch.Item, op, ext string, seq int) (string, bool) {
 	s := a.Session.SettingsSnapshot()
+	if normalized := engine.OutputExtension(ext); normalized != "" {
+		ext = normalized
+	}
 	base := batch.BuildOutputPath(s, item.Path, item.RelPath, op, ext, seq)
 	return a.reserveOutput(base, s)
 }
@@ -197,14 +232,13 @@ func (a *App) reserveOutput(base string, s settings.Settings) (string, bool) {
 	strategy := string(s.ConflictStrategy)
 	a.planMu.Lock()
 	defer a.planMu.Unlock()
-	resolved, exists, err := paths.ResolveOutput(base, a.planned, strategy)
+	resolved, exists, err := a.planned.Reserve(base, strategy)
 	if err != nil {
 		return "", false
 	}
 	if strategy == string(settings.ConflictSkip) && exists {
 		return resolved, true
 	}
-	a.planned = append(a.planned, resolved)
 	return resolved, false
 }
 
@@ -216,7 +250,7 @@ func (a *App) finishRun() {
 // resetPlan clears the reserved paths before a batch starts.
 func (a *App) resetPlan() {
 	a.planMu.Lock()
-	a.planned = a.planned[:0]
+	clear(a.planned)
 	a.planMu.Unlock()
 }
 

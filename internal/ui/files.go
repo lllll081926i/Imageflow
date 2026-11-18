@@ -15,6 +15,56 @@ import (
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 )
 
+const fileThumbnailLimit = 64
+
+type fileThumbnail struct {
+	path   string
+	data   string
+	bitmap *myui.Bitmap
+}
+
+type fileThumbnailCache struct {
+	slots [fileThumbnailLimit]fileThumbnail
+	index map[string]int
+	next  int
+}
+
+func (cache *fileThumbnailCache) bitmap(item *batch.Item) *myui.Bitmap {
+	if item.Thumb == "" {
+		return nil
+	}
+	slot, found := cache.index[item.Path]
+	if found && cache.slots[slot].data == item.Thumb {
+		return cache.slots[slot].bitmap
+	}
+	bitmap, _ := myui.DecodeBitmap([]byte(item.Thumb))
+	if !found {
+		if cache.index == nil {
+			cache.index = make(map[string]int, fileThumbnailLimit)
+		}
+		slot = cache.next
+		cache.next = (cache.next + 1) % len(cache.slots)
+		delete(cache.index, cache.slots[slot].path)
+		cache.index[item.Path] = slot
+	}
+	cache.slots[slot] = fileThumbnail{path: item.Path, data: item.Thumb, bitmap: bitmap}
+	return bitmap
+}
+
+func (a *App) visibleInputRows() []batch.Item {
+	items := a.Session.Snapshot()
+	tool := a.ActiveTool()
+	a.mu.Lock()
+	owned := tool != nil && a.rowResultTool == tool.ID()
+	a.mu.Unlock()
+	if !owned {
+		for index := range items {
+			items[index].Status, items[index].Message, items[index].Output = "", "", ""
+		}
+	}
+	return items
+}
+
 // fileRow draws one input row: thumbnail, name, format badge and size, status.
 // Hover swaps the hairline for a tinted selection so the row reads as a list
 // item rather than as a floating card, and the status column stays aligned by
@@ -68,12 +118,7 @@ func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 				}
 			})
 		}
-		myui.ButtonBase(c).Size(28, 28).Label("移除 " + item.Name).
-			Tooltip("从列表移除，不删除文件").Disabled(a.IsRunning()).
-			AlignItems(myui.Center).Justify(myui.Center).
-			OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
-			myui.Icon(c, lucide.X()).Size(14, 14).TextColor(st.TextDim)
-		})
+		a.fileRemoveAction(c, st, item)
 	})
 }
 
@@ -140,8 +185,12 @@ func (a *App) fileBrowserGrid(c *myui.Context, st style, items []batch.Item, gri
 		tile.Children(func() {
 			if a.fileLayout == 1 {
 				myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().Children(func() {
-					if bitmap, err := myui.DecodeBitmap([]byte(item.Thumb)); err == nil {
+					if bitmap := a.fileThumbs.bitmap(item); bitmap != nil {
 						myui.Image(c, bitmap).Fill().Fit(myui.Contain)
+					} else {
+						myui.Row(c).Fill().Center().Children(func() {
+							myui.Icon(c, lucide.FileImage()).Size(17, 17).TextColor(st.TextDim)
+						})
 					}
 				})
 			}
@@ -155,11 +204,7 @@ func (a *App) fileBrowserGrid(c *myui.Context, st style, items []batch.Item, gri
 						myui.Text(c, statusLabel(item.Status)).FontSize(10).TextColor(statusColor(item.Status, st)).SingleLine().Tooltip(item.Message)
 					}
 				})
-				myui.ButtonBase(c).Size(24, 24).Label("移除 " + item.Name).
-					Disabled(a.IsRunning()).AlignItems(myui.Center).Justify(myui.Center).
-					OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
-					myui.Icon(c, lucide.X()).Size(12, 12).TextColor(st.TextDim)
-				})
+				a.fileRemoveAction(c, st, item)
 			})
 		})
 	}).FillWidth().Grow(1).MinHeight(0).Clip().Label("图片列表").
@@ -178,13 +223,20 @@ func (a *App) thumbBox(c *myui.Context, st style, item *batch.Item) {
 	box := myui.Row(c).Size(48, 48).Radius(st.RadiusPill).AlignItems(myui.Center).
 		Justify(myui.Center).Background(st.Recessed).Clip()
 	box.Children(func() {
-		if item.Thumb != "" {
-			if bmp, err := myui.DecodeBitmap([]byte(item.Thumb)); err == nil {
-				myui.Image(c, bmp).Size(48, 48).Fit(myui.Contain)
-				return
-			}
+		if bitmap := a.fileThumbs.bitmap(item); bitmap != nil {
+			myui.Image(c, bitmap).Size(48, 48).Fit(myui.Contain)
+			return
 		}
 		myui.Icon(c, lucide.FileImage()).Width(17).Height(17).TextColor(st.TextDim)
+	})
+}
+
+func (a *App) fileRemoveAction(c *myui.Context, st style, item *batch.Item) {
+	myui.ButtonBase(c).Size(28, 28).Label("移除 " + item.Name).
+		Tooltip("从列表移除，不删除文件").Disabled(a.IsRunning() || a.IsImporting()).
+		AlignItems(myui.Center).Justify(myui.Center).
+		OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
+		myui.Icon(c, lucide.X()).Size(14, 14).TextColor(st.TextDim)
 	})
 }
 
@@ -266,16 +318,7 @@ func truncate(s string, max int) string {
 }
 
 func (a *App) removeByPath(path string) {
-	a.Session.Mu.Lock()
-	removed := -1
-	for i, it := range a.Session.Items {
-		if it.Path == path {
-			a.Session.Items = append(a.Session.Items[:i], a.Session.Items[i+1:]...)
-			removed = i
-			break
-		}
-	}
-	a.Session.Mu.Unlock()
+	removed := a.Session.RemovePath(path)
 	if removed >= 0 && a.selectedPreviewPath() == path {
 		rows := a.Session.Snapshot()
 		if len(rows) == 0 {
@@ -293,6 +336,7 @@ func (a *App) clearInputs() {
 	}
 	a.CancelImport()
 	a.Session.Clear()
+	a.fileThumbs = fileThumbnailCache{}
 	a.SetPreview(nil)
 	a.SetStatus("已清空")
 	a.Invalidate()

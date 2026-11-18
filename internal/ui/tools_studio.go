@@ -304,11 +304,13 @@ func (t *EditTool) request() engine.EditRequest {
 func (t *EditTool) Run(a *App) {
 	req := t.request()
 	format := req.OutputFormat
-	a.runBatch("基础编辑", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("基础编辑", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "edit", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
 		return engine.BasicEdit(one)
@@ -678,12 +680,14 @@ func (t *CollageStudioTool) Run(a *App) {
 	layers := append([]engine.CanvasLayer(nil), t.layers...)
 	width, height, bg := int(t.width), int(t.height), t.bgHex
 	if a.Session.Len() > 0 {
-		a.runBatch("布局", func(index int, row batch.Item) engine.Result {
+		a.runOutputBatch("布局", func(index int, row batch.Item) (string, engine.Result) {
 			out, skipped := a.outputPathFor(row, "layout", "png", index+1)
 			if skipped {
-				return engine.Skip("目标已存在")
+				return "", engine.Skip("目标已存在")
 			}
-			return engine.Layout(engine.CanvasRequest{
+			return out, engine.OK()
+		}, func(ctx context.Context, _ int, _ batch.Item, out string) engine.Result {
+			return engine.LayoutContext(ctx, engine.CanvasRequest{
 				Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
 			})
 		})
@@ -709,7 +713,7 @@ func (t *CollageStudioTool) Run(a *App) {
 			a.endWholeList(cancel, nil)
 			return
 		}
-		res := engine.Layout(engine.CanvasRequest{
+		res := engine.LayoutContext(cancel, engine.CanvasRequest{
 			Width: width, Height: height, Background: bg, Layers: layers, OutputPath: out,
 		})
 		if a.endWholeList(cancel, nil, res) {
@@ -1101,15 +1105,17 @@ func (t *AnnotateTool) pointer(c *myui.Context, a *App, ev myui.InputEvent, img 
 func (t *AnnotateTool) Run(a *App) {
 	t.ensure()
 	marks := append([]engine.AnnotateMark(nil), t.marks...)
-	a.runBatch("标注", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("标注", func(index int, item batch.Item) (string, engine.Result) {
 		ext := strings.TrimPrefix(strings.ToLower(itemPathExt(item.Path)), ".")
 		if ext == "" {
 			ext = "png"
 		}
 		out, skipped := a.outputPathFor(item, "annotate", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		return engine.Annotate(engine.AnnotateRequest{
 			InputPath: item.Path, OutputPath: out, Marks: marks, StripMetadata: true,
 		})
@@ -1246,11 +1252,13 @@ func (t *ScreenshotTool) request() engine.ScreenshotRequest {
 func (t *ScreenshotTool) Run(a *App) {
 	req := t.request()
 	format := []string{"png", "jpg", "webp"}[t.format%3]
-	a.runBatch("截图美化", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("截图美化", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "screenshot", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
 		return engine.Screenshot(one)
@@ -1513,11 +1521,13 @@ func (t *GradeTool) Run(a *App) {
 	t.ensure()
 	params := t.params()
 	format := []string{"png", "jpg", "webp"}[t.format%3]
-	a.runBatch("调色", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("调色", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "grade", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		opened, err := openSRGB(item.Path)
 		if err != nil {
 			return engine.Fail("READ_FAILED", err.Error())
@@ -1664,11 +1674,13 @@ func (t *FilterTool) request() engine.FilterRequest {
 func (t *FilterTool) Run(a *App) {
 	req := t.request()
 	format := []string{"png", "jpg", "webp"}[t.format%3]
-	a.runBatch("滤镜", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("滤镜", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "filter", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		opened, err := openSRGB(item.Path)
 		if err != nil {
 			return engine.Fail("READ_FAILED", err.Error())
@@ -2429,11 +2441,13 @@ func (t *PixelTool) request() engine.PixelRequest {
 func (t *PixelTool) Run(a *App) {
 	req := t.request()
 	format := []string{"png", "gif", "webp"}[t.format%3]
-	a.runBatch("像素化", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("像素化", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "pixel", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
 		res := engine.Pixelate(one)
@@ -2615,11 +2629,13 @@ func (t *EmoteTool) Run(a *App) {
 	req := t.request()
 	formats := []string{"gif", "apng", "webp"}
 	format := formats[t.format%len(formats)]
-	a.runBatchContext("表情制作", func(ctx context.Context, index int, item batch.Item) engine.Result {
+	a.runOutputBatch("表情制作", func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "emote", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(ctx context.Context, index int, item batch.Item, out string) engine.Result {
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
 		one.OutputFormat = format
@@ -2641,6 +2657,7 @@ type UpscaleTool struct {
 	runState                              upscaleRunState
 	resultPreview                         studioJob[upscalePair]
 	comparisonHandle                      myui.Handle
+	comparisonPath                        string
 	zoom, split, centerX, centerY         float64
 	draggingComparison, panningComparison bool
 	pointerX, pointerY                    float64
@@ -2701,6 +2718,7 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 	t.ensure()
 	t.loadPreferences(a)
 	t.applyClipboard(a)
+	t.applyModelDownload(a)
 	t.models = a.Settings.AIModelsDir
 	if t.downloadModel == "" {
 		t.downloadModel = upscale.UpscaylModels()[0].Name
@@ -2722,12 +2740,20 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 	}
 	t.downloadPanel(c, a, st)
 
-	sectionCard(c, "参数", func() {
-		factor := float64(t.scale)
-		sliderRow(c, "放大倍率", &factor, 1, 16, 1, "%.0f×")
-		t.scale = int(factor)
-		switchField(c, &t.double, "双重放大")
-		switchField(c, &t.useCustomWidth, "自定义输出宽度")
+	sectionCard(c, "放大尺寸", func() {
+		switchField(c, &t.double, "双重放大（推理两次）")
+		switchField(c, &t.useCustomWidth, "按输出宽度")
+		if !t.useCustomWidth || t.double {
+			factor := float64(t.scale)
+			caption := "放大倍率"
+			if t.double && t.useCustomWidth {
+				caption = "首轮倍率"
+			} else if t.double {
+				caption = "每轮倍率"
+			}
+			sliderRow(c, caption, &factor, 1, 16, 1, "%.0f×")
+			t.scale = int(factor)
+		}
 		if t.useCustomWidth {
 			if t.customWidth < 1 {
 				t.customWidth = 1920
@@ -2735,12 +2761,23 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 			label(c, "输出宽度（px）")
 			numberField(c, &t.customWidth, 1, 16000, 1, "1920")
 		}
-		sliderRow(c, "Tile（0 = 自动）", &t.tile, 0, 512, 32, "%.0f")
-		switchField(c, &t.tta, "TTA（更慢，画质略好）")
-		label(c, "GPU ID")
-		textField(c, &t.gpuIDs, "自动，或 0,1")
-		if t.scale != 4 {
-			statusPill(c, "含推理后缩放", st.TextDim)
+		if path := a.selectedPreviewPath(); path != "" {
+			for _, item := range a.Session.Snapshot() {
+				if item.Path != path || item.Width <= 0 || item.Height <= 0 {
+					continue
+				}
+				customWidth := 0
+				if t.useCustomWidth {
+					customWidth = int(t.customWidth)
+				}
+				width, height, err := upscale.ExpectedOutputSize(item.Width, item.Height, t.scale, customWidth, t.double)
+				if err != nil {
+					warnAlert(c, "当前图片的输出尺寸超限，请降低倍率或宽度")
+				} else {
+					metricRow(c, st, "选中图片预计输出", fmt.Sprintf("%d × %d px", width, height))
+				}
+				break
+			}
 		}
 	})
 
@@ -2749,9 +2786,6 @@ func (t *UpscaleTool) Panel(c *myui.Context, a *App) {
 		sliderRow(c, "压缩", &t.compression, 0, 100, 1, "%.0f%%")
 	})
 	t.advancedPanel(c, a, st)
-	if name, percent, _ := t.runState.snapshot(); a.IsRunning() && name != "" {
-		myui.Text(c, fmt.Sprintf("%s · %d%%", name, percent)).FontSize(11).TextColor(st.TextSub).SingleLine()
-	}
 	t.persistPreferences(a)
 }
 
@@ -2766,35 +2800,12 @@ func (t *UpscaleTool) Run(a *App) {
 	t.ensure()
 	t.loadPreferences(a)
 	t.persistPreferences(a)
-	if _, downloading, _ := t.modelDownload.snapshot(); downloading {
-		a.SetStatus("请等待模型下载完成")
-		a.finishRun()
-		return
-	}
-	if _, importing, _ := t.modelImport.snapshot(); importing {
-		a.SetStatus("请等待模型导入完成")
-		a.finishRun()
-		return
-	}
-	models, err := upscale.Models(t.models)
-	if err != nil {
-		a.SetStatus("模型清单无效：" + err.Error())
+	if blocked := t.upscaleBlock(a); blocked != "" {
+		a.SetStatus(blocked)
 		a.finishRun()
 		return
 	}
 	modelName := t.downloadModel
-	found := false
-	for _, model := range models {
-		if model.Name == modelName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		a.SetStatus("所选模型未登记，请重新选择或导入")
-		a.finishRun()
-		return
-	}
 	format := []string{"png", "jpg", "webp"}[t.format%3]
 	req := upscale.Request{EnginePath: t.engine, ModelsRoot: t.models, Model: modelName,
 		Scale: t.scale, Tile: int(t.tile), TTA: t.tta, GPU: int(t.gpu), Format: format,
@@ -2803,25 +2814,23 @@ func (t *UpscaleTool) Run(a *App) {
 		req.CustomWidth = int(t.customWidth)
 	}
 	batchSize := a.Session.Len()
-	inference := make(chan struct{}, 1)
-	a.runBatchContext("AI 放大", func(ctx context.Context, index int, item batch.Item) engine.Result {
-		select {
-		case inference <- struct{}{}:
-			defer func() { <-inference }()
-		case <-ctx.Done():
-			return engine.Fail("CANCELLED", "已取消")
-		}
+	t.runState.start("")
+	a.runOutputBatchWithConcurrency("AI 放大", 1, func(index int, item batch.Item) (string, engine.Result) {
 		out, skipped := a.outputPathFor(item, "upscale", extOf(format), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(ctx context.Context, index int, item batch.Item, out string) engine.Result {
 		one := req
 		one.InputPath, one.OutputPath = item.Path, out
 		info, statErr := os.Stat(item.Path)
 		if statErr != nil {
 			return engine.Fail("INPUT_MISSING", statErr.Error())
 		}
-		t.runState.start(item.Name)
+		t.results.Delete(item.Path)
+		t.runState.start(fmt.Sprintf("%d/%d · %s", index+1, batchSize, item.Name))
+		a.Invalidate()
 		one.Progress = func(percent int, line string) {
 			if t.runState.record(percent, line) {
 				a.Invalidate()

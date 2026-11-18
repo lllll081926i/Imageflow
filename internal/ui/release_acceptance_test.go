@@ -76,7 +76,7 @@ func TestReleaseResponsivePages(t *testing.T) {
 				for index, tool := range app.Tools {
 					app.Active = index
 					tester.Frame()
-					button, found := tester.AccessByRole(myui.RoleButton, "开始处理")
+					button, found := tester.AccessByRole(myui.RoleButton, app.actionLabel())
 					if !found || button.Offscreen || button.Bounds.W < 32 || button.Bounds.H < 20 ||
 						button.Bounds.X < 0 || button.Bounds.Y < 0 ||
 						button.Bounds.X+button.Bounds.W > float32(size.width)+1 ||
@@ -170,11 +170,11 @@ func TestReleaseIndependentToolStartButton(t *testing.T) {
 			useTool(t, app, name)
 			defer app.CancelStudioWork()
 			tester := myui.NewTester(app.View, 1440, 900)
-			button, found := tester.AccessByRole(myui.RoleButton, "开始处理")
+			button, found := tester.AccessByRole(myui.RoleButton, app.actionLabel())
 			if !found || button.Disabled {
 				t.Fatal("独立工具的开始按钮不应要求共享导入列表非空")
 			}
-			if err := tester.Click("开始处理"); err != nil {
+			if err := tester.Click(app.actionLabel()); err != nil {
 				t.Fatal(err)
 			}
 			if app.IsRunning() {
@@ -220,4 +220,9 @@ func TestReleaseCanvasDerivedSliderInteraction(t *testing.T) {
 		}
 	}
 	t.Fatal("未找到字号滑块")
+}
+
+func (a *App) actionLabel() string {
+	label, _, _, _ := a.pageAction(a.ActiveTool())
+	return label
 }

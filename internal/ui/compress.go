@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 
 	myui "github.com/egoist/mygo/ui"
@@ -53,15 +54,17 @@ func (t *CompressTool) PreviewCaption(a *App) string {
 func (t *CompressTool) Run(a *App) {
 	t.ensure()
 	format, quality, lossless := compressionFormats[t.format], int(t.quality), t.format == 3 && t.lossless
-	a.runBatch("压缩", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("压缩", func(index int, item batch.Item) (string, engine.Result) {
 		ext := engine.CompressionFormat(item.Path, format)
 		if ext == "" {
-			return engine.Fail("BAD_INPUT", "不支持的图片格式，请使用 JPG / PNG / WebP / AVIF")
+			return "", engine.Fail("BAD_INPUT", "不支持的图片格式，请使用 JPG / PNG / WebP / AVIF")
 		}
 		out, skipped := a.outputPathFor(item, "compress", ext, index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
 		return engine.Compress(engine.CompressRequest{
 			InputPath: item.Path, OutputPath: out, Format: format, Quality: quality, Lossless: lossless,
 		})

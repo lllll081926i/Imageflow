@@ -25,6 +25,12 @@ func (t *UpscaleTool) advancedPanel(c *myui.Context, a *App, st style) {
 	if !t.advanced {
 		return
 	}
+	sectionCard(c, "推理设置", func() {
+		sliderRow(c, "Tile（0 = 自动）", &t.tile, 0, 512, 32, "%.0f")
+		switchField(c, &t.tta, "TTA（更慢，画质略好）")
+		label(c, "GPU ID")
+		textField(c, &t.gpuIDs, "自动，或 0,1")
+	})
 	sectionCard(c, "自定义模型", func() {
 		index := t.importScale - 2
 		if index < 0 || index > 2 {

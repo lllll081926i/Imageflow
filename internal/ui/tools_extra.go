@@ -4,6 +4,7 @@ package ui
 // not: a crop tool with ratio presets, and an icon bundle generator.
 
 import (
+	"context"
 	"fmt"
 
 	myui "github.com/egoist/mygo/ui"
@@ -141,12 +142,14 @@ func (t *CropTool) PreviewCaption(a *App) string {
 func (t *CropTool) Run(a *App) {
 	t.ensure()
 	request := t.request()
-	a.runBatch("裁剪", func(index int, item batch.Item) engine.Result {
-		req := request
-		out, skipped := a.outputPathFor(item, "crop", extOf(req.OutputFormat), index+1)
+	a.runOutputBatch("裁剪", func(index int, item batch.Item) (string, engine.Result) {
+		out, skipped := a.outputPathFor(item, "crop", extOf(request.OutputFormat), index+1)
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return out, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, out string) engine.Result {
+		req := request
 		req.InputPath, req.OutputPath = item.Path, out
 		return engine.CropBox(req)
 	})
@@ -268,11 +271,13 @@ func (t *IconTool) Run(a *App) {
 	t.ensure()
 	padding, radius, bg := int(t.padding), int(t.radius), t.bgHex
 	withICO, withFav, withSVG := t.withICO, t.withFav, t.withSVG
-	a.runBatch("图标", func(index int, item batch.Item) engine.Result {
+	a.runOutputBatch("图标", func(index int, item batch.Item) (string, engine.Result) {
 		dir, skipped := a.outputDirectoryFor(item, "_icons")
 		if skipped {
-			return engine.Skip("目标已存在")
+			return "", engine.Skip("目标已存在")
 		}
+		return dir, engine.OK()
+	}, func(_ context.Context, index int, item batch.Item, dir string) engine.Result {
 		return engine.BuildIconSet(engine.IconRequest{
 			InputPath:   item.Path,
 			OutputDir:   dir,

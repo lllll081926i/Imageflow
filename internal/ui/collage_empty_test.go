@@ -13,12 +13,12 @@ func TestCollagePageRendersEmpty(t *testing.T) {
 	a := newTestApp(t)
 	useTool(t, a, "图片拼图")
 	tt := myui.NewTester(a.View, 1440, 900)
-	for _, want := range []string{"布局", "画布", "样式", "开始处理"} {
+	for _, want := range []string{"布局", "画布", "样式", "导出拼图"} {
 		if !tt.HasText(want) {
 			t.Errorf("%q missing from the empty collage page: %v", want, tt.Texts())
 		}
 	}
-	if !tt.HasText("点击选择文件，或拖入文件夹") {
+	if _, found := tt.Access("拖放区"); !found || !tt.HasText(workflowFor(a.ActiveTool()).input) {
 		t.Error("an empty list must still offer the drop target")
 	}
 	dumpImage(t, tt.Image(), "collage-empty")

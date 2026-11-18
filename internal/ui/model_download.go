@@ -78,7 +78,7 @@ func (t *UpscaleTool) modelChoices() []modelChoice {
 	return choices
 }
 
-func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
+func (t *UpscaleTool) applyModelDownload(a *App) {
 	model, downloading, downloadErr := t.modelDownload.snapshot()
 	if t.downloadVersion != t.downloadApplied && !downloading {
 		t.downloadApplied = t.downloadVersion
@@ -87,6 +87,10 @@ func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
 			a.SetStatus("模型已下载并校验：" + model.Name)
 		}
 	}
+}
+
+func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
+	model, downloading, downloadErr := t.modelDownload.snapshot()
 	sectionCard(c, "AI 模型", func() {
 		if t.downloadModel == "" {
 			t.downloadModel = upscale.DownloadableModels()[0].Name
@@ -108,38 +112,24 @@ func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
 			}
 		}
 		t.modelName = t.downloadModel
-		state := "未下载"
-		for index, status := range t.env.Models {
-			if status.Name != t.modelName {
-				continue
-			}
-			t.model = index
-			if status.Installed && status.HashOK && t.env.Available {
-				state = "已就绪"
-			} else if status.Installed && !status.HashOK {
-				warnAlert(c, "模型校验失败")
-			} else if status.Installed && !t.busy {
-				warnAlert(c, "引擎无法运行，请检查 Vulkan 驱动")
-			}
-		}
-		if t.busy {
-			state = "正在探测"
+		state := "已就绪"
+		if blocked := t.upscaleBlock(a); blocked != "" {
+			state = blocked
 		}
 		_, importing, _ := t.modelImport.snapshot()
-		custom := true
-		for _, available := range upscale.UpscaylModels() {
-			if available.Name == t.modelName {
-				custom = false
-			}
-		}
-		disabled := downloading || importing || custom || a.IsRunning() || t.models == "" || !upscale.ComponentDownloadSupported()
-		myui.Row(c).FillWidth().Gap(8).Children(func() {
+		canDownload := t.canDownloadModel()
+		status := t.selectedModelStatus()
+		disabled := downloading || importing || a.IsRunning() || !canDownload || status.Installed && status.HashOK && t.env.Available
+		myui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
 			a.ghostButtonState(c, st, "一键下载", lucide.Download(), disabled, false, func() { t.startModelDownload(a, a.Settings.AIModelSource) })
 			myui.Text(c, state).FontSize(11).TextColor(st.TextSub)
 			if downloading {
-				a.ghostButton(c, st, "取消下载", lucide.X(), func() { t.modelDownload.cancelRequest() })
+				a.ghostButtonState(c, st, "取消下载", lucide.X(), errors.Is(downloadErr, context.Canceled), false, t.modelDownload.cancelRequest)
 			}
 		})
+		if !downloading && !importing && !t.busy && status.Installed && !t.env.Available && t.env.Reason != "" {
+			warnAlert(c, t.env.Reason)
+		}
 		if !upscale.ComponentDownloadSupported() {
 			warnAlert(c, "当前平台暂无可用的 Upscayl 组件")
 		}
@@ -165,8 +155,13 @@ func (t *UpscaleTool) startModelDownload(a *App, source string) {
 		a.SetStatus("正在清理缓存，请稍后下载模型")
 		return
 	}
+	_, downloading, _ := t.modelDownload.snapshot()
+	_, importing, _ := t.modelImport.snapshot()
+	if downloading || importing || a.IsRunning() || !t.canDownloadModel() {
+		return
+	}
 	configuration := a.Settings
-	root, name := configuration.AIModelsDir, t.downloadModel
+	root, name := t.models, t.downloadModel
 	t.downloadVersion++
 	t.downloadProgress.received.Store(0)
 	t.downloadProgress.total.Store(0)

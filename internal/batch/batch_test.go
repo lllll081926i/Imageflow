@@ -78,6 +78,21 @@ func TestRunHandlesEmptyInput(t *testing.T) {
 	}
 }
 
+func TestCancelledBatchThrottlesProgress(t *testing.T) {
+	cancel := &Cancel{}
+	cancel.Cancel()
+	jobs := make([]Job, 1000)
+	var snapshots []Progress
+	Run(jobs, 4, cancel, func(progress Progress) { snapshots = append(snapshots, progress) })
+	if len(snapshots) == 0 || len(snapshots) > 32 {
+		t.Fatalf("取消刷新次数异常：%d", len(snapshots))
+	}
+	last := snapshots[len(snapshots)-1]
+	if last.Completed != len(jobs) || last.Cancelled != len(jobs) {
+		t.Fatalf("取消后的最终进度不完整：%+v", last)
+	}
+}
+
 func TestRunClampsConcurrency(t *testing.T) {
 	var concurrent, peak atomic.Int64
 	jobs := make([]Job, 12)

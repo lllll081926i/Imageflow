@@ -98,9 +98,6 @@ func Run(jobs []Job, concurrency int, cancel *Cancel, onProgress func(Progress))
 	var reportMu sync.Mutex
 	lastReport := time.Now()
 	report := func(force bool) {
-		mu.Lock()
-		snapshot := progress
-		mu.Unlock()
 		if onProgress == nil {
 			return
 		}
@@ -111,6 +108,9 @@ func Run(jobs []Job, concurrency int, cancel *Cancel, onProgress func(Progress))
 			return
 		}
 		lastReport = now
+		mu.Lock()
+		snapshot := progress
+		mu.Unlock()
 		onProgress(snapshot)
 	}
 
@@ -133,7 +133,7 @@ func Run(jobs []Job, concurrency int, cancel *Cancel, onProgress func(Progress))
 					progress.Cancelled++
 					progress.Completed++
 					mu.Unlock()
-					report(true)
+					report(false)
 					continue
 				}
 				err := Execute(jobs[index], cancel)

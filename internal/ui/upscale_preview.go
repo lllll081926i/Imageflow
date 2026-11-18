@@ -12,6 +12,7 @@ import (
 	"github.com/disintegration/imaging"
 	myui "github.com/egoist/mygo/ui"
 	"github.com/lllll081926i/imageflow-go/internal/upscale"
+	"github.com/lobehub/lobe-mygo/pkg/lucide"
 )
 
 type upscaleResult struct {
@@ -67,6 +68,11 @@ func (state *upscaleRunState) snapshot() (string, int, []string) {
 func (t *UpscaleTool) PreviewPanel(c *myui.Context, a *App) {
 	st := styles(c)
 	path := a.selectedPreviewPath()
+	if t.comparisonPath != path {
+		t.comparisonPath = path
+		t.draggingComparison, t.panningComparison = false, false
+		t.resetComparison()
+	}
 	var result upscaleResult
 	if value, ok := t.results.Load(path); ok {
 		result = value.(upscaleResult)
@@ -75,6 +81,7 @@ func (t *UpscaleTool) PreviewPanel(c *myui.Context, a *App) {
 		if t.skipPreview {
 			myui.Spacer(c).Grow(1)
 			myui.Text(c, "已跳过结果预览").FontSize(12).TextColor(st.TextDim)
+			a.ghostButton(c, st, "恢复预览", lucide.Image(), func() { t.skipPreview = false })
 			myui.Spacer(c).Grow(1)
 			return
 		}
@@ -99,14 +106,24 @@ func (t *UpscaleTool) PreviewPanel(c *myui.Context, a *App) {
 			t.resetComparison()
 		}
 		zoom, split, centerX, centerY := t.zoom/100, t.split, t.centerX, t.centerY
+		heading := "原图 · 放大后可滑动对比"
+		if pair.after != nil {
+			heading = fmt.Sprintf("左：原图 %d × %d  ·  右：结果 %d × %d", pair.width, pair.height, result.report.Width, result.report.Height)
+		}
+		myui.Text(c, heading).FontSize(11).TextColor(st.TextSub).SingleLine().Tooltip(heading)
 		canvas := myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().Background(st.Card).
 			Focusable().Label("AI 对比画布").Bind(&t.comparisonHandle).
 			OnShortcut(0, myui.KeyLeft, func() { a.movePreview(-1) }).
 			OnShortcut(0, myui.KeyRight, func() { a.movePreview(1) })
-		canvas.Cursor(myui.CursorResizeEW)
+		if pair.after != nil {
+			canvas.Cursor(myui.CursorResizeEW).Tooltip("拖动对比分隔线；滚轮缩放；右键拖动平移；双击复位")
+		}
 		canvas.HandleInput(func(event myui.InputEvent) bool {
 			bounds := t.comparisonHandle.Bounds(c)
 			rect := previewFitRect(myui.Rect{W: bounds.W, H: bounds.H}, pair.width, pair.height)
+			if pair.after == nil && event.Button == 0 && event.Kind == myui.InputPointerDown && event.Clicks < 2 {
+				return false
+			}
 			return t.comparisonPointer(event, rect)
 		})
 		canvas.Draw(func(painter *myui.Painter, bounds myui.Rect) {

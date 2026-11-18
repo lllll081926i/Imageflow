@@ -99,6 +99,52 @@ func TestWorkflowResultEntry(t *testing.T) {
 	}
 }
 
+func TestWorkflowBatchResultsStayWithTheirTool(t *testing.T) {
+	app := newTestApp(t)
+	defer app.CancelStudioWork()
+	inputs := seedInputs(t, app, 2)
+	app.openTool(app.toolIndex(ToolConvert))
+	app.Start()
+	waitForRun(t, app)
+	tester := myui.NewTester(app.View, 1280, 800)
+	converted := app.completedOutputPath()
+	if converted == "" {
+		t.Fatal("格式转换没有可查看的结果")
+	}
+	app.openTool(app.toolIndex(ToolStitch))
+	tester.Frame()
+	if _, found := tester.AccessByRole(myui.RoleButton, "查看结果"); found {
+		t.Fatal("长图拼接显示了格式转换的结果入口")
+	}
+	if row := app.visibleInputRows()[0]; row.Status != "" || row.Output != "" {
+		t.Fatal("长图拼接显示了格式转换的行结果")
+	}
+	app.openTool(app.toolIndex(ToolConvert))
+	tester.Frame()
+	if _, found := tester.AccessByRole(myui.RoleButton, "查看结果"); !found || app.completedOutputPath() != converted {
+		t.Fatal("切回格式转换后找不到本次转换的结果")
+	}
+	app.openTool(app.toolIndex(ToolStitch))
+	app.selectBrowserPreview(inputs[1])
+	waitForPreview(t, app, inputs[1])
+	before := app.Preview()
+	app.Start()
+	app.openTool(app.toolIndex(ToolConvert))
+	waitForRun(t, app)
+	tester.Frame()
+	if app.Preview() != before || app.selectedPreviewPath() != inputs[1] {
+		t.Fatal("长图拼接完成后改变了共用的原图预览")
+	}
+	if path := app.completedOutputPath(); path != "" {
+		t.Fatalf("格式转换显示了拼接结果：%s", path)
+	}
+	app.openTool(app.toolIndex(ToolStitch))
+	tester.Frame()
+	if path := app.completedOutputPath(); path == "" || path == converted {
+		t.Fatalf("返回长图拼接后没有本次拼接结果：%s", path)
+	}
+}
+
 func TestWorkflowPreviewSkipsDuplicateSelection(t *testing.T) {
 	app := newTestApp(t)
 	inputs := seedInputs(t, app, 2)

@@ -71,7 +71,8 @@ func TestUpscaleDividerDragShowsActualBeforeAndAfter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !busy && pair.after != nil {
+		_, shown := tester.Access("AI 对比画布")
+		if !busy && pair.after != nil && shown {
 			break
 		}
 		if time.Now().After(deadline) {

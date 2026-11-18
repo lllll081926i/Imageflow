@@ -10,10 +10,10 @@ import (
 	"image/color"
 	"image/png"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/lllll081926i/imageflow-go/internal/engine"
+	"github.com/lllll081926i/imageflow-go/internal/upscale"
 )
 
 // outputsOf lists the files a batch wrote, read from the session's row results.
@@ -282,23 +282,20 @@ func TestRunCanvasLayoutEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRunUpscaleWithoutEngineIsHonest is E2E-13: with no engine configured the page
-// fails each row with a component error instead of claiming success.
 func TestRunUpscaleWithoutEngineIsHonest(t *testing.T) {
-	a := newTestApp(t)
-	seedInputs(t, a, 1)
-	tool := useTool(t, a, "AI 高清放大").(*UpscaleTool)
-	tool.engine = filepath.Join(t.TempDir(), "missing-engine")
-	tool.models = t.TempDir()
-	a.Start()
-	waitForRun(t, a)
-	for _, row := range a.Session.Snapshot() {
-		if row.Status == "ok" {
-			t.Fatal("a missing engine was reported as success")
-		}
-		if row.Message == "" {
-			t.Fatal("the failure carries no reason")
-		}
+	app := newTestApp(t)
+	seedInputs(t, app, 1)
+	tool := useTool(t, app, "AI 高清放大").(*UpscaleTool)
+	tool.loadPreferences(app)
+	tool.detected = true
+	tool.downloadModel = "local-model"
+	tool.env.Models = []upscale.ModelStatus{{Model: upscale.Model{Name: tool.downloadModel}, Installed: true, HashOK: true}}
+	app.Start()
+	if app.IsRunning() || app.StatusLine() != "本地推理引擎未就绪" {
+		t.Fatalf("引擎未就绪时应在启动前显示原因：%q", app.StatusLine())
+	}
+	if row := app.Session.Snapshot()[0]; row.Status != "" || row.Output != "" {
+		t.Fatalf("尚未启动时不应修改文件状态：%+v", row)
 	}
 }
 

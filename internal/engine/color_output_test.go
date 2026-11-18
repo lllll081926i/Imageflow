@@ -89,3 +89,53 @@ func TestRichTextMissingImageKeepsExistingOutput(t *testing.T) {
 		t.Fatal("失败后覆盖了已有输出")
 	}
 }
+
+type cancelAtExportCheck struct {
+	context.Context
+	cancel context.CancelFunc
+	checks int
+	at     int
+}
+
+func (ctx *cancelAtExportCheck) Err() error {
+	ctx.checks++
+	if ctx.checks == ctx.at {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
+}
+
+func TestCanvasExportsKeepExistingOutputOnCancel(t *testing.T) {
+	for _, tool := range []struct {
+		name   string
+		export func(context.Context, string) engine.Result
+	}{
+		{"自由布局", func(ctx context.Context, path string) engine.Result {
+			return engine.LayoutContext(ctx, engine.CanvasRequest{Width: 64, Height: 64, OutputPath: path})
+		}},
+		{"富文本制图", func(ctx context.Context, path string) engine.Result {
+			return engine.RenderRichTextContext(ctx, engine.RichTextRequest{Width: 320, OutputPath: path,
+				Blocks: []engine.RichTextBlock{{Type: "paragraph", Text: "取消测试"}}})
+		}},
+	} {
+		t.Run(tool.name, func(t *testing.T) {
+			for _, at := range []int{1, 2, 4} {
+				path := filepath.Join(t.TempDir(), "existing.png")
+				original := []byte("已有输出")
+				if err := os.WriteFile(path, original, 0600); err != nil {
+					t.Fatal(err)
+				}
+				base, cancel := context.WithCancel(context.Background())
+				result := tool.export(&cancelAtExportCheck{Context: base, cancel: cancel, at: at}, path)
+				cancel()
+				if result.Success || result.ErrorCode != "CANCELLED" {
+					t.Fatalf("在检查点 %d 取消仍未返回取消状态：%+v", at, result)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(data, original) {
+					t.Fatalf("在检查点 %d 取消后改变了已有输出：%q，%v", at, data, err)
+				}
+			}
+		})
+	}
+}

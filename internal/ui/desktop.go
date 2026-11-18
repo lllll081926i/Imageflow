@@ -121,15 +121,21 @@ func (a *App) openOutputFolder() {
 }
 
 func (a *App) completedOutputPath() string {
-	if tool := a.ActiveTool(); tool != nil {
-		a.mu.Lock()
-		independent := a.canvasOutputs[tool.ID()]
-		a.mu.Unlock()
-		if independent != "" || tool.ID() == ToolCompare || tool.ID() == ToolAnalysis {
-			return independent
-		}
+	tool := a.ActiveTool()
+	if tool == nil {
+		return ""
 	}
-	selected := a.selectedPreviewPath()
+	a.mu.Lock()
+	independent := a.canvasOutputs[tool.ID()]
+	owned := a.rowResultTool == tool.ID()
+	a.mu.Unlock()
+	if independent != "" || !owned {
+		return independent
+	}
+	return a.rowOutputPath(a.selectedPreviewPath())
+}
+
+func (a *App) rowOutputPath(selected string) string {
 	fallback := ""
 	for _, item := range a.Session.Snapshot() {
 		if item.Status != "ok" || item.Output == "" {

@@ -293,15 +293,38 @@ func replaceSeq(s string, seq int) string {
 //
 // reserved holds paths already planned in the same batch.
 func ResolveOutput(base string, reserved []string, strategy string) (string, bool, error) {
+	return resolveOutput(base, strategy, func(path string) bool { return containsPath(reserved, path) })
+}
+
+type OutputReservations map[string]struct{}
+
+func (reserved *OutputReservations) Reserve(base, strategy string) (string, bool, error) {
+	resolved, exists, err := resolveOutput(base, strategy, func(path string) bool {
+		_, taken := (*reserved)[identityKey(path)]
+		return taken
+	})
+	if err != nil || strategy == "skip" && exists {
+		return resolved, exists, err
+	}
+	if *reserved == nil {
+		*reserved = make(OutputReservations)
+	}
+	(*reserved)[identityKey(resolved)] = struct{}{}
+	return resolved, exists, nil
+}
+
+func resolveOutput(base, strategy string, reserved func(string) bool) (string, bool, error) {
 	base, err := Normalize(base)
 	if err != nil {
 		return "", false, err
 	}
 	exists := Exists(base)
-	dup := containsPath(reserved, base)
+	dup := reserved(base)
 	switch strategy {
 	case "overwrite":
-		return base, exists, nil
+		if !dup {
+			return base, exists, nil
+		}
 	case "skip":
 		return base, exists || dup, nil
 	}
@@ -313,7 +336,7 @@ func ResolveOutput(base string, reserved []string, strategy string) (string, boo
 	stem := strings.TrimSuffix(filepath.Base(base), ext)
 	for i := 1; i <= 9999; i++ {
 		candidate := filepath.Join(dir, fmt.Sprintf("%s_%d%s", stem, i, ext))
-		if !Exists(candidate) && !containsPath(reserved, candidate) {
+		if !reserved(candidate) && !Exists(candidate) {
 			return candidate, false, nil
 		}
 	}
