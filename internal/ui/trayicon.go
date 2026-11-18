@@ -13,14 +13,14 @@ var (
 )
 
 // trayIconPNG returns the tray icon: the application mark rasterised to the size
-// a menu bar asks for. It is the original project's logo, not a redrawn lookalike,
-// so the tray, the taskbar and the window all show one shape.
+// a menu bar asks for. It is the same artwork the window draws, so the tray, the
+// taskbar and the window all show one shape.
 //
-// The trimmed document is used so the mark fills the icon: the full logo carries
-// a 9% margin on every side, which at 32 px reads as a smaller picture.
+// 32 px is what a Windows tray wants; the mark is rendered from the artwork's own
+// tile crop, so it fills the icon instead of carrying the source canvas's margin.
 func trayIconPNG() []byte {
 	trayIconOnce.Do(func() {
-		if data := iconPNG(32); data != nil {
+		if data := iconPNG(logoBadgeSize); data != nil {
 			trayIconData = data
 		}
 	})

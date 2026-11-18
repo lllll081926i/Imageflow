@@ -31,8 +31,17 @@ func TestUpscaleHidesManualInstallationControls(t *testing.T) {
 			t.Fatalf("AI 页仍显示手动安装控件：%s", text)
 		}
 	}
-	if !tester.HasText("一键下载") || !tester.HasText("适合：照片 / 通用") {
-		t.Fatal("AI 页缺少一键下载或简短模型用途")
+	// The purpose travels with the name inside the menu, so the page no longer carries a
+	// separate caption below it: the trigger shows the decorated label and nothing else
+	// repeats it.
+	if !tester.HasText("一键下载") {
+		t.Fatal("AI 页缺少一键下载")
+	}
+	if !tester.HasText("upscayl-standard-4x（照片 / 通用）") {
+		t.Fatal("模型用途未随模型名显示")
+	}
+	if tester.HasText("适合：照片 / 通用") {
+		t.Fatal("模型用途仍在单独的说明行中重复")
 	}
 	dumpFrame(t, app, "upscale-simplified")
 }

@@ -36,6 +36,48 @@ func (a *App) modelDownloadSettings(c *myui.Context, st style, configuration *se
 	})
 }
 
+// modelLabel is the text the model menu shows for one model. The picture family a
+// model is trained for is the only fact that tells the entries apart, so it travels
+// with the name instead of living in a caption the user has to match against the
+// row above.
+func modelLabel(name string) string {
+	for _, model := range upscale.UpscaylModels() {
+		if model.Name == name && model.Purpose != "" {
+			return name + "（" + model.Purpose + "）"
+		}
+	}
+	return name
+}
+
+// modelChoice is one row of the model menu: the identifier the engine runs, and the
+// text that names it.
+type modelChoice struct {
+	Name  string
+	Label string
+}
+
+// modelChoices is the menu: the downloadable registry first, then whatever the probe
+// found on disk, because a hand-installed model has no registry entry to name it.
+func (t *UpscaleTool) modelChoices() []modelChoice {
+	choices := make([]modelChoice, 0, 8)
+	seen := make(map[string]bool, 8)
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		choices = append(choices, modelChoice{Name: name, Label: modelLabel(name)})
+	}
+	for _, model := range upscale.DownloadableModels() {
+		add(model.Name)
+	}
+	for _, model := range t.env.Models {
+		add(model.Name)
+	}
+	add(t.downloadModel)
+	return choices
+}
+
 func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
 	model, downloading, downloadErr := t.modelDownload.snapshot()
 	if t.downloadVersion != t.downloadApplied && !downloading {
@@ -49,19 +91,22 @@ func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
 		if t.downloadModel == "" {
 			t.downloadModel = upscale.DownloadableModels()[0].Name
 		}
-		labels := make([]string, 0, 3)
-		for _, available := range upscale.DownloadableModels() {
-			labels = append(labels, available.Name)
+		choices := t.modelChoices()
+		labels := make([]string, 0, len(choices))
+		for _, choice := range choices {
+			labels = append(labels, choice.Label)
 		}
-		for _, installed := range t.env.Models {
-			if indexOf(labels, installed.Name) < 0 {
-				labels = append(labels, installed.Name)
+		// The widget writes the chosen row's label back, so the selection is read back
+		// through the table: the page must keep running with the identifier, never with
+		// the decorated text.
+		current := modelLabel(t.downloadModel)
+		selectField(c, &current, labels)
+		for _, choice := range choices {
+			if choice.Label == current {
+				t.downloadModel = choice.Name
+				break
 			}
 		}
-		if indexOf(labels, t.downloadModel) < 0 {
-			labels = append(labels, t.downloadModel)
-		}
-		selectField(c, &t.downloadModel, labels)
 		t.modelName = t.downloadModel
 		state := "未下载"
 		for index, status := range t.env.Models {
@@ -79,11 +124,6 @@ func (t *UpscaleTool) downloadPanel(c *myui.Context, a *App, st style) {
 		}
 		if t.busy {
 			state = "正在探测"
-		}
-		for _, available := range upscale.DownloadableModels() {
-			if available.Name == t.downloadModel {
-				myui.Text(c, "适合："+available.Purpose).FontSize(12).TextColor(st.TextSub)
-			}
 		}
 		_, importing, _ := t.modelImport.snapshot()
 		custom := true

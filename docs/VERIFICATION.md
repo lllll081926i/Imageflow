@@ -134,6 +134,18 @@ Linux 产物含 `imageflow`、`imageflow.png`、`imageflow.desktop`、
 `imageflow_0.1.0_amd64.deb`、`imageflow-0.1.0-linux-amd64.tar.gz`、
 256/512 图标、`install.sh`、`PKGBUILD`。
 
+### 3.0 品牌图标链路
+
+```
+$ go run ./cmd/imageflow-icon
+wrote resources\icon.png (1024), resources\icon.ico, resources\favicon.ico, and 16 PNG sizes into resources\icons
+```
+
+判定：`internal/brand` 嵌入的唯一源图 `assets/logo.png` 裁切后渲染出 16–1024 全部尺寸；
+`resources/icon.png`、`icon.ico`（7 个尺寸）、`favicon.ico`（3 个尺寸）与 `resources/icons/`
+这 16 个 PNG 全部由 `brand.MarkAt` 得到，`mygo build` 会把它们拷到产物旁。
+回归测试：`internal/brand/brand_test.go`、`internal/ui/logo_test.go`。
+
 ### 3.1 打包产物截图（无人值守）
 
 ```

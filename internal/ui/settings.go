@@ -245,8 +245,8 @@ func (a *App) aboutSection(c *myui.Context, st style) {
 			row.Background(st.Recessed)
 		}
 		row.Children(func() {
-			if mark := iconImage(40); mark != nil {
-				myui.Image(c, myui.NewBitmap(mark)).Size(40, 40).Fit(myui.Contain)
+			if mark := iconImage(logoAboutSize); mark != nil {
+				myui.Image(c, myui.NewBitmap(mark)).Size(logoAboutSize, logoAboutSize).Fit(myui.Contain)
 			}
 			myui.Column(c).Grow(1).Gap(3).Children(func() {
 				myui.Text(c, appVersionLabel()).FontSize(13).

@@ -1,71 +1,37 @@
 package ui
 
-// logo.go draws the application mark.
+// logo.go is the thin cache the interface draws through.
 //
-// The SVG itself lives in the brand package, together with the trimmed variant
-// the icon generator uses, so the window and the .exe icon are built from one
-// document. Everything here is a thin rasterising cache on top of it.
+// The artwork and the render path live in internal/brand, so the window's mark and
+// the packager's icon.png come from one implementation. This file keeps the sizes
+// the pages ask for in one place and hands MyGo a bitmap it can draw.
 
 import (
-	"bytes"
 	"image"
-	"image/png"
-	"sync"
 
 	"github.com/lllll081926i/imageflow-go/internal/brand"
-	"github.com/lllll081926i/imageflow-go/internal/svg"
 )
 
-// logoKV caches one rasterised mark per (document, edge) pair, so the rail, the
-// title bar, the About page and the tray never re-render the SVG per frame.
-type logoKV struct {
-	doc  int // 0 = full document, 1 = trimmed icon document
-	size int
-}
+// The sizes the interface asks for. They are named because three of them are
+// design decisions, not arbitrary numbers: 36 is the landing page's header tile,
+// 40 the About row's, 32 the title-bar badge and the tray glyph.
+const (
+	logoHomeSize  = 36
+	logoAboutSize = 40
+	logoBadgeSize = 32
+)
 
-var logoCache sync.Map // logoKV -> image.Image
+// logoImage returns the mark at one size, on a transparent canvas.
+//
+// Every caller gets the same cached bitmap per size: the mark is a 1.3 MB PNG and
+// re-rendering it per frame would be a measurable cost for a picture that never
+// changes.
+func logoImage(size int) image.Image { return brand.MarkAt(size) }
 
-func rasterLogo(doc int, size int) image.Image {
-	if size < 8 {
-		size = 8
-	}
-	key := logoKV{doc: doc, size: size}
-	if cached, ok := logoCache.Load(key); ok {
-		return cached.(image.Image)
-	}
-	src := brand.LogoSVG
-	if doc == 1 {
-		src = brand.IconSVG
-	}
-	img, err := svg.RenderBytes([]byte(src), size, size)
-	if err != nil {
-		return nil
-	}
-	logoCache.Store(key, img)
-	return img
-}
+// iconImage is the mark used where a badge stands alone (the About row, the rail's
+// header). It is the same render path, kept as a separate name because the two call
+// sites read differently.
+func iconImage(size int) image.Image { return brand.MarkAt(size) }
 
-// logoImage returns the full mark rasterised to a sizexsize square. It keeps the
-// original document's margin, which is right for the About page where the mark
-// sits on its own.
-func logoImage(size int) image.Image { return rasterLogo(0, size) }
-
-// iconImage returns the mark trimmed to its own bounds. Every place that shows
-// the logo at small sizes uses this: the title bar's badge and the tray icon both
-// looked a size too small because the original document leaves a 9% margin on
-// every side.
-func iconImage(size int) image.Image { return rasterLogo(1, size) }
-
-// iconPNG returns the trimmed mark as PNG bytes.
-func iconPNG(size int) []byte { return pngOf(iconImage(size)) }
-
-func pngOf(img image.Image) []byte {
-	if img == nil {
-		return nil
-	}
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		return nil
-	}
-	return buf.Bytes()
-}
+// iconPNG returns the mark at one size as PNG bytes, for the tray and the platform.
+func iconPNG(size int) []byte { return brand.PNG(size) }

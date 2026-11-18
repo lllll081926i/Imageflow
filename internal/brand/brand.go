@@ -1,56 +1,104 @@
-// Package brand holds the application's identity: the logo document and the
-// project's public URLs.
+// Package brand holds the application's identity: the logo artwork, the icon
+// ladder rendered from it, and the project's public URLs.
 //
 // It is a package of its own because more than the UI needs the mark: the icon
-// generator writes resources/icon.png from the same bytes the window draws, so
-// the installer, the taskbar, the tray and the in-app logo can never drift into
-// three different pictures.
+// generator writes resources/ from the same bytes the window draws, so the
+// installer, the taskbar, the tray and the in-app logo can never drift into three
+// different pictures.
 package brand
 
-// LogoSVG 保留原项目的图形，并使用不透明白色内底。
-//
-// The mark is a stroked rounded square (112..912 of a 1024 canvas) with two arcs
-// and a centre dot, filled by a blue → indigo → purple gradient. The generous
-// margin is what the original tile had; IconViewBox below trims it for icons,
-// where an operating system draws the mark at 16 to 256 pixels and every unused
-// pixel of margin makes the mark look smaller.
-const LogoSVG = `<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-        <linearGradient id="flow_gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#007AFF"/>
-            <stop offset="50%" stop-color="#5856D6"/>
-            <stop offset="100%" stop-color="#AF52DE"/>
-        </linearGradient>
-    </defs>
-    <rect x="112" y="112" width="800" height="800" rx="200" fill="white"/>
-    <rect x="112" y="112" width="800" height="800" rx="200" stroke="url(#flow_gradient)" stroke-width="32"/>
-    <path d="M360 512C360 423.634 431.634 352 520 352H660" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
-    <path d="M660 512C660 600.366 588.366 672 500 672H360" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
-    <circle cx="512" cy="512" r="120" fill="url(#flow_gradient)" fill-opacity="0.1"/>
-    <circle cx="512" cy="512" r="60" fill="url(#flow_gradient)"/>
-</svg>`
+import (
+	"bytes"
+	_ "embed"
+	"image"
+	"image/color"
+	"sync"
+)
 
-// IconSVG is LogoSVG with its viewBox trimmed to the mark's own bounds.
+// The artwork is embedded rather than read from disk: the binary has to carry its
+// own icon, and a missing file at runtime must not leave the window's mark blank.
 //
-// The rounded square spans 112..912 and its 32-wide stroke puts the outer edge
-// at 96..928, so a viewBox of 96 96 832 832 renders the mark edge to edge. That
-// is what makes a 16×16 title-bar or taskbar icon readable: the same shape, 20%
-// larger, with no dead margin around it.
-const IconSVG = `<svg width="1024" height="1024" viewBox="96 96 832 832" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-        <linearGradient id="flow_gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#007AFF"/>
-            <stop offset="50%" stop-color="#5856D6"/>
-            <stop offset="100%" stop-color="#AF52DE"/>
-        </linearGradient>
-    </defs>
-    <rect x="112" y="112" width="800" height="800" rx="200" fill="white"/>
-    <rect x="112" y="112" width="800" height="800" rx="200" stroke="url(#flow_gradient)" stroke-width="32"/>
-    <path d="M360 512C360 423.634 431.634 352 520 352H660" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
-    <path d="M660 512C660 600.366 588.366 672 500 672H360" stroke="url(#flow_gradient)" stroke-width="80" stroke-linecap="round"/>
-    <circle cx="512" cy="512" r="120" fill="url(#flow_gradient)" fill-opacity="0.1"/>
-    <circle cx="512" cy="512" r="60" fill="url(#flow_gradient)"/>
-</svg>`
+//go:embed assets/logo.png
+var logoSrc []byte
+
+// LogoSource is the original artwork, byte for byte. A generator or a test can
+// decode exactly what the binary carries.
+func LogoSource() []byte { return logoSrc }
+
+// The artwork is a 1254×1254 canvas: a rounded square tile with a soft shadow
+// around it. Measured on the source's fully opaque pixels, the tile's solid area
+// runs from (91,117) to (1148,1163) — 1058×1047 — and its soft edge fades out a few
+// pixels past that. The shadow's faint tail reaches the canvas edge, which is why
+// an alpha-based bounding box of the whole file is the whole canvas.
+//
+// An operating system draws the mark between 16 and 1024 pixels, so the icon ladder
+// is rendered from a square crop of the tile rather than from the whole canvas: the
+// full canvas carries roughly 7% of margin per side, which at 16 px costs two of the
+// picture's twelve usable pixels and makes the mark read small.
+//
+// The crop is square and centred on the solid tile (the artwork is 1058 wide and
+// 1047 tall), rather than on the canvas: the shadow is heavier below the tile, so
+// the canvas centre sits about 13 px above the tile's centre. It takes the
+// larger span, so no edge of the tile is clipped, and it keeps the tile's soft
+// edge, which is what stops the icon from looking cut out.
+//
+// It is computed rather than written as a literal so the square and the centre stay
+// one decision: the side is the tile's span plus a small margin for the soft edge.
+var markBounds = func() image.Rectangle {
+	const tileX0, tileY0, tileX1, tileY1 = 87, 113, 1153, 1168
+	const side = 1066
+	cx := (tileX0 + tileX1) / 2
+	cy := (tileY0 + tileY1) / 2
+	x0 := cx - side/2
+	y0 := cy - side/2
+	// Keep the crop inside the artwork, whatever the numbers above say.
+	canvas := image.Rect(0, 0, 1254, 1254)
+	if x0 < canvas.Min.X {
+		x0 = canvas.Min.X
+	}
+	if y0 < canvas.Min.Y {
+		y0 = canvas.Min.Y
+	}
+	if x0+side > canvas.Max.X {
+		x0 = canvas.Max.X - side
+	}
+	if y0+side > canvas.Max.Y {
+		y0 = canvas.Max.Y - side
+	}
+	return image.Rect(x0, y0, x0+side, y0+side)
+}()
+
+var (
+	decodedOnce sync.Once
+	decoded     image.Image
+	decodedErr  error
+)
+
+// Logo decodes the embedded artwork once and returns it.
+func Logo() (image.Image, error) {
+	decodedOnce.Do(func() {
+		img, _, err := image.Decode(bytes.NewReader(logoSrc))
+		if err != nil {
+			decodedErr = err
+			return
+		}
+		decoded = img
+	})
+	return decoded, decodedErr
+}
+
+// LogoBounds is the artwork's full canvas.
+func LogoBounds() image.Rectangle {
+	img, err := Logo()
+	if err != nil {
+		return image.Rect(0, 0, 1024, 1024)
+	}
+	return img.Bounds()
+}
+
+// MarkBounds is the square the tile occupies inside the artwork. Every icon is
+// rendered from this rectangle.
+func MarkBounds() image.Rectangle { return markBounds }
 
 // RepoURL is the project's public GitHub repository. The About page opens it and
 // the release feed publishes to it.
@@ -58,3 +106,22 @@ const RepoURL = "https://github.com/lllll081926i/Imageflow"
 
 // RepoLabel is how that repository reads in the UI.
 const RepoLabel = "lllll081926i/Imageflow"
+
+// Accent is the mark's dominant colour, used where one tint has to stand in for
+// the artwork (a status accent, a plate behind the mark).
+var Accent = color.NRGBA{R: 0x7A, G: 0x7A, B: 0xF2, A: 255}
+
+// IconLadder is every PNG size the icon bundle carries, in ascending order.
+//
+// It is the ladder a desktop and a web project actually consume: the small
+// favicon sizes, the taskbar and dock sizes, and the 1024 tile the packager
+// embeds.
+var IconLadder = []int{16, 24, 32, 48, 64, 96, 128, 144, 152, 167, 180, 192, 256, 384, 512, 1024}
+
+// ICOIconSizes are the entries of the multi-resolution icon.ico; FaviconSizes
+// those of favicon.ico. A Windows shortcut and a browser tab want different
+// ladders, and an ICO entry cannot exceed 256.
+var (
+	ICOIconSizes = []int{16, 24, 32, 48, 64, 128, 256}
+	FaviconSizes = []int{16, 32, 48}
+)
