@@ -159,9 +159,10 @@ func (a *App) homeToolCard(c *myui.Context, st style, idx int) {
 		FocusRingColor(st.Brand).FocusRingOffset(2).
 		Transition(motion(springTap))
 	card.Column().AlignItems(myui.Start)
+	card = pressFeedback(card, card.Pressed(), 0.99)
 	switch {
 	case card.Pressed():
-		card.Background(st.Recessed).Border(1, st.Brand).Scale(0.99, 0.99)
+		card.Background(st.Recessed).Border(1, st.Brand)
 	case card.Hovered():
 		card.Background(st.Recessed).Border(1, st.Brand)
 	default:

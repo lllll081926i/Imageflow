@@ -1,7 +1,7 @@
 {
   "name": "ImageFlow",
   "identifier": "io.github.lllll081926i.imageflow",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "out": "build",
   "icon": "resources/icon.png",
   "updates": {

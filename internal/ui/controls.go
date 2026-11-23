@@ -25,11 +25,12 @@ import (
 // animates its own x and w, the child trails the rail with a different curve.
 // The cards used to lag by more than 150 DIP mid-collapse.
 var (
-	// springTap is the press feedback every clickable surface uses. The press
-	// itself is an immediate Scale transform; the Transition adds a soft shadow
-	// fade on hover/press, and deliberately animates nothing about the layout
-	// box. Size/Position used to be set here, which made every button ease its
-	// own width while the rail was collapsing.
+	// springTap is the transition every clickable surface carries. The press
+	// itself is a pose (pressFeedback), never a property of this transition: the
+	// Transition only adds the soft shadow fade on hover and press, and
+	// deliberately animates nothing about the layout box. Size/Position used to be
+	// set here, which made every button ease its own width while the rail was
+	// collapsing.
 	springTap = myui.ElementTransition{
 		Animation: &snappySpring,
 		Shadows:   true,
@@ -50,6 +51,33 @@ var (
 // negative Duration is MyGo's documented "show every change, Enter and Exit at
 // once", which is exactly a reduced-motion frame.
 var instantTransition = myui.ElementTransition{Duration: -1, Shadows: true}
+
+// pressPose is how a clickable surface answers a press: it scales while the
+// pointer holds it, and eases back on release. docs/ui/motion.md is explicit that
+// a transform belongs in a pose: AnimatePose moves the element in frames that
+// only paint, without running the view, and calls it "the cheapest motion there
+// is". A static Scale transform snaps between two sizes in one frame, which reads
+// as a glitch rather than as a press.
+var pressPose = myui.Animation{Duration: 120 * time.Millisecond, Ease: myui.EaseOut}
+
+// pressFeedback asks e where its press state puts it. It is called on every
+// frame the element is built, not only while it is pressed: a pose starts at
+// its first value and moves only when a later frame poses it elsewhere, so the
+// released frame must ask for the neutral pose or the element would stay small.
+//
+// With the app's 减弱动效 switch on nothing is posed at all: the element is built
+// neutral, which is stricter than the desktop's Preferences.ReduceMotion (that
+// one only settles a pose at once).
+func pressFeedback(e myui.Element, pressed bool, scale float32) myui.Element {
+	if motionReduced {
+		return e
+	}
+	pose := myui.Pose{}
+	if pressed {
+		pose.Scale = scale
+	}
+	return e.AnimatePose(pose, pressPose)
+}
 
 // snappySpring keeps the press bounce; smoothCurve is the eased fade used for
 // content that swaps in place.
@@ -286,10 +314,11 @@ func ghostButtonIn(c *myui.Context, st style, text string, icon *myui.SVG, onCli
 		Transition(motion(springTap)).Border(1, st.Divider).Background(st.Card)
 	switch {
 	case btn.Pressed():
-		btn.Background(st.DividerTop).Border(1, st.BrandDeep).Scale(0.98, 0.98)
+		btn.Background(st.DividerTop).Border(1, st.BrandDeep)
 	case btn.Hovered():
 		btn.Background(st.Recessed).Border(1, st.Brand)
 	}
+	btn = pressFeedback(btn, btn.Pressed(), 0.98)
 	btn.Children(func() {
 		if icon != nil {
 			myui.Icon(c, icon).Width(13).Height(13).TextColor(st.TextSub)
@@ -454,13 +483,18 @@ func primaryButton(c *myui.Context, st style, text string, icon *myui.SVG, disab
 		btn.Disabled(true).Cursor(myui.CursorNotAllowed).Background(st.Recessed).
 			Border(1, st.Divider)
 	case btn.Pressed():
-		btn.Gradient(st.BrandDeep, st.BrandGradientTo, 90).Scale(0.985, 0.985)
+		btn.Gradient(st.BrandDeep, st.BrandGradientTo, 90)
 	case btn.Hovered():
 		btn.Gradient(st.BrandHover, st.BrandGradientHov, 90).
 			Shadow(0, 4, 12, 0, st.BrandGlow)
 	default:
 		btn.Gradient(st.Brand, st.BrandGradientTo, 90).
 			Shadow(0, 4, 12, 0, st.BrandGlow)
+	}
+	if !unavailable {
+		// A disabled action takes no press: the button is not disabled in the
+		// framework sense, so its own Pressed() would still report one.
+		btn = pressFeedback(btn, btn.Pressed(), 0.985)
 	}
 	foreground := myui.RGB(255, 255, 255)
 	if unavailable {

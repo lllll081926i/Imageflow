@@ -1,8 +1,7 @@
 package ui
 
-// logo_test.go pins the mark the interface draws: it is the artwork the binary
-// carries, rasterised through the brand package's one render path, and the tray
-// hands the platform the same shape.
+// logo_test.go pins the mark the interface draws: it is the pre-rendered square
+// the brand package embeds, and the tray hands the platform the same picture.
 
 import (
 	"bytes"
@@ -12,8 +11,8 @@ import (
 	"github.com/lllll081926i/imageflow-go/internal/brand"
 )
 
-// TestLogoDrawsTheArtwork pins that the window's mark is the embedded artwork
-// rendered at the asked size, with the tile's transparent corners preserved.
+// TestLogoDrawsTheArtwork pins that the window's mark is the embedded square at
+// the asked size, with the tile's transparent corners preserved.
 func TestLogoDrawsTheArtwork(t *testing.T) {
 	img := logoImage(64)
 	if img == nil {
@@ -29,19 +28,18 @@ func TestLogoDrawsTheArtwork(t *testing.T) {
 		t.Fatal("logo centre is transparent")
 	}
 	if bl <= r && bl <= g {
-		t.Errorf("logo centre = %d,%d,%d, want the blue/purple tile", r>>8, g>>8, bl>>8)
+		t.Errorf("logo centre = %d,%d,%d, want the blue tile", r>>8, g>>8, bl>>8)
 	}
 }
 
-// TestIconMatchesTheLadder pins that the small sizes the interface draws come from
-// the same render path as the generated ladder, so a tray glyph and a resources file
-// of the same size cannot differ.
-func TestIconMatchesTheLadder(t *testing.T) {
+// TestIconMatchesTheEmbeddedMark pins that the sizes the interface draws come from
+// the same embedded picture the generator wrote.
+func TestIconMatchesTheEmbeddedMark(t *testing.T) {
 	for _, size := range []int{16, 32, 40} {
 		ui := iconImage(size)
-		shared := brand.MarkAt(size)
+		shared := brand.Mark(size)
 		if ui == nil || shared == nil {
-			t.Fatalf("%d: no image", size)
+			t.Fatalf("%d: no picture", size)
 		}
 		if ui.Bounds() != shared.Bounds() {
 			t.Fatalf("%d: %v vs %v", size, ui.Bounds(), shared.Bounds())
@@ -54,7 +52,7 @@ func TestIconMatchesTheLadder(t *testing.T) {
 func TestSizeConstantsAgreeWithThePages(t *testing.T) {
 	for _, size := range []int{logoHomeSize, logoAboutSize, logoBadgeSize} {
 		if size < 24 || size > 96 {
-			t.Errorf("%d is not a plausible header/ badge size", size)
+			t.Errorf("%d is not a plausible header/badge size", size)
 		}
 		if img := iconImage(size); img == nil || img.Bounds().Dx() != size {
 			t.Errorf("%d: rendered %v", size, img)
@@ -85,6 +83,6 @@ func TestTrayIconUsesTheTrimmedMark(t *testing.T) {
 		t.Error("tray icon still carries the artwork's margin: the mark is a size too small")
 	}
 	if again := trayIconPNG(); &again[0] != &data[0] {
-		t.Error("tray icon was re-rendered on the second call")
+		t.Error("tray icon was re-encoded on the second call")
 	}
 }

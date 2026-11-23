@@ -137,13 +137,18 @@ Linux 产物含 `imageflow`、`imageflow.png`、`imageflow.desktop`、
 ### 3.0 品牌图标链路
 
 ```
+$ go run ./cmd/imageflow-marks
+wrote internal\brand\marks\mark-16x16.png (.. mark-64x64.png)
+
 $ go run ./cmd/imageflow-icon
 wrote resources\icon.png (1024), resources\icon.ico, resources\favicon.ico, and 16 PNG sizes into resources\icons
 ```
 
-判定：`internal/brand` 嵌入的唯一源图 `assets/logo.png` 裁切后渲染出 16–1024 全部尺寸；
-`resources/icon.png`、`icon.ico`（7 个尺寸）、`favicon.ico`（3 个尺寸）与 `resources/icons/`
-这 16 个 PNG 全部由 `brand.MarkAt` 得到，`mygo build` 会把它们拷到产物旁。
+判定：`internal/iconkit` 持有源图（1132×1132）与渲染链，按方块实体区 `(6,7)–(1127,1123)`
+裁成 1130 px 正方形后出图；运行时 `internal/brand` 只嵌入 16–64 的七张成品方图，
+二进制不再携带源图与重采样器。`resources/icon.png`、`icon.ico`（7 个尺寸）、
+`favicon.ico`（3 个尺寸）与 `resources/icons/` 这 16 个 PNG 全部由 `cmd/imageflow-icon`
+从同一渲染链得到，`mygo build` 会把它们拷到产物旁。
 回归测试：`internal/brand/brand_test.go`、`internal/ui/logo_test.go`。
 
 ### 3.1 打包产物截图（无人值守）

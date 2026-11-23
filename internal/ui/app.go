@@ -1063,9 +1063,10 @@ func (a *App) railItem(c *myui.Context, st style, row railRow, tool Tool, labelA
 	item.Translate(0, top-rest)
 
 	if carried {
-		// The carried row paints above the ones it passes over.
+		// The carried row paints above the ones it passes over. Its lift is a
+		// pose, applied below: a static Scale would snap between two sizes in
+		// the frame the long press fires.
 		item.ZIndex(3)
-		item.Scale(1.04, 1.04)
 		item.Shadow(0, 8, 20, 0, myui.RGBA(0, 0, 0, 0.22))
 	} else if displaced {
 		item.ZIndex(1)
@@ -1079,9 +1080,16 @@ func (a *App) railItem(c *myui.Context, st style, row railRow, tool Tool, labelA
 	case carried:
 		item.Background(st.Card).Border(1, st.Divider)
 	case item.Pressed():
-		item.Background(st.DividerTop).Scale(0.99, 0.99)
+		item.Background(st.DividerTop)
 	case item.Hovered() && !active:
 		item.Background(st.Recessed)
+	}
+	if carried {
+		// The lift is what says the pointer is carrying the row. It is a pose, on
+		// the same short curve the row's translation uses.
+		item = pressFeedback(item, true, 1.04)
+	} else {
+		item = pressFeedback(item, item.Pressed(), 0.99)
 	}
 	item.Children(func() {
 		// The coloured plate is what makes the rail read as a set of tools rather
@@ -1217,10 +1225,11 @@ func (a *App) railFooterItem(c *myui.Context, st style, key string, icon *myui.S
 	}
 	switch {
 	case item.Pressed():
-		item.Background(st.DividerTop).Scale(0.99, 0.99)
+		item.Background(st.DividerTop)
 	case item.Hovered() && highlight < 0.5:
 		item.Background(st.Recessed)
 	}
+	item = pressFeedback(item, item.Pressed(), 0.99)
 	item.Children(func() {
 		// The gradient is an overlay so its opacity can be animated without
 		// changing the element's identity or its layout box.
@@ -1456,9 +1465,12 @@ func (a *App) ghostButtonState(c *myui.Context, st style, text string, icon *myu
 	case unavailable:
 		btn.Disabled(true).Cursor(myui.CursorNotAllowed).Background(st.Recessed)
 	case btn.Pressed():
-		btn.Background(st.DividerTop).Border(1, st.BrandDeep).Scale(0.98, 0.98)
+		btn.Background(st.DividerTop).Border(1, st.BrandDeep)
 	case btn.Hovered():
 		btn.Background(st.Recessed).Border(1, st.Brand)
+	}
+	if !unavailable {
+		btn = pressFeedback(btn, btn.Pressed(), 0.98)
 	}
 	foreground := st.Text
 	secondary := st.TextSub
@@ -1683,13 +1695,14 @@ func (a *App) actionBar(c *myui.Context, st style) {
 					Label(cancelLabel).Transition(motion(springTap)).Border(1, st.Divider)
 				switch {
 				case run.Pressed():
-					run.Background(st.DividerTop).Border(1, st.Danger).Scale(0.985, 0.985)
+					run.Background(st.DividerTop).Border(1, st.Danger)
 				case run.Hovered():
 					run.Background(myui.RGBA(st.Danger.R, st.Danger.G, st.Danger.B, 0.10)).
 						Border(1, st.Danger)
 				default:
 					run.Background(st.Recessed)
 				}
+				run = pressFeedback(run, run.Pressed(), 0.985)
 				run.Children(func() {
 					myui.Icon(c, lucide.X()).Width(16).Height(16).TextColor(st.Danger)
 					myui.Text(c, cancelLabel).FontSize(14).FontWeight(600).TextColor(st.Text)

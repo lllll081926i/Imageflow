@@ -1,14 +1,15 @@
-// Command imageflow-icon writes the application's icon files from the embedded
+package main
+
+// Command imageflow-icon writes the application's icon files from the source
 // artwork.
 //
 // The packager reads resources/icon.png, and that file must be the same mark the
-// window draws. Rendering it here, from internal/brand, means a change to the
-// artwork cannot leave a stale PNG behind for the installer to paint.
+// window draws. The window draws pre-rendered sizes that internal/brand embeds,
+// so cmd/imageflow-marks renders those separately; both commands read the same
+// internal/iconkit, which is the only code that resamples the artwork.
 //
-//	go run ./cmd/imageflow-icon            # rewrite resources/
+//	go run ./cmd/imageflow-icon             # rewrite resources/
 //	go run ./cmd/imageflow-icon -out . -sizes 16,32,256
-package main
-
 import (
 	"flag"
 	"fmt"
@@ -21,7 +22,7 @@ import (
 
 	ico "github.com/sergeymakinen/go-ico"
 
-	"github.com/lllll081926i/imageflow-go/internal/brand"
+	"github.com/lllll081926i/imageflow-go/internal/iconkit"
 )
 
 // run returns the process exit code. Keeping os.Exit in main only means every
@@ -29,14 +30,15 @@ import (
 // .icon-*.png siblings behind.
 func run() int {
 	out := flag.String("out", "resources", "directory to write the icon files into")
-	ladder := flag.String("sizes", "", "comma-separated PNG sizes (default: the brand ladder)")
+	ladder := flag.String("sizes", "", "comma-separated PNG sizes (default: the icon ladder)")
 	flag.Parse()
 
-	// Fail before writing anything if the embedded artwork cannot be decoded: the
-	// rest of the run renders from it, and a corrupt asset would otherwise leave a
+	// Fail before writing anything if the artwork cannot be decoded: the rest of
+	// the run renders from it, and a corrupt asset would otherwise leave a
 	// half-updated resources/ behind.
-	if _, err := brand.Logo(); err != nil {
-		fmt.Fprintln(os.Stderr, "decode logo:", err)
+	src, err := iconkit.Source()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "decode artwork:", err)
 		return 1
 	}
 	if *out == "" {
@@ -52,9 +54,9 @@ func run() int {
 	}
 
 	// The packager's own icon: the tile at 1024, which is the largest size MyGo
-	// packs into a Windows icon group and the size the macOS bundle derives its
+	// packs into a Windows icon group and the size a macOS bundle derives its
 	// .icns from.
-	if err := writePNG(filepath.Join(*out, "icon.png"), brand.MarkAt(1024)); err != nil {
+	if err := writePNG(filepath.Join(*out, "icon.png"), iconkit.RenderCorrected(src, 1024)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -66,7 +68,7 @@ func run() int {
 	}
 	for _, size := range sizes {
 		target := filepath.Join(icons, fmt.Sprintf("icon-%dx%d.png", size, size))
-		if err := writePNG(target, brand.MarkAt(size)); err != nil {
+		if err := writePNG(target, iconkit.RenderCorrected(src, size)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -74,11 +76,11 @@ func run() int {
 
 	// The Windows multi-resolution icon and the favicon. Both are written from the
 	// same render path at the sizes Windows and a browser tab ask for.
-	if err := writeICO(filepath.Join(*out, "icon.ico"), brand.ICOIconSizes); err != nil {
+	if err := writeICO(filepath.Join(*out, "icon.ico"), src, iconkit.ICOIconSizes); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := writeICO(filepath.Join(*out, "favicon.ico"), brand.FaviconSizes); err != nil {
+	if err := writeICO(filepath.Join(*out, "favicon.ico"), src, iconkit.FaviconSizes); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -89,11 +91,11 @@ func run() int {
 	return 0
 }
 
-// parseSizes reads the -sizes flag, falling back to the brand ladder.
+// parseSizes reads the -sizes flag, falling back to the icon ladder.
 func parseSizes(value string) ([]int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return brand.IconLadder, nil
+		return iconkit.IconLadder, nil
 	}
 	var out []int
 	for _, part := range strings.Split(value, ",") {
@@ -123,16 +125,16 @@ func writePNG(target string, img image.Image) error {
 }
 
 // writeICO writes a multi-resolution icon. Each entry is rendered through the
-// same MarkAt the interface and the PNG ladder use, so a 16 px entry and the
-// 16x16.png beside it are the same picture rather than two independent
+// same corrected render the PNG ladder and the in-app marks use, so a 16 px entry
+// and the 16x16.png beside it are the same picture rather than two independent
 // drawings. Entries above 256 are refused by the format and skipped.
-func writeICO(target string, sizes []int) error {
+func writeICO(target string, src image.Image, sizes []int) error {
 	images := make([]image.Image, 0, len(sizes))
 	for _, size := range sizes {
 		if size > 256 {
 			continue
 		}
-		img := brand.MarkAt(size)
+		img := iconkit.RenderCorrected(src, size)
 		if img == nil {
 			return fmt.Errorf("%s: %d×%d 渲染失败", target, size, size)
 		}

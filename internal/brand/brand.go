@@ -1,104 +1,37 @@
-// Package brand holds the application's identity: the logo artwork, the icon
-// ladder rendered from it, and the project's public URLs.
+// Package brand holds the application's identity: the mark the window draws, its
+// colour, and the project's public URLs.
 //
-// It is a package of its own because more than the UI needs the mark: the icon
-// generator writes resources/ from the same bytes the window draws, so the
-// installer, the taskbar, the tray and the in-app logo can never drift into three
-// different pictures.
+// The mark is pre-rendered, not resampled at runtime. internal/iconkit owns the
+// artwork, the crop, the corner mask and the small-size corrections; this package
+// embeds the finished squares that code produced, so the running binary carries
+// no 1.5 MB source picture and no resampler. Regenerating them after a change to
+// the artwork is `go run ./cmd/imageflow-marks`.
+//
+// The sizes below are the ones the shell actually draws, plus the neighbours a
+// new page might ask for. A size that is not here has no picture: the generator
+// must run first.
 package brand
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/color"
+	"image/png"
 	"sync"
 )
 
-// The artwork is embedded rather than read from disk: the binary has to carry its
-// own icon, and a missing file at runtime must not leave the window's mark blank.
+// MarkSizes is every square this package embeds, in ascending order. It is
+// deliberately short: 32 is the title-bar badge and the tray glyph, 36 the
+// landing page's header, 40 the About row's, and the rest give a new page a
+// little headroom without asking the app to resample anything.
+var MarkSizes = []int{16, 24, 32, 36, 40, 48, 64}
+
+// Accent is the mark's dominant colour, used where one tint has to stand in for
+// the artwork (a status accent, a plate behind the mark).
 //
-//go:embed assets/logo.png
-var logoSrc []byte
-
-// LogoSource is the original artwork, byte for byte. A generator or a test can
-// decode exactly what the binary carries.
-func LogoSource() []byte { return logoSrc }
-
-// The artwork is a 1254×1254 canvas: a rounded square tile with a soft shadow
-// around it. Measured on the source's fully opaque pixels, the tile's solid area
-// runs from (91,117) to (1148,1163) — 1058×1047 — and its soft edge fades out a few
-// pixels past that. The shadow's faint tail reaches the canvas edge, which is why
-// an alpha-based bounding box of the whole file is the whole canvas.
-//
-// An operating system draws the mark between 16 and 1024 pixels, so the icon ladder
-// is rendered from a square crop of the tile rather than from the whole canvas: the
-// full canvas carries roughly 7% of margin per side, which at 16 px costs two of the
-// picture's twelve usable pixels and makes the mark read small.
-//
-// The crop is square and centred on the solid tile (the artwork is 1058 wide and
-// 1047 tall), rather than on the canvas: the shadow is heavier below the tile, so
-// the canvas centre sits about 13 px above the tile's centre. It takes the
-// larger span, so no edge of the tile is clipped, and it keeps the tile's soft
-// edge, which is what stops the icon from looking cut out.
-//
-// It is computed rather than written as a literal so the square and the centre stay
-// one decision: the side is the tile's span plus a small margin for the soft edge.
-var markBounds = func() image.Rectangle {
-	const tileX0, tileY0, tileX1, tileY1 = 87, 113, 1153, 1168
-	const side = 1066
-	cx := (tileX0 + tileX1) / 2
-	cy := (tileY0 + tileY1) / 2
-	x0 := cx - side/2
-	y0 := cy - side/2
-	// Keep the crop inside the artwork, whatever the numbers above say.
-	canvas := image.Rect(0, 0, 1254, 1254)
-	if x0 < canvas.Min.X {
-		x0 = canvas.Min.X
-	}
-	if y0 < canvas.Min.Y {
-		y0 = canvas.Min.Y
-	}
-	if x0+side > canvas.Max.X {
-		x0 = canvas.Max.X - side
-	}
-	if y0+side > canvas.Max.Y {
-		y0 = canvas.Max.Y - side
-	}
-	return image.Rect(x0, y0, x0+side, y0+side)
-}()
-
-var (
-	decodedOnce sync.Once
-	decoded     image.Image
-	decodedErr  error
-)
-
-// Logo decodes the embedded artwork once and returns it.
-func Logo() (image.Image, error) {
-	decodedOnce.Do(func() {
-		img, _, err := image.Decode(bytes.NewReader(logoSrc))
-		if err != nil {
-			decodedErr = err
-			return
-		}
-		decoded = img
-	})
-	return decoded, decodedErr
-}
-
-// LogoBounds is the artwork's full canvas.
-func LogoBounds() image.Rectangle {
-	img, err := Logo()
-	if err != nil {
-		return image.Rect(0, 0, 1024, 1024)
-	}
-	return img.Bounds()
-}
-
-// MarkBounds is the square the tile occupies inside the artwork. Every icon is
-// rendered from this rectangle.
-func MarkBounds() image.Rectangle { return markBounds }
+// Measured from the artwork: the tile's flat backing behind the illustration is
+// its modal saturated family, and that family's mean is 0x7F,0xA9,0xF7.
+var Accent = color.NRGBA{R: 0x7F, G: 0xA9, B: 0xF7, A: 255}
 
 // RepoURL is the project's public GitHub repository. The About page opens it and
 // the release feed publishes to it.
@@ -107,21 +40,87 @@ const RepoURL = "https://github.com/lllll081926i/Imageflow"
 // RepoLabel is how that repository reads in the UI.
 const RepoLabel = "lllll081926i/Imageflow"
 
-// Accent is the mark's dominant colour, used where one tint has to stand in for
-// the artwork (a status accent, a plate behind the mark).
-var Accent = color.NRGBA{R: 0x7A, G: 0x7A, B: 0xF2, A: 255}
-
-// IconLadder is every PNG size the icon bundle carries, in ascending order.
-//
-// It is the ladder a desktop and a web project actually consume: the small
-// favicon sizes, the taskbar and dock sizes, and the 1024 tile the packager
-// embeds.
-var IconLadder = []int{16, 24, 32, 48, 64, 96, 128, 144, 152, 167, 180, 192, 256, 384, 512, 1024}
-
-// ICOIconSizes are the entries of the multi-resolution icon.ico; FaviconSizes
-// those of favicon.ico. A Windows shortcut and a browser tab want different
-// ladders, and an ICO entry cannot exceed 256.
 var (
-	ICOIconSizes = []int{16, 24, 32, 48, 64, 128, 256}
-	FaviconSizes = []int{16, 32, 48}
+	markMu  sync.Mutex
+	markMap map[int]*image.NRGBA
+	pngMap  map[int][]byte
 )
+
+// Mark returns the embedded mark at one size, or nil for a size this build does
+// not carry. The picture is decoded once and shared: the rail, the title badge,
+// the About row and the tray ask for their sizes every frame.
+//
+// The return type is image.Image, not *image.NRGBA, on purpose: a nil
+// *image.NRGBA stored in an interface is a non-nil interface, and every caller
+// that checks "is there a picture?" with `== nil` before calling Bounds would
+// then panic instead of skipping the mark.
+func Mark(size int) image.Image {
+	markMu.Lock()
+	defer markMu.Unlock()
+	if img, ok := markMap[size]; ok {
+		return img
+	}
+	img, err := decodeMark(size)
+	if err != nil {
+		return nil
+	}
+	if markMap == nil {
+		markMap = map[int]*image.NRGBA{}
+	}
+	markMap[size] = img
+	return img
+}
+
+// PNG returns the embedded mark at one size as PNG bytes, for the tray and the
+// platform, which take a picture rather than an image.Image.
+func PNG(size int) []byte {
+	markMu.Lock()
+	if data, ok := pngMap[size]; ok {
+		markMu.Unlock()
+		return data
+	}
+	markMu.Unlock()
+
+	img := Mark(size)
+	if img == nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil
+	}
+	data := buf.Bytes()
+
+	markMu.Lock()
+	if pngMap == nil {
+		pngMap = map[int][]byte{}
+	}
+	pngMap[size] = data
+	markMu.Unlock()
+	return data
+}
+
+// decodeMark reads the embedded square for one size.
+func decodeMark(size int) (*image.NRGBA, error) {
+	data, ok := markFile(size)
+	if !ok {
+		return nil, errNoMark(size)
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	nrgba, ok := img.(*image.NRGBA)
+	if !ok {
+		// A PNG with an alpha channel decodes to NRGBA; the copy keeps the
+		// signature honest if that ever changes.
+		b := img.Bounds()
+		nrgba = image.NewNRGBA(b)
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				nrgba.Set(x, y, img.At(x, y))
+			}
+		}
+	}
+	return nrgba, nil
+}

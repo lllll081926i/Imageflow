@@ -110,6 +110,15 @@ Windows 安装包使用 NSIS，MyGo 在缺少 NSIS 时会自动下载。仅构�
 
 签名更新包需要在构建环境中设置 `MYGO_UPDATER_PRIVATE_KEY`，其内容必须与 `mygo.json` 中的更新公钥匹配。私钥不得提交到仓库。
 
+更换应用图标时，先把新图放到 `internal/iconkit/assets/logo.png`，再依次重建：
+
+```bash
+go run ./cmd/imageflow-marks   # 重写 internal/brand/marks/ 的七张成品方图
+go run ./cmd/imageflow-icon    # 重写 resources/ 的安装包图标与全套 PNG
+```
+
+运行时二进制只嵌入成品尺寸，不会携带源图或重采样器。
+
 ## 命令行批处理
 
 ```bash

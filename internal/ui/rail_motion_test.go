@@ -110,11 +110,17 @@ func TestSettingsHighlightFades(t *testing.T) {
 			int(info.Bounds.Y+info.Bounds.H/2))
 		return c.R, c.G, c.B
 	}
-	blue := func() bool {
-		r, _, b := pixel()
-		return b > 180 && r < 80
+	// highlighted reports a saturated brand fill rather than a neutral surface.
+	// It keys on the shape of the colour, not on one gradient's channel values:
+	// a fill keeps the blue channel well above red and a wide channel spread,
+	// while every surface token of this shell is near-neutral (spread under 20).
+	highlighted := func() bool {
+		r, g, b := pixel()
+		high := max(r, max(g, b))
+		low := min(r, min(g, b))
+		return b > r && int(high)-int(low) > 60 && b > 150
 	}
-	if blue() {
+	if highlighted() {
 		t.Fatal("settings row is highlighted on a tool page")
 	}
 
@@ -126,12 +132,12 @@ func TestSettingsHighlightFades(t *testing.T) {
 	}
 	a.ShowSettings = true
 	settle()
-	if !blue() {
+	if !highlighted() {
 		t.Error("settings row never reached its highlighted state")
 	}
 	a.ShowSettings = false
 	settle()
-	if blue() {
+	if highlighted() {
 		t.Error("settings row stayed highlighted after returning to a tool")
 	}
 }

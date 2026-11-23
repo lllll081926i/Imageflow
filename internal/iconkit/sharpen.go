@@ -1,12 +1,13 @@
-package brand
+package iconkit
 
-// icons_sharp.go sharpens the smallest ladder entries.
+// sharpen.go sharpens the smallest ladder entries.
 //
-// The artwork is a detailed illustration: a photo, a handle, three sliders. At 32
-// px and below the two-stage downscale keeps the tile's corners round but flattens
-// the illustration into a soft blue blob, which is exactly the size a taskbar and
-// a tray use. A light unsharp mask on those sizes restores the separations, so the
-// icon still reads as "photos" instead of "a purple square".
+// The artwork is a detailed illustration: a girl holding a photo frame, a cat-ear
+// silhouette and a wrench speech bubble. At 32 px and below the two-stage downscale
+// keeps the tile's corners round but flattens the illustration into a soft blue
+// blob, which is exactly the size a taskbar and a tray use. A light unsharp mask on
+// those sizes restores the separations, so the icon still reads as "a picture"
+// instead of "a blue square".
 
 import (
 	"image"
@@ -17,10 +18,10 @@ import (
 // artwork's own detail survives the downscale and a mask would only add halos.
 const sharpenBelow = 48
 
-// sharpenFloor is the smallest size the mask still helps. At 16 px one pixel is six
-// percent of the tile: the mask turns the photo's own highlights into speckles that
-// read as noise, so that size keeps the plain high-quality downscale.
-const sharpenFloor = 20
+// sharpenFloor is the smallest size the mask still helps. The artwork's line work is
+// dense enough that even 16 px keeps an edge if the mask is applied, and without it
+// the eyes and the frame's outline merge into the tile.
+const sharpenFloor = 16
 
 // contrastBelow is the size at and below which the contrast lift is applied. Above
 // it the artwork's own contrast is enough and a lift would only deepen the tile's
@@ -28,16 +29,19 @@ const sharpenFloor = 20
 const contrastBelow = 48
 
 // contrastAmount is the lift's strength, as the fraction of the distance from mid
-// grey that each channel gains. 0.3 was chosen by comparing 16, 24 and 32 px side by
-// side: without it the white basket and the light-blue tile land within 12% of one
-// another and the icon reads as a single blue smudge; at 0.45 the basket's shadows
-// start to look sooty.
-const contrastAmount = 0.3
+// grey that each channel gains. 0.45 was chosen by comparing 16, 24 and 32 px side
+// by side on a light and a dark surface: the artwork is a pale illustration on a
+// pale blue tile, so without the lift the face and the frame land within 15% of the
+// tile and the icon reads as a single blue smudge; at 0.7 the tile's own gradient
+// bands into visible steps.
+const contrastAmount = 0.45
 
-// sharpenAmount is the mask's strength. 0.55 was too much: the artwork has a
-// floodlit top-left corner, and that highlight turned into a white halo at 24 and 32
-// px. 0.4 keeps the basket's rim and the photos' edges without touching the corner.
-const sharpenAmount = 0.4
+// sharpenAmount is the mask's strength. 0.4 kept the artwork's floodlit top-left
+// corner, but the new artwork's highlights are already pale, so at 0.4 the frame's
+// rim and the eyes blur into the tile at 16 px; 0.5 restores both edges and the tile
+// stays clean. At 0.8 the blush and the eye highlights turn into speckles that read
+// as noise.
+const sharpenAmount = 0.5
 
 // Sharpen applies an unsharp mask built from a 3×3 box blur.
 //

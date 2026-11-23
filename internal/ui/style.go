@@ -50,14 +50,26 @@ type style struct {
 func newStyle(dark bool) style {
 	if dark {
 		return style{
-			Dark:             true,
-			Brand:            myui.RGB(10, 132, 255),
-			BrandDeep:        myui.RGB(0, 90, 220),
-			BrandHover:       myui.RGB(64, 156, 255),
-			BrandSoft:        myui.RGBA(10, 132, 255, 0.16),
-			BrandGlow:        myui.RGBA(10, 132, 255, 0.35),
-			BrandGradientTo:  myui.RGB(88, 86, 214),
-			BrandGradientHov: myui.RGB(84, 130, 255),
+			Dark: true,
+			// The dark theme's accent is the same periwinkle family, and each value
+			// holds the luminance its predecessor had: #0A84FF, #005ADC and
+			// #409CFF. Only the hue moved (211 -> 232), so every contrast pair the
+			// shell already relied on keeps its ratio.
+			//
+			// Note the one pre-existing gap, unchanged by this switch: accent text
+			// on a dark card is 3.85:1, under the 4.5 a body label wants. It is the
+			// same 3.82 the old #0A84FF gave, tracked in docs/DESIGN.md §7 rather
+			// than introduced here.
+			Brand:           myui.RGB(0x69, 0x7C, 0xF5),
+			BrandDeep:       myui.RGB(0x34, 0x4E, 0xF2),
+			BrandHover:      myui.RGB(0x83, 0x92, 0xF7),
+			BrandSoft:       myui.RGBA(0x69, 0x7C, 0xF5, 0.16),
+			BrandGlow:       myui.RGBA(0x69, 0x7C, 0xF5, 0.35),
+			BrandGradientTo: myui.RGB(0x58, 0x56, 0xD6),
+			// BrandGradientHov is a hover end, so it can be darker than the resting
+			// one: #6A66DA keeps a white 13.5 px label at 4.64:1, where the
+			// previous #5482FF gave 3.7.
+			BrandGradientHov: myui.RGB(0x6A, 0x66, 0xDA),
 
 			Shell:      myui.RGB(28, 28, 30),
 			Sidebar:    myui.RGB(38, 38, 40),
@@ -84,13 +96,17 @@ func newStyle(dark bool) style {
 		}
 	}
 	return style{
-		Brand:            myui.RGB(0, 122, 255),
-		BrandDeep:        myui.RGB(0, 85, 255),
-		BrandHover:       myui.RGB(0, 68, 221),
-		BrandSoft:        myui.RGBA(0, 122, 255, 0.10),
-		BrandGlow:        myui.RGBA(0, 122, 255, 0.25),
-		BrandGradientTo:  myui.RGB(0, 85, 255),
-		BrandGradientHov: myui.RGB(88, 86, 214),
+		Brand:      myui.RGB(0x35, 0x5C, 0xE8),
+		BrandDeep:  myui.RGB(0x25, 0x4B, 0xD6),
+		BrandHover: myui.RGB(0x2A, 0x4E, 0xCF),
+		BrandSoft:  myui.RGBA(0x35, 0x5C, 0xE8, 0.10),
+		BrandGlow:  myui.RGBA(0x35, 0x5C, 0xE8, 0.25),
+		// GradientTo stays a *blue*, not the dark theme's violet: docs/DESIGN.md §1
+		// keeps one emphasis colour, so a filled control cannot drift to a second
+		// hue half-way along its gradient. GradientHov is the one violet step, so
+		// hover still reads as a change rather than as more of the same.
+		BrandGradientTo:  myui.RGB(0x2A, 0x4E, 0xCF),
+		BrandGradientHov: myui.RGB(0x58, 0x56, 0xD6),
 
 		Shell:      myui.RGB(245, 245, 247),
 		Sidebar:    myui.RGB(255, 255, 255),
