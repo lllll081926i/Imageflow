@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/lllll081926i/imageflow-go/internal/appcache"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
+	"github.com/lllll081926i/imageflow-go/internal/engine"
 	"github.com/lllll081926i/imageflow-go/internal/paths"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 	"github.com/lllll081926i/imageflow-go/internal/thumbs"
@@ -101,6 +103,10 @@ type App struct {
 	previewFocusPending bool
 	previewLoadMu       sync.Mutex
 	previewFocus        myui.Handle
+	homeSearchFocus     myui.Handle
+	lastPageKey         string
+	lastPagePos         int
+	pageEnter           myui.Motion
 	fileLayout          int
 	fileSelection       int
 	studioPreview       studioJob[image.Image]
@@ -618,10 +624,10 @@ func (a *App) View(c *myui.Context) {
 			// the scroll, and the next frame's layout is already there.
 			a.railRevealTool = -1
 			// The page container is keyed by what it shows, so switching tools or
-			// opening the settings builds a new element and pageSwap's fade plays.
+			// opening the settings builds a new element and plays the directional handover.
 			page := myui.Row(c).Grow(1).FillHeight().Gap(16).
 				AlignItems(myui.Stretch).Key(a.pageKey()).
-				Transition(motion(pageSwap))
+				Transition(motion(a.pageTransition()))
 			page.Children(func() {
 				if a.ShowSettings {
 					a.settingsPage(c, st)
@@ -667,14 +673,55 @@ func (a *App) pageKey() string {
 // There is no Exit. A cross-fade needs a copy of the old page drawn under the
 // new one, and two semi-transparent full-window layouts composited every frame
 // flickered as their alphas crossed.
+var pageSwapCurve = myui.Animation{
+	Duration: 240 * time.Millisecond,
+	Ease:     myui.EaseOut,
+}
+
 var pageSwap = myui.ElementTransition{
-	Animation: &shellCurve,
+	Animation: &pageSwapCurve,
 	Shadows:   true,
-	// Starting at 0 left the whole content area blank for the first frames of a
-	// switch, which read as the window refreshing. A quiet dissolve from 72% is
-	// the same handover without the blank frame, and it matches the selection
-	// indicator fading out over the same curve.
-	Enter: &myui.Motion{Opacity: 0.72},
+	Enter:     &myui.Motion{Y: 12, Opacity: 0.38, Scale: 0.992},
+}
+
+func (a *App) pageTransition() myui.ElementTransition {
+	curKey := a.pageKey()
+	if curKey != a.lastPageKey {
+		a.pageEnter = a.computePageEnter(curKey)
+		a.lastPageKey = curKey
+		if !a.ShowHome && !a.ShowSettings {
+			a.lastPagePos = a.railToolOrdinal(a.Active)
+		}
+	}
+	enter := a.pageEnter
+	tr := pageSwap
+	tr.Enter = &enter
+	return tr
+}
+
+func (a *App) computePageEnter(curKey string) myui.Motion {
+	if a.lastPageKey == "" {
+		return myui.Motion{Opacity: 0.72}
+	}
+	switch {
+	case curKey == "page-settings":
+		return myui.Motion{Y: 14, Opacity: 0.38, Scale: 0.992}
+	case curKey == "page-home":
+		return myui.Motion{X: -18, Opacity: 0.38, Scale: 0.992}
+	case a.lastPageKey == "page-home":
+		return myui.Motion{X: 18, Opacity: 0.38, Scale: 0.992}
+	case a.lastPageKey == "page-settings":
+		return myui.Motion{Y: -12, Opacity: 0.38, Scale: 0.992}
+	default:
+		nextPos := a.railToolOrdinal(a.Active)
+		if nextPos > a.lastPagePos {
+			return myui.Motion{Y: 14, Opacity: 0.38, Scale: 0.992}
+		}
+		if nextPos < a.lastPagePos {
+			return myui.Motion{Y: -14, Opacity: 0.38, Scale: 0.992}
+		}
+		return *pageSwap.Enter
+	}
 }
 
 // railCollapsedAuto reports whether a window of the given width renders the rail as
@@ -808,12 +855,20 @@ func (a *App) rail(c *myui.Context, st style, width float32) {
 	labelAlpha := railLabelAlpha(width)
 
 	rail.Children(func() {
-		myui.Scroll(c).Key("rail-scroll").FillWidth().Grow(1).Scrollbars(false).Children(func() {
-			a.railList(c, st, labelAlpha)
+		myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().Children(func() {
+			myui.Scroll(c).Key("rail-scroll").Fill().Scrollbars(false).Children(func() {
+				myui.Column(c).FillWidth().Padding(2, 0, 12, 0).Children(func() {
+					a.railList(c, st, labelAlpha)
+				})
+			})
+			// Soft bottom fade keeps scrolled rows from slicing harshly against the footer divider.
+			myui.Row(c).FillWidth().Height(22).Absolute().Bottom(0).Left(0).ZIndex(2).
+				IgnoreInput(true).
+				Gradient(myui.RGBA(st.Sidebar.R, st.Sidebar.G, st.Sidebar.B, 0), st.Sidebar, 180)
 		})
 
-		myui.Column(c).FillWidth().Gap(2).PaddingY(8).Children(func() {
-			myui.Row(c).FillWidth().Height(1).Background(st.Divider).Margin(0, 4, 6, 4)
+		myui.Column(c).FillWidth().Gap(2).Padding(2, 0, 6, 0).Children(func() {
+			myui.Row(c).FillWidth().Height(1).Background(st.DividerTop).Margin(0, 4, 6, 4)
 			// 首页 returns to the landing page. It sits with the settings row because
 			// both are shell destinations rather than tools.
 			a.homeEntry(c, st, labelAlpha)
@@ -1332,7 +1387,7 @@ func (a *App) inputCard(c *myui.Context, st style) {
 			compact := toolPreviewMode(tool.ID()) == previewCompact
 			if compact {
 				_, height := c.Size()
-				preview.Height(min(256, height*.3))
+				preview.Height(min(232, height*.28))
 			} else {
 				preview.Grow(1)
 			}
@@ -1434,6 +1489,19 @@ func (a *App) inputHeader(c *myui.Context, st style) {
 				})
 			}
 			myui.Spacer(c).Grow(1)
+			if a.windowWidth == 0 || a.windowWidth >= 1160 {
+				outLabel := "原目录"
+				outTip := "默认输出到源文件同目录"
+				if dir := a.outputFolder(); dir != "" {
+					outLabel = truncate(filepath.Base(dir), 14)
+					outTip = "输出目录：" + dir
+				}
+				myui.Row(c).Height(26).PaddingX(9).Radius(999).AlignItems(myui.Center).Gap(5).
+					Background(st.Recessed).Border(1, st.DividerTop).Tooltip(outTip).Children(func() {
+					myui.Icon(c, lucide.Folder()).Width(11).Height(11).TextColor(st.TextDim)
+					myui.Text(c, outLabel).FontSize(11).TextColor(st.TextSub).NoWrap()
+				})
+			}
 			a.ghostButtonState(c, st, "选择输出位置", lucide.FolderOpen(), a.IsRunning(), false, a.pickOutputDirectory)
 			if tool, ok := a.ActiveTool().(*UpscaleTool); ok {
 				services := c.Services()
@@ -1523,8 +1591,12 @@ func (a *App) previewArea(c *myui.Context, st style, img image.Image, caption st
 		})
 		// Contain keeps the whole picture visible instead of cropping it to the
 		// box, which is what a preview must do.
-		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().
-			Radius(st.RadiusControl).Fit(myui.Contain).Label("预览图像")
+		// A matte frame around the image keeps light/white canvases readable against Recessed.
+		stage := myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().
+			Radius(st.RadiusControl).Background(st.Shell).Border(1, st.Divider)
+		stage.Children(func() {
+			myui.Image(c, myui.NewBitmap(img)).Fill().Fit(myui.Contain).Label("预览图像")
+		})
 	})
 }
 
@@ -1557,19 +1629,27 @@ func (a *App) dropArea(c *myui.Context, st style) {
 	}
 	area.Children(func() {
 		if len(items) == 0 {
-			empty := myui.Column(c).Fill().Gap(10).AlignItems(myui.Center).
+			empty := myui.Column(c).Fill().Gap(12).AlignItems(myui.Center).
 				Justify(myui.Center)
 			empty.Children(func() {
-				myui.Row(c).Size(64, 64).Radius(999).Justify(myui.Center).
-					AlignItems(myui.Center).Background(st.BrandSoft).Children(func() {
-					myui.Icon(c, lucide.Upload()).Width(28).Height(28).TextColor(st.Brand)
+				badge := myui.Row(c).Size(64, 64).Radius(999).Justify(myui.Center).
+					AlignItems(myui.Center).Background(st.BrandSoft).Border(1, myui.RGBA(st.Brand.R, st.Brand.G, st.Brand.B, 0.22))
+				badge = hoverFeedback(badge, dragging, -3, 1.08)
+				badge.Children(func() {
+					myui.Icon(c, lucide.Upload()).Width(26).Height(26).TextColor(st.Brand)
 				})
-				myui.Text(c, workflowFor(a.ActiveTool()).input).FontSize(13.5).
+				prompt := workflowFor(a.ActiveTool()).input
+				if dragging {
+					prompt = "松开鼠标以添加图片或文件夹"
+				}
+				myui.Text(c, prompt).FontSize(13.5).
 					FontWeight(500).TextColor(st.TextSub)
-				myui.Row(c).Gap(8).PaddingY(6).Children(func() {
+				myui.Row(c).Gap(8).PaddingY(2).Children(func() {
 					a.ghostButton(c, st, "添加文件", lucide.Plus(), a.pickFiles)
 					a.ghostButton(c, st, "添加文件夹", lucide.FolderOpen(), a.pickDirectory)
 				})
+				myui.Text(c, "支持拖入文件或文件夹 · JPG / PNG / WebP / AVIF / HEIC / GIF").
+					FontSize(11).TextColor(st.TextDim)
 			})
 			return
 		}
@@ -1595,18 +1675,88 @@ func (a *App) dropArea(c *myui.Context, st style) {
 	}
 }
 
-// settingsCard is the right column: the tool's parameters and the action bar.
+// settingsCard is the right column: the tool's header, parameters and the action bar.
 func (a *App) settingsCard(c *myui.Context, st style, tool Tool) {
-	card := myui.Column(c).Width(420).FillHeight().Radius(st.RadiusCard).
+	panelWidth := float32(420)
+	panelPad := float32(16)
+	if a.windowWidth > 0 && a.windowWidth < 1080 {
+		panelWidth = 384
+		panelPad = 14
+	}
+	card := myui.Column(c).Width(panelWidth).FillHeight().Radius(st.RadiusCard).
 		Background(st.Card).Border(1, st.Divider).
 		Shadow(0, 2, 12, 0, myui.RGBA(0, 0, 0, 0.04)).Clip().Label("参数卡")
+	if !a.IsRunning() && !a.IsImporting() {
+		card.OnShortcut(myui.Ctrl, myui.KeyEnter, func() {
+			_, _, disabled, action := a.pageAction(tool)
+			if !disabled && action != nil {
+				action()
+			}
+		})
+	}
+	switch current := tool.(type) {
+	case *EditTool:
+		card.OnShortcut(myui.Ctrl, myui.KeyZ, func() {
+			if current.steps != nil {
+				if prev, ok := current.steps.Undo(); ok {
+					current.apply(prev)
+					a.Invalidate()
+				}
+			}
+		}).OnShortcut(myui.Ctrl|myui.Shift, myui.KeyZ, func() {
+			if current.steps != nil {
+				if next, ok := current.steps.Redo(); ok {
+					current.apply(next)
+					a.Invalidate()
+				}
+			}
+		})
+	case *AnnotateTool:
+		card.OnShortcut(myui.Ctrl, myui.KeyZ, func() {
+			if current.steps != nil {
+				if prev, ok := current.steps.Undo(); ok {
+					current.marks = append([]engine.AnnotateMark(nil), prev...)
+					current.selected = len(current.marks) - 1
+					a.Invalidate()
+				}
+			}
+		}).OnShortcut(myui.Ctrl|myui.Shift, myui.KeyZ, func() {
+			if current.steps != nil {
+				if next, ok := current.steps.Redo(); ok {
+					current.marks = append([]engine.AnnotateMark(nil), next...)
+					current.selected = len(current.marks) - 1
+					a.Invalidate()
+				}
+			}
+		})
+	}
 	card.Children(func() {
+		myui.Row(c).FillWidth().MinHeight(52).Padding(10, panelPad, 10, panelPad).Gap(10).
+			AlignItems(myui.Center).Children(func() {
+			myui.Row(c).Size(28, 28).Radius(st.RadiusPill).Shrink(0).
+				Justify(myui.Center).AlignItems(myui.Center).
+				Background(featureTintPlate(a.Active, st)).Children(func() {
+				if icon := tool.Icon(); icon != nil {
+					myui.Icon(c, icon).Width(15).Height(15).TextColor(featureTint(a.Active, st))
+				}
+			})
+			myui.Text(c, tool.Name()).FontSize(14).FontWeight(600).TextColor(st.Text).NoWrap()
+			myui.Spacer(c).Grow(1)
+			if caption := strings.TrimSpace(tool.PreviewCaption(a)); caption != "" {
+				myui.Row(c).PaddingX(8).PaddingY(3).Radius(999).Background(st.Recessed).
+					Border(1, st.DividerTop).Children(func() {
+					myui.Text(c, truncate(caption, 20)).FontSize(10.5).FontWeight(500).
+						TextColor(st.TextSub).NoWrap()
+				})
+			}
+		})
+		myui.Row(c).FillWidth().Height(1).Background(st.DividerTop)
 		// The panel is keyed by tool so a switch lifts the new parameters in
 		// rather than swapping the text in place.
 		myui.Scroll(c).FillWidth().Grow(1).
 			Key(fmt.Sprintf("panel-%d", a.Active)).
 			Transition(motion(springSoft)).Children(func() {
-			myui.Column(c).FillWidth().Padding(18).Gap(14).Children(func() {
+			myui.Column(c).FillWidth().Padding(panelPad).Gap(12).Children(func() {
 				tool.Panel(c, a)
 			})
 		})
@@ -1627,24 +1777,30 @@ func (a *App) operationFeedback(c *myui.Context, st style) {
 	}
 	tint := st.TextSub
 	icon := lucide.Info()
+	kind := "info"
 	busy := strings.Contains(text, "正在")
 	switch {
 	case strings.Contains(text, "失败"):
 		tint = st.Danger
 		icon = lucide.CircleX()
+		kind = "error"
 	case busy:
 		tint = st.Brand
+		kind = "busy"
 	case strings.Contains(text, "没有找到") || strings.Contains(text, "先添加") || strings.Contains(text, "为空"):
 		tint = st.Warning
 		icon = lucide.TriangleAlert()
+		kind = "warn"
 	case strings.Contains(text, "完成") || strings.Contains(text, "已保存") ||
 		strings.Contains(text, "已更新") || strings.Contains(text, "已生成") ||
 		strings.Contains(text, "已添加") || strings.Contains(text, "已清空"):
 		tint = st.Success
 		icon = lucide.CircleCheck()
+		kind = "ok"
 	}
 	row := myui.Row(c).FillWidth().MinHeight(30).Padding(6, 8, 6, 8).Gap(7).
 		AlignItems(myui.Center).Radius(st.RadiusPill).Background(st.Recessed).
+		Key("op-feedback-"+kind).Transition(motion(springSoft)).
 		Role(myui.RoleStatus).Label(text).Tooltip(text)
 	row.Children(func() {
 		if busy {
@@ -1666,14 +1822,20 @@ func (a *App) actionBar(c *myui.Context, st style) {
 		cancelLabel = "取消导入"
 	}
 
-	myui.Column(c).FillWidth().Gap(10).Padding(14, 18, 16, 18).Children(func() {
+	myui.Row(c).FillWidth().Height(1).Background(st.DividerTop)
+	myui.Column(c).FillWidth().Gap(10).Padding(12, 16, 14, 16).Children(func() {
 		if running || percent > 0 {
 			myui.Column(c).FillWidth().Gap(5).Children(func() {
 				track := myui.Row(c).FillWidth().Height(5).Radius(999).Background(st.Recessed)
+				targetPct := maxFloat(2, minFloat(100, percent))
+				pct := targetPct
+				if !motionReduced {
+					pct = track.AnimateTo("progress-pct", targetPct, smoothCurve)
+				}
 				track.Children(func() {
 					myui.Row(c).Height(5).Radius(999).
 						Gradient(st.Brand, st.BrandGradientTo, 90).
-						WidthPercent(maxFloat(2, minFloat(100, percent)))
+						WidthPercent(pct)
 				})
 				if caption != "" {
 					myui.Text(c, caption).FontSize(11).TextColor(st.TextDim).SingleLine()

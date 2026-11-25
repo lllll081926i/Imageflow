@@ -69,20 +69,24 @@ func (t *ConvertTool) Panel(c *myui.Context, a *App) {
 			}
 		}
 		selected := indexOf(convertFormats, t.format)
-		segmented(c, &selected, labels)
+		choiceGrid(c, &selected, labels, 4)
 		if selected >= 0 && selected < len(convertFormats) {
 			t.format = convertFormats[selected]
 		}
 		if engine.QualityFormats[t.format] {
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "convert-quality", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		}
 		if !capabilities.SupportsExt(t.format).Encode {
 			warnAlert(c, "当前格式不支持输出")
 		}
 		if t.format == "ico" {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "ICO 尺寸（逗号分隔）")
-				textField(c, &t.icoSizes, "16,32,48,256")
+			revealBlock(c, "convert-ico", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "ICO 尺寸（逗号分隔）")
+					textField(c, &t.icoSizes, "16,32,48,256")
+				})
 			})
 		}
 	})
@@ -93,19 +97,23 @@ func (t *ConvertTool) Panel(c *myui.Context, a *App) {
 		t.resize = selected
 		switch t.resize {
 		case 1:
-			sliderRow(c, "缩放比例", &t.percent, 1, 500, 1, "%.0f%%")
-		case 2:
-			grid2(c, func() {
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "宽度")
-					numberField(c, &t.width, 0, 16000, 1, "自动")
-				})
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "高度")
-					numberField(c, &t.height, 0, 16000, 1, "自动")
-				})
+			revealBlock(c, "convert-resize-percent", func() {
+				sliderRow(c, "缩放比例", &t.percent, 1, 500, 1, "%.0f%%")
 			})
-			switchField(c, &t.maintain, "锁定宽高比")
+		case 2:
+			revealBlock(c, "convert-resize-pixels", func() {
+				grid2(c, func() {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "宽度")
+						numberField(c, &t.width, 0, 16000, 1, "自动")
+					})
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "高度")
+						numberField(c, &t.height, 0, 16000, 1, "自动")
+					})
+				})
+				switchField(c, &t.maintain, "锁定宽高比")
+			})
 		}
 	})
 
@@ -240,43 +248,49 @@ func (t *ResizeTool) Panel(c *myui.Context, a *App) {
 		t.mode = selected
 		switch selected {
 		case 0:
-			sliderRow(c, "缩放比例", &t.percent, 1, 500, 1, "%.0f%%")
+			revealBlock(c, "resize-percent", func() {
+				sliderRow(c, "缩放比例", &t.percent, 1, 500, 1, "%.0f%%")
+			})
 		case 1, 2:
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "目标边长（像素）")
-				numberField(c, &t.edge, 16, 16000, 16, "1920")
+			revealBlock(c, "resize-edge", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "目标边长（像素）")
+					numberField(c, &t.edge, 16, 16000, 16, "1920")
+				})
 			})
 		case 3:
-			sizes := engine.ParsePresetSizes(t.preset)
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "目标尺寸（多个用逗号分隔）")
-				textFieldState(c, &t.preset, "1024x512, 256x128, 64x16", len(sizes) == 0)
-			})
-			if len(sizes) == 0 {
-				warnAlert(c, "没有解析出有效尺寸")
-			} else {
-				myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
-					for _, size := range sizes {
-						statusPill(c, size.String(), styles(c).Brand)
-					}
-				})
-			}
-			myui.Column(c).Gap(6).Children(func() {
-				label(c, "图片与目标比例不一致时")
-				fit := t.fit
-				segmented(c, &fit, presetFits)
-				t.fit = fit
-			})
-			if t.fit == 0 {
+			revealBlock(c, "resize-presets", func() {
+				sizes := engine.ParsePresetSizes(t.preset)
 				myui.Column(c).Gap(5).Children(func() {
-					label(c, "留白颜色")
-					before := t.presetBG
-					colorField(c, &t.presetBG)
-					if t.presetBG != before {
-						t.presetHex = hexOf(t.presetBG)
-					}
+					label(c, "目标尺寸（多个用逗号分隔）")
+					textFieldState(c, &t.preset, "1024x512, 256x128, 64x16", len(sizes) == 0)
 				})
-			}
+				if len(sizes) == 0 {
+					warnAlert(c, "没有解析出有效尺寸")
+				} else {
+					myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
+						for _, size := range sizes {
+							statusPill(c, size.String(), styles(c).Brand)
+						}
+					})
+				}
+				myui.Column(c).Gap(6).Children(func() {
+					label(c, "图片与目标比例不一致时")
+					fit := t.fit
+					segmented(c, &fit, presetFits)
+					t.fit = fit
+				})
+				if t.fit == 0 {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "留白颜色")
+						before := t.presetBG
+						colorField(c, &t.presetBG)
+						if t.presetBG != before {
+							t.presetHex = hexOf(t.presetBG)
+						}
+					})
+				}
+			})
 		}
 	})
 	sectionCard(c, "输出", func() {
@@ -293,7 +307,9 @@ func (t *ResizeTool) Panel(c *myui.Context, a *App) {
 			t.format = opts[selected]
 		}
 		if qualityRelevant(a, t.format) && !(t.mode == 3 && t.format == "") {
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "resize-quality", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		}
 	})
 }
@@ -616,7 +632,9 @@ func (t *StitchTool) Panel(c *myui.Context, a *App) {
 	sectionCard(c, "边框", func() {
 		switchField(c, &t.borderMode, "单张图加边框")
 		if t.borderMode {
-			sliderRow(c, "边框宽度", &t.border, 0, 200, 1, "%.0f px")
+			revealBlock(c, "stitch-border", func() {
+				sliderRow(c, "边框宽度", &t.border, 0, 200, 1, "%.0f px")
+			})
 		}
 	})
 	sectionCard(c, "输出", func() {
@@ -627,7 +645,9 @@ func (t *StitchTool) Panel(c *myui.Context, a *App) {
 			t.format = opts[selected]
 		}
 		if qualityRelevant(a, t.format) {
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "stitch-quality", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		}
 	})
 }
@@ -805,17 +825,15 @@ func (t *WatermarkTool) Panel(c *myui.Context, a *App) {
 			label(c, "字体")
 			selectField(c, &t.fontName, fontOptions())
 		})
-		grid2(c, func() {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "字号模式")
-				selected := t.sizeMode
-				segmented(c, &selected, []string{"像素", "百分比"})
-				t.sizeMode = selected
-			})
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "字号")
-				numberField(c, &t.fontSize, 6, 512, 1, "32")
-			})
+		myui.Column(c).Gap(5).Children(func() {
+			label(c, "字号模式")
+			selected := t.sizeMode
+			segmented(c, &selected, []string{"像素", "百分比"})
+			t.sizeMode = selected
+		})
+		myui.Column(c).Gap(5).Children(func() {
+			label(c, "字号")
+			numberField(c, &t.fontSize, 6, 512, 1, "32")
 		})
 	})
 
@@ -847,13 +865,15 @@ func (t *WatermarkTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "位置", func() {
-		anchorPicker(c, t.position, func(position string) { t.position = position })
+		anchorSectionRow(c, styles(c), t.position, func(position string) { t.position = position })
 		sliderRow(c, "边距", &t.margin, 0, 500, 1, "%.0f px")
 		switchField(c, &t.tiled, "平铺重复")
 		if t.tiled {
-			grid2(c, func() {
-				sliderRow(c, "横向间隔", &t.tileGapX, 16, 600, 1, "%.0f")
-				sliderRow(c, "纵向间隔", &t.tileGapY, 16, 600, 1, "%.0f")
+			revealBlock(c, "watermark-tiled", func() {
+				grid2(c, func() {
+					sliderRow(c, "横向间隔", &t.tileGapX, 16, 600, 1, "%.0f")
+					sliderRow(c, "纵向间隔", &t.tileGapY, 16, 600, 1, "%.0f")
+				})
 			})
 		}
 	})
@@ -898,23 +918,51 @@ func anchorPosition(index int) string {
 func anchorPicker(c *myui.Context, selected string, onSelect func(string)) {
 	st := styles(c)
 	names := []string{"左上", "上中", "右上", "左中", "居中", "右中", "左下", "下中", "右下"}
-	myui.Grid(c).Width(132).Columns(3).Gap(4).Children(func() {
+	myui.Grid(c).Width(138).Columns(3).Gap(5).Children(func() {
 		for index, position := range engine.CropAnchors {
 			c.Key(position)
+			active := position == selected
 			button := myui.ButtonBase(c).FillWidth().Height(32).Radius(st.RadiusControl).
-				Label(names[index]).Tooltip(names[index]).Cursor(myui.CursorPointer).FocusRingColor(st.Brand)
+				Label(names[index]).Tooltip(names[index]).Cursor(myui.CursorPointer).
+				FocusRingColor(st.Brand).Transition(motion(springTap))
 			color := st.TextSub
-			if position == selected {
-				button.Background(st.Brand)
+			switch {
+			case active:
+				button.Gradient(st.Brand, st.BrandGradientTo, 90).
+					Shadow(0, 2, 6, 0, st.BrandGlow)
 				color = myui.RGB(255, 255, 255)
-			} else {
+			case button.Hovered():
+				button.Background(st.CardHover).Border(1, st.Brand)
+				color = st.Text
+			default:
 				button.Background(st.Recessed).Border(1, st.Divider)
 			}
+			button = pressFeedback(button, button.Pressed(), 0.96)
 			button.Center().Children(func() {
 				myui.Text(c, positionGlyph(position)).FontSize(13).TextColor(color)
 			})
 			button.OnClick(func() { onSelect(position) })
 		}
+	})
+}
+
+func anchorLabel(pos string) string {
+	names := []string{"左上", "上中", "右上", "左中", "居中", "右中", "左下", "下中", "右下"}
+	for i, key := range engine.CropAnchors {
+		if key == pos && i < len(names) {
+			return names[i]
+		}
+	}
+	return "居中"
+}
+
+func anchorSectionRow(c *myui.Context, st style, selected string, onSelect func(string)) {
+	myui.Row(c).FillWidth().Gap(14).AlignItems(myui.Center).Children(func() {
+		anchorPicker(c, selected, onSelect)
+		myui.Column(c).Grow(1).Gap(6).AlignItems(myui.Start).Children(func() {
+			myui.Text(c, "对齐锚点").FontSize(11.5).TextColor(st.TextDim)
+			statusPill(c, anchorLabel(selected), st.Brand)
+		})
 	})
 }
 
@@ -1094,14 +1142,16 @@ func (t *PDFTool) Panel(c *myui.Context, a *App) {
 			t.layout = keys[selected]
 		}
 		if t.layout == "custom" {
-			grid2(c, func() {
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "行")
-					numberField(c, &t.rows, 1, 10, 1, "2")
-				})
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "列")
-					numberField(c, &t.cols, 1, 10, 1, "2")
+			revealBlock(c, "pdf-custom-grid", func() {
+				grid2(c, func() {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "行")
+						numberField(c, &t.rows, 1, 10, 1, "2")
+					})
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "列")
+						numberField(c, &t.cols, 1, 10, 1, "2")
+					})
 				})
 			})
 		}
@@ -1287,35 +1337,43 @@ func (t *GIFTool) Panel(c *myui.Context, a *App) {
 		t.action = selected
 		switch gifActionKeys[selected] {
 		case "change_speed":
-			sliderRow(c, "倍速", &t.speed, 0.1, 5, 0.1, "%.1f×")
+			revealBlock(c, "gif-speed", func() {
+				sliderRow(c, "倍速", &t.speed, 0.1, 5, 0.1, "%.1f×")
+			})
 		case "compress":
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "gif-compress", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		case "resize":
-			grid2(c, func() {
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "宽度")
-					numberField(c, &t.width, 16, 4096, 16, "480")
+			revealBlock(c, "gif-resize", func() {
+				grid2(c, func() {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "宽度")
+						numberField(c, &t.width, 16, 4096, 16, "480")
+					})
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "高度")
+						numberField(c, &t.height, 0, 4096, 16, "自动")
+					})
 				})
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "高度")
-					numberField(c, &t.height, 0, 4096, 16, "自动")
-				})
+				switchField(c, &t.maintain, "锁定比例")
 			})
-			switchField(c, &t.maintain, "锁定比例")
 		case "export_frames":
-			grid2(c, func() {
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "起始帧（从 0 计）")
-					numberField(c, &t.frameStart, 0, 9999, 1, "0")
+			revealBlock(c, "gif-frames", func() {
+				grid2(c, func() {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "起始帧（从 0 计）")
+						numberField(c, &t.frameStart, 0, 9999, 1, "0")
+					})
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "结束帧（不含，0 = 末尾）")
+						numberField(c, &t.frameEnd, 0, 9999, 1, "0")
+					})
 				})
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "结束帧（不含，0 = 末尾）")
-					numberField(c, &t.frameEnd, 0, 9999, 1, "0")
-				})
+				if t.frameEnd > 0 && t.frameEnd <= t.frameStart {
+					warnAlert(c, "结束帧必须大于起始帧")
+				}
 			})
-			if t.frameEnd > 0 && t.frameEnd <= t.frameStart {
-				warnAlert(c, "结束帧必须大于起始帧")
-			}
 		}
 		// 导出帧 writes still PNGs, so neither the loop count nor the container
 		// applies; showing them promised settings the action cannot honour.

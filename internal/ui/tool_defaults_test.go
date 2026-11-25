@@ -4,10 +4,41 @@ import (
 	"path/filepath"
 	"testing"
 
+	myui "github.com/egoist/mygo/ui"
 	"github.com/lllll081926i/imageflow-go/internal/batch"
 	"github.com/lllll081926i/imageflow-go/internal/codec"
 	"github.com/lllll081926i/imageflow-go/internal/settings"
 )
+
+// TestConvertToolSwitchesOutputFormatByClicking verifies every output format
+// button in ConvertTool actually switches the active format when clicked.
+func TestConvertToolSwitchesOutputFormatByClicking(t *testing.T) {
+	app := newTestApp(t)
+	defer app.CancelStudioWork()
+	app.openTool(app.toolIndex(ToolConvert))
+	tool := app.ActiveTool().(*ConvertTool)
+	tester := myui.NewTester(app.View, 1440, 900)
+	tester.Frame()
+
+	for _, tc := range []struct {
+		label string
+		want  string
+	}{
+		{"JPG", "jpg"},
+		{"WebP", "webp"},
+		{"AVIF", "avif"},
+		{"ICO", "ico"},
+		{"PNG", "png"},
+	} {
+		if err := tester.Click(tc.label); err != nil {
+			t.Fatalf("click %s: %v", tc.label, err)
+		}
+		tester.Frame()
+		if tool.format != tc.want {
+			t.Fatalf("after clicking %s: tool.format = %q, want %q", tc.label, tool.format, tc.want)
+		}
+	}
+}
 
 // TestConvertToolKeepsAspectByDefault pins the switch semantics of the format
 // page: the aspect lock starts on (as the original app had it), and unlocking it

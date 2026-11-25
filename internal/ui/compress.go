@@ -36,10 +36,14 @@ func (t *CompressTool) Panel(c *myui.Context, a *App) {
 	sectionCard(c, "压缩设置", func() {
 		segmented(c, &t.format, []string{"原格式", "JPG", "PNG", "WebP", "AVIF"})
 		if t.format == 3 {
-			switchField(c, &t.lossless, "WebP 无损压缩")
+			revealBlock(c, "compress-webp-lossless", func() {
+				switchField(c, &t.lossless, "WebP 无损压缩")
+			})
 		}
 		if t.format != 2 && !(t.format == 3 && t.lossless) && (t.format != 0 || qualityRelevant(a, "")) {
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "compress-quality", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		}
 	})
 }

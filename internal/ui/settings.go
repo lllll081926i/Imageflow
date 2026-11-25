@@ -21,21 +21,22 @@ import (
 
 // settingsSection is one grouped block. The icon plate and title stay on their
 // own row, so controls scan as a form rather than as an undifferentiated list.
-func settingsSection(c *myui.Context, st style, icon *myui.SVG, title string, body func()) {
-	card := myui.Column(c).FillWidth().Gap(14).Padding(16).
+func settingsSection(c *myui.Context, st style, icon *myui.SVG, title string, body func()) myui.Element {
+	card := myui.Column(c).FillWidth().Gap(9).Padding(12, 14, 12, 14).
 		Radius(st.RadiusPanel).Border(1, st.Divider).Background(st.Card).
 		Label(title + "分组")
 	card.Children(func() {
-		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(10).Children(func() {
-			myui.Row(c).Size(34, 34).Radius(st.RadiusControl).
+		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(9).Children(func() {
+			myui.Row(c).Size(28, 28).Radius(st.RadiusPill).
 				Justify(myui.Center).AlignItems(myui.Center).
 				Background(st.BrandSoft).Children(func() {
-				myui.Icon(c, icon).Width(17).Height(17).TextColor(st.Brand)
+				myui.Icon(c, icon).Width(14).Height(14).TextColor(st.Brand)
 			})
-			myui.Text(c, title).FontSize(14).FontWeight(600).TextColor(st.Text)
+			myui.Text(c, title).FontSize(13.5).FontWeight(600).TextColor(st.Text)
 		})
 		body()
 	})
+	return card
 }
 
 // settingsPage is the whole settings view: a header, the sections, and the
@@ -45,7 +46,7 @@ func (a *App) settingsPage(c *myui.Context, st style) {
 	width, _ := c.Size()
 	wide := width >= 1200
 	compact := width > 0 && width < 1080
-	pagePadding := float32(18)
+	pagePadding := float32(14)
 	if compact {
 		pagePadding = 12
 	}
@@ -54,43 +55,43 @@ func (a *App) settingsPage(c *myui.Context, st style) {
 		Background(st.Card).Border(1, st.Divider).
 		Shadow(0, 2, 12, 0, myui.RGBA(0, 0, 0, 0.04)).Clip().Label("设置卡")
 	card.Children(func() {
-		myui.Row(c).FillWidth().Height(68).PaddingX(pagePadding).Gap(12).
+		myui.Row(c).FillWidth().Height(54).PaddingX(pagePadding).Gap(10).
 			AlignItems(myui.Center).Children(func() {
-			myui.Row(c).Size(38, 38).Radius(st.RadiusControl).
+			myui.Row(c).Size(32, 32).Radius(st.RadiusControl).
 				Justify(myui.Center).AlignItems(myui.Center).
 				Background(st.BrandSoft).Children(func() {
-				myui.Icon(c, lucide.Settings()).Width(19).Height(19).
+				myui.Icon(c, lucide.Settings()).Width(16).Height(16).
 					TextColor(st.Brand)
 			})
-			myui.Column(c).Gap(2).Children(func() {
-				myui.Text(c, "全局设置").FontSize(16).FontWeight(600).TextColor(st.Text)
+			myui.Column(c).Gap(1).Children(func() {
+				myui.Text(c, "全局设置").FontSize(15.5).FontWeight(600).TextColor(st.Text)
 			})
 			myui.Spacer(c).Grow(1)
 		})
-		myui.Row(c).FillWidth().Height(1).Background(st.Divider)
+		myui.Row(c).FillWidth().Height(1).Background(st.DividerTop)
 
 		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			content := myui.Column(c).FillWidth().Padding(pagePadding).Gap(14)
+			content := myui.Column(c).FillWidth().Padding(pagePadding).Gap(10)
 			content.Children(func() {
 				if wide {
 					// Independent columns keep unrelated groups from forcing one another
-					// downwards; the reading order remains output first, app second.
-					myui.Grid(c).FillWidth().Columns(2).Gap(14).Children(func() {
-						myui.Column(c).FillWidth().Gap(14).Label("输出设置").Children(func() {
+					// downwards, while stretching their bottom cards so both columns align.
+					myui.Grid(c).FillWidth().Columns(2).Gap(12).AlignItems(myui.Stretch).Children(func() {
+						myui.Column(c).FillWidth().FillHeight().Gap(10).Label("输出设置").Children(func() {
 							a.settingsNaming(c, st, s)
 							a.settingsOutput(c, st, s)
 							a.cacheSection(c, st)
-							a.aboutSection(c, st)
+							a.aboutSection(c, st).Grow(1)
 						})
-						myui.Column(c).FillWidth().Gap(14).Label("应用设置").Children(func() {
+						myui.Column(c).FillWidth().FillHeight().Gap(10).Label("应用设置").Children(func() {
 							a.settingsBehaviour(c, st, s)
 							a.modelDownloadSettings(c, st, s)
-							a.updatesSection(c, st)
+							a.updatesSection(c, st).Grow(1)
 						})
 					})
 					return
 				}
-				myui.Column(c).FillWidth().Gap(12).Label("设置单列").Children(func() {
+				myui.Column(c).FillWidth().Gap(10).Label("设置单列").Children(func() {
 					a.settingsNaming(c, st, s)
 					a.settingsOutput(c, st, s)
 					a.cacheSection(c, st)
@@ -168,9 +169,9 @@ func (a *App) settingsBehaviour(c *myui.Context, st style, s *settings.Settings)
 	})
 }
 
-func (a *App) updatesSection(c *myui.Context, st style) {
+func (a *App) updatesSection(c *myui.Context, st style) myui.Element {
 	state := a.UpdateState()
-	settingsSection(c, st, lucide.Download(), "更新", func() {
+	return settingsSection(c, st, lucide.Download(), "更新", func() {
 		switch {
 		case state.Busy || state.Installing:
 			text := "正在检查更新…"
@@ -232,8 +233,8 @@ func (a *App) updatesSection(c *myui.Context, st style) {
 	})
 }
 
-func (a *App) aboutSection(c *myui.Context, st style) {
-	settingsSection(c, st, lucide.CircleHelp(), "关于", func() {
+func (a *App) aboutSection(c *myui.Context, st style) myui.Element {
+	return settingsSection(c, st, lucide.CircleHelp(), "关于", func() {
 		// The whole block is the action: a version line that happens to be
 		// clickable is not discoverable, so the row shows the repo in words and
 		// carries the pointer cursor and focus ring of a button.
@@ -278,7 +279,13 @@ func (a *App) openProjectHome() {
 // switchRow is a labelled switch. The label says what the toggle does; a second
 // line explaining it again was noise on a page that already has section headings.
 func switchRow(c *myui.Context, st style, title string, on *bool) {
-	myui.Row(c).FillWidth().MinHeight(36).AlignItems(myui.Center).Gap(12).Children(func() {
+	row := myui.Row(c).FillWidth().MinHeight(36).PaddingX(6).Radius(st.RadiusPill).
+		AlignItems(myui.Center).Gap(12).Cursor(myui.CursorPointer).
+		Transition(motion(springTap))
+	if row.Hovered() {
+		row.Background(st.Recessed)
+	}
+	row.Children(func() {
 		myui.Text(c, title).FontSize(12.5).TextColor(st.Text)
 		myui.Spacer(c).Grow(1)
 		myui.Switch(c, on).Label(title).FocusRingColor(st.Brand).FocusRingOffset(2)
@@ -289,8 +296,8 @@ func switchRow(c *myui.Context, st style, title string, on *bool) {
 // windows use two rows instead of squeezing the message between two buttons.
 func (a *App) settingsSaveBar(c *myui.Context, st style, compact bool) {
 	saved := a.SettingsSavedFlash()
-	myui.Row(c).FillWidth().Height(1).Background(st.Divider)
-	bar := myui.Column(c).FillWidth().Gap(10).Padding(12, 18, 14, 18)
+	myui.Row(c).FillWidth().Height(1).Background(st.DividerTop)
+	bar := myui.Column(c).FillWidth().Gap(10).Padding(12, 16, 14, 16).Background(st.Card)
 	bar.Children(func() {
 		feedback := func() {
 			if saved == "" {
@@ -303,6 +310,7 @@ func (a *App) settingsSaveBar(c *myui.Context, st style, compact bool) {
 				icon = lucide.CircleX()
 			}
 			myui.Row(c).FillWidth().MinHeight(24).Gap(7).AlignItems(myui.Center).
+				Key("settings-saved-flash").Transition(motion(springSoft)).
 				Role(myui.RoleStatus).Label(saved).Children(func() {
 				myui.Icon(c, icon).Width(14).Height(14).TextColor(tint)
 				myui.Text(c, saved).FontSize(11.5).TextColor(tint).SingleLine()

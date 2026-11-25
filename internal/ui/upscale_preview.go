@@ -111,7 +111,8 @@ func (t *UpscaleTool) PreviewPanel(c *myui.Context, a *App) {
 			heading = fmt.Sprintf("左：原图 %d × %d  ·  右：结果 %d × %d", pair.width, pair.height, result.report.Width, result.report.Height)
 		}
 		myui.Text(c, heading).FontSize(11).TextColor(st.TextSub).SingleLine().Tooltip(heading)
-		canvas := myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().Background(st.Card).
+		canvas := myui.Box(c).FillWidth().Grow(1).MinHeight(0).Clip().
+			Radius(st.RadiusControl).Background(st.Shell).Border(1, st.Divider).
 			Focusable().Label("AI 对比画布").Bind(&t.comparisonHandle).
 			OnShortcut(0, myui.KeyLeft, func() { a.movePreview(-1) }).
 			OnShortcut(0, myui.KeyRight, func() { a.movePreview(1) })

@@ -62,6 +62,7 @@ func TestSettingsCacheCountsAndCleansWithoutDeletingCurrentClipboardOrOutput(t *
 				if err != nil {
 					t.Fatal(err)
 				}
+				tester.Frame()
 				return
 			}
 			if time.Now().After(deadline) {

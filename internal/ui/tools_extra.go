@@ -91,7 +91,7 @@ func (t *CropTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "取景位置", func() {
-		anchorPicker(c, anchorPosition(t.anchor), func(position string) {
+		anchorSectionRow(c, styles(c), anchorPosition(t.anchor), func(position string) {
 			t.anchor = indexOf(engine.CropAnchors, position)
 		})
 	})
@@ -101,26 +101,30 @@ func (t *CropTool) Panel(c *myui.Context, a *App) {
 		segmented(c, &fit, []string{"保持裁剪像素", "缩放到固定尺寸"})
 		t.scale = fit
 		if t.scale == 1 {
-			grid2(c, func() {
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "宽")
-					numberField(c, &t.outWidth, 8, 16000, 8, "1024")
-				})
-				myui.Column(c).Gap(5).Children(func() {
-					label(c, "高")
-					numberField(c, &t.outHeight, 8, 16000, 8, "1024")
+			revealBlock(c, "crop-fixed-size", func() {
+				grid2(c, func() {
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "宽")
+						numberField(c, &t.outWidth, 8, 16000, 8, "1024")
+					})
+					myui.Column(c).Gap(5).Children(func() {
+						label(c, "高")
+						numberField(c, &t.outHeight, 8, 16000, 8, "1024")
+					})
 				})
 			})
 		}
 		sliderRow(c, "圆角（占短边 %）", &t.radius, 0, 50, 1, "%.0f%%")
 		if t.radius > 0 {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "圆角外颜色")
-				before := t.background
-				colorField(c, &t.background)
-				if t.background != before {
-					t.bgHex = hexOf(t.background)
-				}
+			revealBlock(c, "crop-radius-bg", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "圆角外颜色")
+					before := t.background
+					colorField(c, &t.background)
+					if t.background != before {
+						t.bgHex = hexOf(t.background)
+					}
+				})
 			})
 		}
 		opts := []string{"png", "jpg", "webp"}
@@ -130,7 +134,9 @@ func (t *CropTool) Panel(c *myui.Context, a *App) {
 			t.format = opts[selected]
 		}
 		if t.format != "png" {
-			sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			revealBlock(c, "crop-quality", func() {
+				sliderRow(c, "质量", &t.quality, 1, 100, 1, "%.0f")
+			})
 		}
 	})
 }
@@ -248,12 +254,12 @@ func (t *IconTool) Panel(c *myui.Context, a *App) {
 		for r := 0; r < rows; r++ {
 			myui.Row(c).FillWidth().Gap(5).Children(func() {
 				for i := r * 4; i < r*4+4 && i < len(engine.IconLadder); i++ {
-					cell := myui.Row(c).Grow(1).Height(24).Radius(styles(c).RadiusPill).
+					cell := myui.Row(c).Grow(1).Height(25).Radius(styles(c).RadiusPill).
 						Justify(myui.Center).AlignItems(myui.Center).
-						Background(styles(c).Recessed).Children(func() {
+						Background(styles(c).Recessed).Border(1, styles(c).DividerTop).Children(func() {
 						myui.Text(c, fmt.Sprintf("%d", engine.IconLadder[i])).
 							FontSize(10.5).FontWeight(500).
-							TextColor(styles(c).TextDim).NoWrap()
+							TextColor(styles(c).TextSub).NoWrap()
 					})
 					_ = cell
 				}

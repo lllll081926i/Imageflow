@@ -19,20 +19,28 @@ type modelDownloadProgress struct {
 
 func (a *App) modelDownloadSettings(c *myui.Context, st style, configuration *settings.Settings) {
 	settingsSection(c, st, lucide.Download(), "AI 模型下载", func() {
-		label(c, "默认下载源")
-		sources := []string{"github", "mirror"}
-		source := max(0, indexOf(sources, configuration.AIModelSource))
-		segmented(c, &source, []string{"普通 GitHub", "国内加速直连"})
-		configuration.AIModelSource = sources[source]
-		label(c, "国内加速 HTTPS 前缀")
-		textField(c, &configuration.AIModelMirror, upscale.DefaultModelMirror)
-		label(c, "下载代理")
-		modes := []string{"system", "custom", "direct"}
-		mode := max(0, indexOf(modes, configuration.AIModelProxyMode))
-		segmented(c, &mode, []string{"系统代理", "自定义代理", "不使用代理"})
-		configuration.AIModelProxyMode = modes[mode]
-		label(c, "代理地址（默认端口 7890）")
-		textField(c, &configuration.AIModelProxyURL, upscale.DefaultModelProxy)
+		myui.Column(c).FillWidth().Gap(4).Children(func() {
+			label(c, "默认下载源")
+			sources := []string{"github", "mirror"}
+			source := max(0, indexOf(sources, configuration.AIModelSource))
+			segmented(c, &source, []string{"普通 GitHub", "国内加速直连"})
+			configuration.AIModelSource = sources[source]
+		})
+		myui.Column(c).FillWidth().Gap(4).Children(func() {
+			label(c, "国内加速 HTTPS 前缀")
+			textField(c, &configuration.AIModelMirror, upscale.DefaultModelMirror)
+		})
+		myui.Column(c).FillWidth().Gap(4).Children(func() {
+			label(c, "下载代理")
+			modes := []string{"system", "custom", "direct"}
+			mode := max(0, indexOf(modes, configuration.AIModelProxyMode))
+			segmented(c, &mode, []string{"系统代理", "自定义代理", "不使用代理"})
+			configuration.AIModelProxyMode = modes[mode]
+		})
+		myui.Column(c).FillWidth().Gap(4).Children(func() {
+			label(c, "代理地址（默认端口 7890）")
+			textField(c, &configuration.AIModelProxyURL, upscale.DefaultModelProxy)
+		})
 	})
 }
 

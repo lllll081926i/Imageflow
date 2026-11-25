@@ -41,8 +41,16 @@ var (
 	springSoft = myui.ElementTransition{
 		Animation: &smoothCurve,
 		Shadows:   true,
-		Enter:     &myui.Motion{Y: 4, Opacity: 0, Scale: 0.995},
+		Enter:     &myui.Motion{Y: 4, Opacity: 0.55, Scale: 0.995},
 		Exit:      &myui.Motion{Opacity: 0},
+	}
+	// revealMotion animates conditional parameter blocks expanding or collapsing.
+	revealMotion = myui.ElementTransition{
+		Animation: &smoothCurve,
+		Height:    true,
+		Shadows:   true,
+		Enter:     &myui.Motion{Opacity: 0, Collapse: true},
+		Exit:      &myui.Motion{Opacity: 0, Collapse: true},
 	}
 )
 
@@ -58,7 +66,10 @@ var instantTransition = myui.ElementTransition{Duration: -1, Shadows: true}
 // only paint, without running the view, and calls it "the cheapest motion there
 // is". A static Scale transform snaps between two sizes in one frame, which reads
 // as a glitch rather than as a press.
-var pressPose = myui.Animation{Duration: 120 * time.Millisecond, Ease: myui.EaseOut}
+var (
+	pressPose = myui.Animation{Duration: 120 * time.Millisecond, Ease: myui.EaseOut}
+	hoverPose = myui.Animation{Duration: 160 * time.Millisecond, Ease: myui.EaseOut}
+)
 
 // pressFeedback asks e where its press state puts it. It is called on every
 // frame the element is built, not only while it is pressed: a pose starts at
@@ -77,6 +88,25 @@ func pressFeedback(e myui.Element, pressed bool, scale float32) myui.Element {
 		pose.Scale = scale
 	}
 	return e.AnimatePose(pose, pressPose)
+}
+
+// hoverFeedback lifts or scales a card gently on pointer hover using AnimatePose.
+func hoverFeedback(e myui.Element, hovered bool, y, scale float32) myui.Element {
+	if motionReduced {
+		return e
+	}
+	pose := myui.Pose{}
+	if hovered {
+		pose.Y = y
+		pose.Scale = scale
+	}
+	return e.AnimatePose(pose, hoverPose)
+}
+
+// revealBlock wraps a conditional control group so it fades and slides open smoothly.
+func revealBlock(c *myui.Context, key string, body func()) {
+	myui.Column(c).FillWidth().Gap(10).Key(key).Clip().
+		Transition(motion(revealMotion)).Children(body)
 }
 
 // snappySpring keeps the press bounce; smoothCurve is the eased fade used for
@@ -243,8 +273,10 @@ func sliderRow(c *myui.Context, text string, value *float64, lo, hi, step float6
 			myui.Text(c, text).FontSize(12).FontWeight(500).TextColor(st.TextSub)
 			myui.Spacer(c).Grow(1)
 			readout := fmt.Sprintf(format, *value)
-			myui.Row(c).PaddingX(7).PaddingY(2).Radius(6).Background(st.Recessed).Children(func() {
-				myui.Text(c, readout).FontSize(11).FontWeight(600).TextColor(st.Text)
+			myui.Row(c).MinWidth(36).PaddingX(8).PaddingY(2).Radius(6).
+				Justify(myui.Center).AlignItems(myui.Center).
+				Background(st.Recessed).Border(1, st.DividerTop).Children(func() {
+				myui.Text(c, readout).FontSize(11).FontWeight(600).TextColor(st.Text).NoWrap()
 			})
 		})
 		slider(c, value, lo, hi, step)
@@ -262,19 +294,36 @@ func choiceGrid(c *myui.Context, selected *int, options []string, columns int) {
 	myui.Grid(c).FillWidth().Columns(columns).Gap(6).Children(func() {
 		for index, option := range options {
 			c.Key(option)
-			button := myui.ButtonBase(c).FillWidth().Height(32).Radius(st.RadiusControl).
-				Label(option).Cursor(myui.CursorPointer).FocusRingColor(st.Brand)
+			active := *selected == index
+			button := myui.ButtonBase(c).FillWidth().Height(33).Radius(st.RadiusControl).
+				Label(option).Cursor(myui.CursorPointer).FocusRingColor(st.Brand).
+				Transition(motion(springTap))
 			color := st.TextSub
-			if *selected == index {
-				button.Background(st.Brand)
+			switch {
+			case active:
+				button.Gradient(st.Brand, st.BrandGradientTo, 90).
+					Shadow(0, 2, 6, 0, st.BrandGlow)
 				color = myui.RGB(255, 255, 255)
-			} else {
+			case button.Pressed():
+				button.Background(st.DividerTop).Border(1, st.Brand)
+				color = st.Text
+			case button.Hovered():
+				button.Background(st.CardHover).Border(1, st.Brand)
+				color = st.Text
+			default:
 				button.Background(st.Recessed).Border(1, st.Divider)
 			}
+			button = pressFeedback(button, button.Pressed(), 0.975)
 			button.Center().Children(func() {
-				myui.Text(c, option).FontSize(12).TextColor(color)
+				weight := 500
+				if active {
+					weight = 600
+				}
+				myui.Text(c, option).FontSize(12).FontWeight(weight).TextColor(color).NoWrap()
 			})
-			button.OnClick(func() { *selected = index })
+			if button.Clicked() {
+				*selected = index
+			}
 		}
 	})
 }
@@ -296,7 +345,8 @@ func selectFieldState(c *myui.Context, selected *string, options []string, disab
 func switchField(c *myui.Context, on *bool, text string) {
 	st := styles(c)
 	row := myui.Row(c).FillWidth().Height(34).Gap(10).PaddingX(6).
-		AlignItems(myui.Center).Radius(st.RadiusPill)
+		AlignItems(myui.Center).Radius(st.RadiusPill).
+		Cursor(myui.CursorPointer).Transition(motion(springTap))
 	if row.Hovered() {
 		row.Background(st.Recessed)
 	}
@@ -498,7 +548,7 @@ func primaryButton(c *myui.Context, st style, text string, icon *myui.SVG, disab
 	}
 	foreground := myui.RGB(255, 255, 255)
 	if unavailable {
-		foreground = st.TextDim
+		foreground = mixColor(st.TextDim, st.TextSub, 0.35)
 	}
 	btn.Children(func() {
 		if loading {

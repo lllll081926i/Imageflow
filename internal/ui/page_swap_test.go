@@ -21,6 +21,23 @@ func TestPageSwitchAnimates(t *testing.T) {
 	if !tt.FramePending() {
 		t.Fatal("switching tools asked for no further frames: the page swapped in place")
 	}
+	if a.pageEnter.Y <= 0 {
+		t.Errorf("moving down the rail should enter from positive Y, got %+v", a.pageEnter)
+	}
+
+	// Moving back up the sidebar reverses the enter direction.
+	for i := 0; i < 30; i++ {
+		tt.Advance(16 * time.Millisecond)
+		tt.Frame()
+	}
+	a.Active = 1
+	tt.Frame()
+	if !tt.FramePending() {
+		t.Fatal("switching up the rail asked for no further frames")
+	}
+	if a.pageEnter.Y >= 0 {
+		t.Errorf("moving up the rail should enter from negative Y, got %+v", a.pageEnter)
+	}
 
 	// Opening the settings is the same kind of change.
 	for i := 0; i < 30; i++ {

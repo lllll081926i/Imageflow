@@ -29,10 +29,17 @@ func (a *App) homePage(c *myui.Context, st style) {
 	card := myui.Column(c).Grow(1).FillHeight().Radius(st.RadiusCard).
 		Background(st.Card).Border(1, st.Divider).
 		Shadow(0, 2, 12, 0, myui.RGBA(0, 0, 0, 0.04)).Clip().
-		Label("首页").Key("home")
+		Label("首页").Key("home").
+		OnShortcut(myui.Ctrl, myui.KeyK, func() { a.homeSearchFocus.Focus(c) }).
+		OnShortcut(0, myui.KeyEscape, func() {
+			if a.searchQuery != "" {
+				a.searchQuery = ""
+				a.Invalidate()
+			}
+		})
 	card.Children(func() {
 		myui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			myui.Column(c).FillWidth().Padding(24).Gap(18).Children(func() {
+			myui.Column(c).FillWidth().Padding(22, 24, 24, 24).Gap(18).Children(func() {
 				a.homeHeader(c, st)
 				a.homeSearch(c, st)
 				if strings.TrimSpace(a.searchQuery) != "" {
@@ -49,35 +56,50 @@ func (a *App) homePage(c *myui.Context, st style) {
 
 // homeHeader 显示产品名称与工具数量。
 func (a *App) homeHeader(c *myui.Context, st style) {
-	myui.Column(c).FillWidth().Gap(6).Children(func() {
-		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(10).Children(func() {
-			if mark := logoBitmap(logoHomeSize); mark != nil {
-				myui.Image(c, mark).Size(logoHomeSize, logoHomeSize).Fit(myui.Contain)
-			}
-			myui.Column(c).Gap(2).Children(func() {
-				myui.Text(c, "ImageFlow").FontSize(22).FontWeight(700).TextColor(st.Text)
-			})
-			myui.Spacer(c).Grow(1)
-			statusPill(c, fmt.Sprintf("%d 个工具", len(a.Tools)), st.Brand)
+	myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(12).Children(func() {
+		if mark := logoBitmap(logoHomeSize); mark != nil {
+			myui.Image(c, mark).Size(logoHomeSize, logoHomeSize).Fit(myui.Contain)
+		}
+		myui.Column(c).Gap(2).Children(func() {
+			myui.Text(c, "ImageFlow").FontSize(22).FontWeight(700).TextColor(st.Text)
+			myui.Text(c, "一站式本地图像处理工作台 · 批量与单图创作").FontSize(12).TextColor(st.TextSub)
 		})
+		myui.Spacer(c).Grow(1)
+		statusPill(c, fmt.Sprintf("%d 个工具", len(a.Tools)), st.Brand)
 	})
 }
 
 // homeSearch 仅搜索首页工具卡片。
 func (a *App) homeSearch(c *myui.Context, st style) {
-	row := myui.Row(c).FillWidth().Height(48).PaddingX(14).Gap(10).
+	row := myui.Row(c).FillWidth().Height(46).PaddingX(14).Gap(10).
 		AlignItems(myui.Center).Radius(st.RadiusControl).
 		Background(st.Recessed).Border(1, st.Divider)
+	if a.homeSearchFocus.Focused(c) {
+		row.Background(st.Card).Border(1, st.Brand).
+			Shadow(0, 0, 0, 2, myui.RGBA(st.Brand.R, st.Brand.G, st.Brand.B, 0.14))
+	} else if row.Hovered() {
+		row.Border(1, st.TextDim)
+	}
 	row.Children(func() {
-		myui.Icon(c, lucide.Search()).Width(17).Height(17).TextColor(st.TextDim)
-		input := myui.TextInput(c, &a.searchQuery).Grow(1).Height(44).
+		tint := st.TextDim
+		if a.homeSearchFocus.Focused(c) {
+			tint = st.Brand
+		}
+		myui.Icon(c, lucide.Search()).Width(17).Height(17).TextColor(tint)
+		input := myui.TextInput(c, &a.searchQuery).Grow(1).Height(42).
 			Border(0, myui.RGBA(0, 0, 0, 0)).Background(myui.RGBA(0, 0, 0, 0)).FontSize(14).
-			Placeholder("搜索工具")
+			Placeholder("搜索工具 · 输入名称或关键词，如 压缩、打码、拼图").
+			Bind(&a.homeSearchFocus)
 		input.PlaceholderColor(st.TextDim).FocusRing(false)
 		if strings.TrimSpace(a.searchQuery) != "" {
 			a.ghostButton(c, st, "清除", lucide.X(), func() {
 				a.searchQuery = ""
 				a.Invalidate()
+			})
+		} else {
+			myui.Row(c).PaddingX(7).PaddingY(3).Radius(6).Background(st.Card).
+				Border(1, st.Divider).Children(func() {
+				myui.Text(c, "Ctrl+K").FontSize(10.5).FontWeight(500).TextColor(st.TextDim)
 			})
 		}
 	})
@@ -92,7 +114,7 @@ func (a *App) homeSearchResults(c *myui.Context, st style) {
 	}
 	myui.Text(c, fmt.Sprintf("找到 %d 个工具", len(matches))).FontSize(12).
 		FontWeight(600).TextColor(st.TextSub)
-	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
+	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(14).GapY(14).Children(func() {
 		for _, idx := range matches {
 			a.homeToolCard(c, st, idx)
 		}
@@ -101,8 +123,8 @@ func (a *App) homeSearchResults(c *myui.Context, st style) {
 
 // homeFavouriteRow is the quick row of the six most common jobs.
 func (a *App) homeFavouriteRow(c *myui.Context, st style) {
-	sectionTitle(c, st, "常用")
-	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
+	sectionTitleWithHint(c, st, "常用", "高频日常任务直达", len(homeFavourites))
+	myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(14).GapY(14).Children(func() {
 		for _, id := range homeFavourites {
 			idx := a.toolIndex(id)
 			if idx < 0 {
@@ -120,8 +142,8 @@ func (a *App) homeGroups(c *myui.Context, st style) {
 		if len(tools) == 0 {
 			continue
 		}
-		sectionTitleIcon(c, st, group.Icon(), group.Label)
-		myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(16).GapY(16).Children(func() {
+		sectionTitleIcon(c, st, group.Icon(), group.Label, group.Hint, len(tools))
+		myui.Grid(c).FillWidth().Columns(a.homeColumns()).GapX(14).GapY(14).Children(func() {
 			for _, idx := range tools {
 				a.homeToolCard(c, st, idx)
 			}
@@ -150,36 +172,53 @@ func (a *App) homeColumns() int {
 	return 3
 }
 
-// homeToolCard 显示可点击的工具图标与名称。
+// homeToolCard 显示可点击的工具图标、名称与用途摘要。
 func (a *App) homeToolCard(c *myui.Context, st style, idx int) {
 	tool := a.Tools[idx]
 	card := myui.ButtonBase(c).Key("home-card-" + tool.ID()).FillWidth().MinHeight(132).
-		Padding(20).Gap(14).Radius(st.RadiusPanel).
+		Padding(16, 18, 16, 18).Gap(10).Radius(st.RadiusPanel).
 		Cursor(myui.CursorPointer).Label(tool.Name()).
 		FocusRingColor(st.Brand).FocusRingOffset(2).
 		Transition(motion(springTap))
 	card.Column().AlignItems(myui.Start)
-	card = pressFeedback(card, card.Pressed(), 0.99)
+	hovered := card.Hovered()
+	pressed := card.Pressed()
 	switch {
-	case card.Pressed():
-		card.Background(st.Recessed).Border(1, st.Brand)
-	case card.Hovered():
-		card.Background(st.Recessed).Border(1, st.Brand)
+	case pressed:
+		card.Background(st.Recessed).Border(1, st.BrandDeep)
+		card = pressFeedback(card, true, 0.985)
+	case hovered:
+		card.Background(st.CardHover).Border(1, st.Brand).
+			Shadow(0, 6, 16, 0, myui.RGBA(0, 0, 0, 0.07))
+		card = hoverFeedback(card, true, -2, 1.008)
 	default:
 		card.Background(st.Card).Border(1, st.Divider)
+		card = hoverFeedback(card, false, 0, 1)
 	}
 	card.Children(func() {
-		myui.Column(c).FillWidth().Gap(14).Children(func() {
-			myui.Row(c).Size(44, 44).Shrink(0).Radius(st.RadiusControl).
+		myui.Row(c).FillWidth().AlignItems(myui.Center).Children(func() {
+			myui.Row(c).Size(40, 40).Shrink(0).Radius(st.RadiusControl).
 				Justify(myui.Center).AlignItems(myui.Center).
 				Background(featureTintPlate(idx, st)).Children(func() {
 				if icon := tool.Icon(); icon != nil {
-					myui.Icon(c, icon).Width(24).Height(24).
+					myui.Icon(c, icon).Width(21).Height(21).
 						TextColor(featureTint(idx, st))
 				}
 			})
-			myui.Text(c, tool.Name()).FontSize(16).FontWeight(600).
+			myui.Spacer(c).Grow(1)
+			arrowTint := st.Divider
+			if hovered {
+				arrowTint = st.Brand
+			}
+			myui.Icon(c, lucide.ArrowUpRight()).Width(15).Height(15).TextColor(arrowTint)
+		})
+		myui.Column(c).FillWidth().Gap(4).Children(func() {
+			myui.Text(c, tool.Name()).FontSize(15).FontWeight(600).
 				TextColor(st.Text).SingleLine()
+			if summary := toolSummary[tool.ID()]; summary != "" {
+				myui.Text(c, summary).FontSize(11.5).LineHeight(1.45).
+					TextColor(st.TextSub)
+			}
 		})
 	})
 	if card.Clicked() {
@@ -224,10 +263,10 @@ func (a *App) homeComponentState(c *myui.Context, st style) {
 		tint = st.Success
 		text = "AI 高清放大：引擎可用"
 	}
-	myui.Row(c).FillWidth().Padding(12).Gap(8).AlignItems(myui.Center).
-		Radius(st.RadiusPill).Background(st.Recessed).Children(func() {
+	myui.Row(c).FillWidth().Padding(10, 14, 10, 14).Gap(8).AlignItems(myui.Center).
+		Radius(st.RadiusControl).Background(st.Recessed).Border(1, st.Divider).Children(func() {
 		myui.Icon(c, lucide.Sparkles()).Width(14).Height(14).TextColor(tint)
-		myui.Text(c, text).FontSize(11).TextColor(st.TextSub)
+		myui.Text(c, text).FontSize(11.5).TextColor(st.TextSub)
 		myui.Spacer(c).Grow(1)
 		a.ghostButton(c, st, "打开", lucide.ArrowUpRight(), func() { a.openTool(a.toolIndex(ToolUpscale)) })
 	})
@@ -244,24 +283,38 @@ func (a *App) upscaleAvailable() bool {
 	return false
 }
 
-// sectionTitle 显示分组标题。
-func sectionTitle(c *myui.Context, st style, title string) {
-	myui.Column(c).FillWidth().Gap(3).Children(func() {
+// sectionTitleWithHint 显示分组标题与副标题。
+func sectionTitleWithHint(c *myui.Context, st style, title, hint string, count int) {
+	myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(8).Children(func() {
+		myui.Row(c).Width(3).Height(14).Radius(2).Background(st.Brand)
 		myui.Text(c, title).FontSize(14).FontWeight(700).TextColor(st.Text)
+		if hint != "" {
+			myui.Text(c, hint).FontSize(11.5).TextColor(st.TextDim).SingleLine()
+		}
+		myui.Spacer(c).Grow(1)
+		if count > 0 {
+			myui.Text(c, fmt.Sprintf("%d 项", count)).FontSize(11).TextColor(st.TextDim)
+		}
 	})
 }
 
 // sectionTitleIcon is the same heading with a glyph, used for the group sections.
-func sectionTitleIcon(c *myui.Context, st style, icon *myui.SVG, title string) {
-	myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(9).Children(func() {
-		myui.Row(c).Size(26, 26).Radius(st.RadiusPill).
+func sectionTitleIcon(c *myui.Context, st style, icon *myui.SVG, title, hint string, count int) {
+	myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(9).Padding(4, 0, 0, 0).Children(func() {
+		myui.Row(c).Size(28, 28).Radius(st.RadiusPill).
 			Justify(myui.Center).AlignItems(myui.Center).
 			Background(st.BrandSoft).Children(func() {
 			myui.Icon(c, icon).Width(14).Height(14).TextColor(st.Brand)
 		})
-		myui.Column(c).Grow(1).Gap(2).Children(func() {
+		myui.Column(c).Grow(1).Gap(1).Children(func() {
 			myui.Text(c, title).FontSize(14).FontWeight(700).TextColor(st.Text)
+			if hint != "" {
+				myui.Text(c, hint).FontSize(11).TextColor(st.TextDim).SingleLine()
+			}
 		})
+		if count > 0 {
+			myui.Text(c, fmt.Sprintf("%d 项", count)).FontSize(11).TextColor(st.TextDim)
+		}
 	})
 }
 

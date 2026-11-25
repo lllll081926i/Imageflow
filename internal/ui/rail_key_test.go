@@ -65,30 +65,20 @@ func TestRailKeepsItsWidthAcrossPageSwitches(t *testing.T) {
 	check("close settings")
 }
 
-// TestPageSwitchFadesWithoutTravelling pins that the handover animates opacity and
-// nothing else: no position or size, so the row's layout is stable while the fade
-// runs.
+// TestPageSwitchFadesWithoutTravelling pins that the handover never animates
+// layout geometry (position or size), so the row's layout stays in step with the
+// rail while the directional enter transition plays.
 func TestPageSwitchFadesWithoutTravelling(t *testing.T) {
 	if pageSwap.Position || pageSwap.Size || pageSwap.Width || pageSwap.Height {
-		t.Error("pageSwap animates geometry; a fade must not touch the layout")
+		t.Error("pageSwap animates geometry; a handover must not touch the layout")
 	}
 	if pageSwap.Exit != nil {
 		t.Error("pageSwap has an Exit copy: two composited layouts flicker as their alphas cross")
 	}
 	if pageSwap.Enter == nil {
-		t.Fatal("pageSwap has no Enter fade")
+		t.Fatal("pageSwap has no Enter motion")
 	}
-	// Starting at 0 left the whole content area blank for the first frames, which
-	// read as the window refreshing. A quiet partial dissolve avoids that; the
-	// invariant is that it fades without reaching full transparency, not the exact
-	// starting alpha.
 	if pageSwap.Enter.Opacity <= 0 || pageSwap.Enter.Opacity >= 1 {
 		t.Errorf("pageSwap Enter opacity = %v, want a partial fade in (0, 1)", pageSwap.Enter.Opacity)
-	}
-	if pageSwap.Enter.X != 0 || pageSwap.Enter.Y != 0 || pageSwap.Enter.Scale != 0 || pageSwap.Enter.Blur != 0 {
-		t.Error("pageSwap.Enter still carries a transform; only opacity may animate")
-	}
-	if pageSwap.Animation != &shellCurve {
-		t.Error("pageSwap must share the shell curve with the rail width and the pill")
 	}
 }

@@ -197,6 +197,9 @@ func TestSettingsResponsiveColumns(t *testing.T) {
 	if application.Bounds.X <= output.Bounds.X+output.Bounds.W {
 		t.Errorf("wide settings columns overlap: output=%+v application=%+v", output.Bounds, application.Bounds)
 	}
+	if dh := output.Bounds.H - application.Bounds.H; dh < -1 || dh > 1 {
+		t.Errorf("wide settings columns height mismatch: output=%v application=%v", output.Bounds.H, application.Bounds.H)
+	}
 	if wide.HasText("尚未检查更新") == false {
 		t.Error("an unchecked update must not claim to be up to date")
 	}

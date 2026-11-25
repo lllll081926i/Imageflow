@@ -21,59 +21,65 @@ func (t *UpscaleTool) advancedPanel(c *myui.Context, a *App, st style) {
 			a.SetStatus("已导入本地模型：" + imported.Name)
 		}
 	}
-	a.ghostButton(c, st, "高级选项", lucide.ChevronDown(), func() { t.advanced = !t.advanced })
+	icon := lucide.ChevronDown()
+	if t.advanced {
+		icon = lucide.ChevronUp()
+	}
+	a.ghostButton(c, st, "高级选项", icon, func() { t.advanced = !t.advanced })
 	if !t.advanced {
 		return
 	}
-	sectionCard(c, "推理设置", func() {
-		sliderRow(c, "Tile（0 = 自动）", &t.tile, 0, 512, 32, "%.0f")
-		switchField(c, &t.tta, "TTA（更慢，画质略好）")
-		label(c, "GPU ID")
-		textField(c, &t.gpuIDs, "自动，或 0,1")
-	})
-	sectionCard(c, "自定义模型", func() {
-		index := t.importScale - 2
-		if index < 0 || index > 2 {
-			index = 2
-		}
-		label(c, "模型原生倍率")
-		segmented(c, &index, []string{"2×", "3×", "4×"})
-		t.importScale = index + 2
-		_, downloading, _ := t.modelDownload.snapshot()
-		a.ghostButtonState(c, st, "导入自定义模型", lucide.FolderOpen(), importing || downloading || a.IsRunning(), false, func() { t.chooseCustomModel(a) })
-		if importing {
-			a.ghostButton(c, st, "取消导入", lucide.X(), t.modelImport.cancelRequest)
-		}
-		if importErr != nil {
-			warnAlert(c, importErr.Error())
-		}
-	})
-	sectionCard(c, "偏好", func() {
-		switchField(c, &t.skipPreview, "跳过结果预览")
-		switchField(c, &t.notifyComplete, "完成通知")
-		a.ghostButtonState(c, st, "重置 AI 参数", lucide.RotateCcw(), a.IsRunning(), false, func() {
-			t.applyPreferences(settings.DefaultUpscale())
-			t.persistPreferences(a)
+	revealBlock(c, "upscale-advanced-panel", func() {
+		sectionCard(c, "推理设置", func() {
+			sliderRow(c, "Tile（0 = 自动）", &t.tile, 0, 512, 32, "%.0f")
+			switchField(c, &t.tta, "TTA（更慢，画质略好）")
+			label(c, "GPU ID")
+			textField(c, &t.gpuIDs, "自动，或 0,1")
 		})
-	})
-	stats := a.Session.SettingsSnapshot().UpscaleStats
-	_, _, lines := t.runState.snapshot()
-	if len(lines) > 0 {
-		sectionCard(c, "推理日志", func() {
-			for _, line := range lines {
-				myui.Text(c, line).FontSize(10).TextColor(st.TextDim).SingleLine().Tooltip(line)
+		sectionCard(c, "自定义模型", func() {
+			index := t.importScale - 2
+			if index < 0 || index > 2 {
+				index = 2
+			}
+			label(c, "模型原生倍率")
+			segmented(c, &index, []string{"2×", "3×", "4×"})
+			t.importScale = index + 2
+			_, downloading, _ := t.modelDownload.snapshot()
+			a.ghostButtonState(c, st, "导入自定义模型", lucide.FolderOpen(), importing || downloading || a.IsRunning(), false, func() { t.chooseCustomModel(a) })
+			if importing {
+				a.ghostButton(c, st, "取消导入", lucide.X(), t.modelImport.cancelRequest)
+			}
+			if importErr != nil {
+				warnAlert(c, importErr.Error())
 			}
 		})
-	}
-	if stats.Images > 0 {
-		sectionCard(c, "本地统计", func() {
-			metricRow(c, st, "已处理", fmt.Sprintf("%d 张", stats.Images))
-			metricRow(c, st, "批量 / 双重", fmt.Sprintf("%d / %d 张", stats.BatchImages, stats.DoubleImages))
-			metricRow(c, st, "平均耗时", (time.Duration(stats.TotalMillis/max(1, stats.Images)) * time.Millisecond).Round(time.Millisecond).String())
-			metricRow(c, st, "上次耗时", (time.Duration(stats.LastMillis) * time.Millisecond).Round(time.Millisecond).String())
-			metricRow(c, st, "上次使用", stats.LastUsed)
+		sectionCard(c, "偏好", func() {
+			switchField(c, &t.skipPreview, "跳过结果预览")
+			switchField(c, &t.notifyComplete, "完成通知")
+			a.ghostButtonState(c, st, "重置 AI 参数", lucide.RotateCcw(), a.IsRunning(), false, func() {
+				t.applyPreferences(settings.DefaultUpscale())
+				t.persistPreferences(a)
+			})
 		})
-	}
+		stats := a.Session.SettingsSnapshot().UpscaleStats
+		_, _, lines := t.runState.snapshot()
+		if len(lines) > 0 {
+			sectionCard(c, "推理日志", func() {
+				for _, line := range lines {
+					myui.Text(c, line).FontSize(10).TextColor(st.TextDim).SingleLine().Tooltip(line)
+				}
+			})
+		}
+		if stats.Images > 0 {
+			sectionCard(c, "本地统计", func() {
+				metricRow(c, st, "已处理", fmt.Sprintf("%d 张", stats.Images))
+				metricRow(c, st, "批量 / 双重", fmt.Sprintf("%d / %d 张", stats.BatchImages, stats.DoubleImages))
+				metricRow(c, st, "平均耗时", (time.Duration(stats.TotalMillis/max(1, stats.Images)) * time.Millisecond).Round(time.Millisecond).String())
+				metricRow(c, st, "上次耗时", (time.Duration(stats.LastMillis) * time.Millisecond).Round(time.Millisecond).String())
+				metricRow(c, st, "上次使用", stats.LastUsed)
+			})
+		}
+	})
 }
 
 func (t *UpscaleTool) chooseCustomModel(a *App) {

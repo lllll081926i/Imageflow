@@ -622,7 +622,7 @@ func (t *CollageTool) PreviewPanel(c *myui.Context, a *App) {
 	box := myui.Column(c).Fill().Padding(12).Gap(8).Radius(st.RadiusPanel).
 		MinHeight(0).Clip().Background(st.Recessed).Label("拼图预览区")
 	box.Children(func() {
-		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
+		myui.Row(c).FillWidth().Wrap().AlignItems(myui.Center).Gap(6).Children(func() {
 			myui.Icon(c, lucide.LayoutTemplate()).Width(13).Height(13).TextColor(st.TextDim)
 			myui.Text(c, "拼图预览").FontSize(11).FontWeight(500).TextColor(st.TextSub)
 			if t.previewBusy {
@@ -673,7 +673,7 @@ func (t *CollageTool) PreviewPanel(c *myui.Context, a *App) {
 		myui.Row(c).FillWidth().Grow(1).MinHeight(0).Clip().Justify(myui.Center).
 			AlignItems(myui.Center).Children(func() {
 			canvas := myui.Box(c).Fill().MinWidth(0).MinHeight(0).
-				Radius(st.RadiusControl).Background(st.Card).Clip().
+				Radius(st.RadiusControl).Background(st.Shell).Border(1, st.Divider).Clip().
 				Focusable().FocusRingColor(st.Brand).FocusRingOffset(2).
 				Cursor(myui.CursorPointer).Label("拼图画布").Bind(&t.handle)
 			t.canvasInput(c, a, canvas, aspect)
@@ -1556,21 +1556,26 @@ func (t *CollageTool) canvasSection(c *myui.Context) {
 			}
 		}
 		myui.Row(c).FillWidth().AlignItems(myui.Center).Gap(6).Children(func() {
-			label(c, "自定义比例")
+			label(c, "特殊比例")
 			myui.Spacer(c).Grow(1)
 			custom := 0
 			if t.aspectID == collage.CustomAspectID {
 				custom = 1
 			}
 			active := custom == 1
-			btn := myui.ButtonBase(c).Height(28).PaddingX(10).Radius(styles(c).RadiusPill).
+			btn := myui.ButtonBase(c).Height(28).PaddingX(11).Radius(styles(c).RadiusPill).
 				Border(1, styles(c).Divider).Background(styles(c).Recessed).
-				Label("自定义比例").Transition(motion(springTap))
+				Cursor(myui.CursorPointer).Label("自定义比例").Transition(motion(springTap))
+			textColor := styles(c).TextSub
 			if active {
 				btn.Border(1, styles(c).Brand).Background(styles(c).BrandSoft)
+				textColor = styles(c).Brand
+			} else if btn.Hovered() {
+				btn.Border(1, styles(c).Brand).Background(styles(c).CardHover)
 			}
+			btn = pressFeedback(btn, btn.Pressed(), 0.975)
 			btn.Children(func() {
-				myui.Text(c, "自定义比例").FontSize(11.5).TextColor(styles(c).TextSub)
+				myui.Text(c, "自定义比例").FontSize(11.5).FontWeight(500).TextColor(textColor)
 			})
 			if btn.Clicked() {
 				if active {
@@ -1582,13 +1587,15 @@ func (t *CollageTool) canvasSection(c *myui.Context) {
 			}
 		})
 		if t.aspectID == collage.CustomAspectID {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "比例（宽:高）")
-				textField(c, &t.customRatio, "16:9")
+			revealBlock(c, "collage-custom-ratio", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "比例（宽:高）")
+					textField(c, &t.customRatio, "16:9")
+				})
+				if _, ok := collage.ParseAspect(t.customRatio); !ok {
+					warnAlert(c, "比例格式无效，预览按 1:1 处理")
+				}
 			})
-			if _, ok := collage.ParseAspect(t.customRatio); !ok {
-				warnAlert(c, "比例格式无效，预览按 1:1 处理")
-			}
 		}
 		sliderRow(c, "长边像素", &t.longEdge, 480, 8000, 80, "%.0f")
 		grid2(c, func() {
@@ -1629,8 +1636,10 @@ func (t *CollageTool) styleSection(c *myui.Context, a *App) {
 		}
 		t.seam = seam
 		if t.seam == collageSeamed {
-			sliderRow(c, "间距", &t.gap, 0, 80, 1, "%.0f px")
-			sliderRow(c, "圆角", &t.radius, 0, 120, 1, "%.0f px")
+			revealBlock(c, "collage-seam-sliders", func() {
+				sliderRow(c, "间距", &t.gap, 0, 80, 1, "%.0f px")
+				sliderRow(c, "圆角", &t.radius, 0, 120, 1, "%.0f px")
+			})
 		}
 		fit := t.fit
 		segmented(c, &fit, []string{"裁切填满", "完整显示", "拉伸"})
@@ -1769,7 +1778,7 @@ func (t *CollageTool) markSection(c *myui.Context, a *App) {
 		}
 		// The actions get their own row: six swatches and three buttons do not
 		// fit one 384 DIP column, and the last label was clipped to "清除 (".
-		myui.Row(c).FillWidth().Gap(6).Children(func() {
+		myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 			a.ghostButton(c, st, "随机", lucide.Dices(), func() {
 				t.addRandomMark()
 			})

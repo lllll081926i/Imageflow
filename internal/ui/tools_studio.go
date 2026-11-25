@@ -216,7 +216,7 @@ func (t *EditTool) Panel(c *myui.Context, a *App) {
 		})
 		myui.Column(c).Gap(5).Children(func() {
 			label(c, "图片位置")
-			anchorPicker(c, anchorPosition(t.anchor), func(position string) {
+			anchorSectionRow(c, st, anchorPosition(t.anchor), func(position string) {
 				t.anchor = indexOf(engine.CropAnchors, position)
 			})
 		})
@@ -234,13 +234,15 @@ func (t *EditTool) Panel(c *myui.Context, a *App) {
 	sectionCard(c, "描边与圆角", func() {
 		sliderRow(c, "边框宽度", &t.border, 0, 200, 1, "%.0f px")
 		if t.border > 0 {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "边框颜色")
-				before := t.borderCol
-				colorField(c, &t.borderCol)
-				if t.borderCol != before {
-					t.borderHex = hexOf(t.borderCol)
-				}
+			revealBlock(c, "edit-border-color", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "边框颜色")
+					before := t.borderCol
+					colorField(c, &t.borderCol)
+					if t.borderCol != before {
+						t.borderHex = hexOf(t.borderCol)
+					}
+				})
 			})
 		}
 		sliderRow(c, "圆角（占短边 %）", &t.radius, 0, 50, 1, "%.0f%%")
@@ -406,19 +408,27 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 
 	sectionCard(c, "图层", func() {
 		if len(t.layers) == 0 {
-			warnAlert(c, "暂无图层")
+			myui.Row(c).FillWidth().Padding(10).Radius(st.RadiusPill).Gap(8).
+				AlignItems(myui.Center).Background(st.Recessed).Border(1, st.DividerTop).Children(func() {
+				myui.Icon(c, lucide.Layers()).Width(14).Height(14).TextColor(st.TextDim)
+				myui.Text(c, "暂无图层").FontSize(11.5).TextColor(st.TextSub)
+			})
 		}
 		for i := range t.layers {
 			index := i
 			layer := &t.layers[i]
-			row := myui.ButtonBase(c).FillWidth().Height(34).PaddingX(8).
+			row := myui.ButtonBase(c).Key(fmt.Sprintf("studio-layer-%d", i)).FillWidth().Height(34).PaddingX(8).
 				Radius(st.RadiusControl).AlignItems(myui.Center).Gap(8).
-				Cursor(myui.CursorPointer).Label(layerLabel(*layer))
+				Cursor(myui.CursorPointer).Label(layerLabel(*layer)).
+				Transition(motion(springTap))
 			if t.selected == index {
 				row.Background(st.BrandSoft).Border(1, st.Brand)
 			} else if row.Hovered() {
-				row.Background(st.Recessed)
+				row.Background(st.CardHover).Border(1, st.Divider)
+			} else {
+				row.Background(st.Recessed).Border(1, st.DividerTop)
 			}
+			row = pressFeedback(row, row.Pressed(), 0.985)
 			row.Children(func() {
 				myui.Icon(c, layerIcon(*layer)).Width(14).Height(14).
 					TextColor(featureTint(a.Active, st))
@@ -436,7 +446,7 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 				t.selected = index
 			}
 		}
-		myui.Row(c).FillWidth().Gap(6).Children(func() {
+		myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 			a.ghostButton(c, st, "加图片", lucide.ImagePlus(), func() {
 				t.addLayer(engine.LayerImage)
 				t.layers[t.selected].Path = a.selectedPreviewPath()
@@ -557,14 +567,14 @@ func (t *CollageStudioTool) Panel(c *myui.Context, a *App) {
 					})
 				}
 			}
-			myui.Row(c).FillWidth().Gap(6).Children(func() {
-				a.ghostButton(c, st, "上移一层", lucide.ArrowUp(), func() {
+			myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
+				a.ghostButtonState(c, st, "上移一层", lucide.ArrowUp(), t.selected >= len(t.layers)-1, false, func() {
 					t.moveLayer(t.selected, 1)
 				})
-				a.ghostButton(c, st, "下移一层", lucide.ArrowDown(), func() {
+				a.ghostButtonState(c, st, "下移一层", lucide.ArrowDown(), t.selected <= 0, false, func() {
 					t.moveLayer(t.selected, -1)
 				})
-				a.ghostButton(c, st, "删除", lucide.Trash2(), func() {
+				a.ghostButtonState(c, st, "删除", lucide.Trash2(), t.selected < 0, false, func() {
 					t.removeLayer(t.selected)
 				})
 			})
@@ -849,35 +859,35 @@ func (t *AnnotateTool) record() {
 func (t *AnnotateTool) Panel(c *myui.Context, a *App) {
 	st := styles(c)
 	sectionCard(c, "工具", func() {
-		rows := (len(annotateTools) + 3) / 4
-		for r := 0; r < rows; r++ {
-			myui.Row(c).FillWidth().Gap(5).Children(func() {
-				for i := r * 4; i < r*4+4 && i < len(annotateTools); i++ {
-					index := i
-					tool := annotateTools[i]
-					active := t.tool == index
-					btn := myui.ButtonBase(c).Grow(1).Height(46).Radius(st.RadiusControl).
-						Justify(myui.Center).AlignItems(myui.Center).Gap(2).
-						Cursor(myui.CursorPointer).Label(tool.Label)
-					if active {
-						btn.Background(st.BrandSoft).Border(1, st.Brand)
-					} else {
-						btn.Border(1, st.Divider).Background(st.Recessed)
-					}
-					btn.Children(func() {
-						col := st.TextSub
-						if active {
-							col = st.Brand
-						}
-						myui.Icon(c, tool.Icon()).Width(15).Height(15).TextColor(col)
-						myui.Text(c, tool.Label).FontSize(10).TextColor(col)
-					})
-					if btn.Clicked() {
-						t.tool = index
-					}
+		myui.Grid(c).FillWidth().Columns(4).Gap(6).Children(func() {
+			for i, tool := range annotateTools {
+				index := i
+				active := t.tool == index
+				btn := myui.ButtonBase(c).Key("annotate-tool-" + tool.Key).FillWidth().Height(46).Radius(st.RadiusControl).
+					Justify(myui.Center).AlignItems(myui.Center).Gap(2).
+					Cursor(myui.CursorPointer).Label(tool.Label).
+					Transition(motion(springTap))
+				col := st.TextSub
+				switch {
+				case active:
+					btn.Background(st.BrandSoft).Border(1, st.Brand)
+					col = st.Brand
+				case btn.Hovered():
+					btn.Background(st.CardHover).Border(1, st.Brand)
+					col = st.Text
+				default:
+					btn.Border(1, st.Divider).Background(st.Recessed)
 				}
-			})
-		}
+				btn = pressFeedback(btn, btn.Pressed(), 0.96)
+				btn.Children(func() {
+					myui.Icon(c, tool.Icon()).Width(15).Height(15).TextColor(col)
+					myui.Text(c, tool.Label).FontSize(10).FontWeight(500).TextColor(col).NoWrap()
+				})
+				if btn.Clicked() {
+					t.tool = index
+				}
+			}
+		})
 		// The two distinct kinds of hiding must never read as the same control.
 		warnAlert(c, "隐私遮挡请使用「安全遮盖」")
 	})
@@ -912,17 +922,22 @@ func (t *AnnotateTool) Panel(c *myui.Context, a *App) {
 
 	sectionCard(c, "标注列表", func() {
 		if len(t.marks) == 0 {
-			warnAlert(c, "暂无标注")
+			myui.Row(c).FillWidth().Padding(10).Radius(st.RadiusPill).Gap(8).
+				AlignItems(myui.Center).Background(st.Recessed).Border(1, st.DividerTop).Children(func() {
+				myui.Icon(c, lucide.PenTool()).Width(14).Height(14).TextColor(st.TextDim)
+				myui.Text(c, "暂无标注").FontSize(11.5).TextColor(st.TextSub)
+			})
 		}
 		for i, m := range t.marks {
 			index := i
-			row := myui.ButtonBase(c).FillWidth().Height(30).PaddingX(8).
+			row := myui.ButtonBase(c).Key(fmt.Sprintf("annotate-mark-%d", i)).FillWidth().Height(30).PaddingX(8).
 				Radius(st.RadiusPill).AlignItems(myui.Center).Gap(6).
-				Cursor(myui.CursorPointer).Label(m.Kind)
+				Cursor(myui.CursorPointer).Label(m.Kind).
+				Transition(motion(springTap))
 			if t.selected == index {
-				row.Background(st.BrandSoft)
+				row.Background(st.BrandSoft).Border(1, st.Brand)
 			} else if row.Hovered() {
-				row.Background(st.Recessed)
+				row.Background(st.CardHover)
 			}
 			row.Children(func() {
 				myui.Text(c, fmt.Sprintf("%d. %s", index+1, annotateKindLabel(m.Kind))).
@@ -936,15 +951,15 @@ func (t *AnnotateTool) Panel(c *myui.Context, a *App) {
 				t.selected = index
 			}
 		}
-		myui.Row(c).FillWidth().Gap(6).Children(func() {
-			a.ghostButton(c, st, "删除选中", lucide.Trash2(), func() {
+		myui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
+			a.ghostButtonState(c, st, "删除选中", lucide.Trash2(), t.selected < 0 || t.selected >= len(t.marks), false, func() {
 				if t.selected >= 0 && t.selected < len(t.marks) {
 					t.marks = append(t.marks[:t.selected], t.marks[t.selected+1:]...)
 					t.selected = -1
 					t.record()
 				}
 			})
-			a.ghostButton(c, st, "清空", lucide.Eraser(), func() {
+			a.ghostButtonState(c, st, "清空", lucide.Eraser(), len(t.marks) == 0, false, func() {
 				t.marks = nil
 				t.selected = -1
 				t.record()
@@ -1017,7 +1032,7 @@ func (t *AnnotateTool) PreviewPanel(c *myui.Context, a *App) {
 		})
 		myui.Row(c).FillWidth().Grow(1).MinHeight(0).Clip().Justify(myui.Center).AlignItems(myui.Center).Children(func() {
 			canvas := myui.Box(c).Fill().MinWidth(0).MinHeight(0).
-				Radius(st.RadiusControl).Background(st.Card).Clip().
+				Radius(st.RadiusControl).Background(st.Shell).Border(1, st.Divider).Clip().
 				Focusable().FocusRingColor(st.Brand).FocusRingOffset(2).
 				Cursor(myui.CursorCrosshair).Label("标注画布").Bind(&t.canvasHandle)
 			canvas.HandleInput(func(ev myui.InputEvent) bool {
@@ -1197,29 +1212,33 @@ func (t *ScreenshotTool) Panel(c *myui.Context, a *App) {
 			}
 		})
 		if t.useGrad {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "结束色")
-				before := t.bg2
-				colorField(c, &t.bg2)
-				if t.bg2 != before {
-					t.bg2Hex = hexOf(t.bg2)
-				}
+			revealBlock(c, "screenshot-grad", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "结束色")
+					before := t.bg2
+					colorField(c, &t.bg2)
+					if t.bg2 != before {
+						t.bg2Hex = hexOf(t.bg2)
+					}
+				})
+				sliderRow(c, "渐变角度", &t.gradient, 0, 360, 5, "%.0f°")
 			})
-			sliderRow(c, "渐变角度", &t.gradient, 0, 360, 5, "%.0f°")
 		}
 	})
 
 	sectionCard(c, "描边", func() {
 		sliderRow(c, "宽度", &t.border, 0, 20, 1, "%.0f px")
 		if t.border > 0 {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "颜色")
-				col := colorOf(t.borderHex)
-				before := col
-				colorField(c, &col)
-				if col != before {
-					t.borderHex = hexOf(col)
-				}
+			revealBlock(c, "screenshot-border-color", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "颜色")
+					col := colorOf(t.borderHex)
+					before := col
+					colorField(c, &col)
+					if col != before {
+						t.borderHex = hexOf(col)
+					}
+				})
 			})
 		}
 	})
@@ -1380,9 +1399,15 @@ func (t *GradeTool) Panel(c *myui.Context, a *App) {
 	})
 
 	sectionCard(c, "LUT", func() {
+		lutLabel := "未导入 .cube 文件"
+		lutTint := st.TextDim
+		if strings.TrimSpace(t.lutPath) != "" {
+			lutLabel = truncate(filepath.Base(t.lutPath), 22)
+			lutTint = st.TextSub
+		}
 		myui.Row(c).FillWidth().Gap(8).AlignItems(myui.Center).Children(func() {
-			myui.Text(c, truncate(filepath.Base(t.lutPath), 22)).FontSize(11).
-				TextColor(st.TextSub).SingleLine()
+			myui.Text(c, lutLabel).FontSize(11.5).
+				TextColor(lutTint).SingleLine()
 			myui.Spacer(c).Grow(1)
 			a.ghostButton(c, st, "导入 .cube", lucide.Upload(), func() {
 				a.pickLUT(&t.lutPath, func() {
@@ -1603,37 +1628,41 @@ func (t *FilterTool) Panel(c *myui.Context, a *App) {
 				continue
 			}
 			label(c, group)
-			// Four per row: a filter label is two to four characters, and seven in
-			// one 420 DIP row squeezed every label to an unreadable width.
-			rows := (len(items) + 3) / 4
-			for r := 0; r < rows; r++ {
-				start, end := r*4, minInt(r*4+4, len(items))
-				myui.Row(c).FillWidth().Gap(5).Children(func() {
-					for i := start; i < end; i++ {
-						key := items[i].Key
-						name := items[i].Label
-						active := t.kind == key
-						btn := myui.ButtonBase(c).Grow(1).Height(34).Radius(st.RadiusPill).
-							Justify(myui.Center).AlignItems(myui.Center).
-							Cursor(myui.CursorPointer).Label(name)
-						if active {
-							btn.Gradient(st.Brand, st.BrandGradientTo, 90)
-						} else {
-							btn.Border(1, st.Divider).Background(st.Recessed)
-						}
-						btn.Children(func() {
-							col := st.TextSub
-							if active {
-								col = myui.RGB(255, 255, 255)
-							}
-							myui.Text(c, name).FontSize(10.5).TextColor(col).NoWrap()
-						})
-						if btn.Clicked() {
-							t.kind = key
-						}
+			// Four per row in a uniform grid so lone items on a partial row never stretch full-width.
+			myui.Grid(c).FillWidth().Columns(4).Gap(6).Children(func() {
+				for _, item := range items {
+					key := item.Key
+					name := item.Label
+					active := t.kind == key
+					btn := myui.ButtonBase(c).Key("filter-" + key).FillWidth().Height(33).Radius(st.RadiusControl).
+						Justify(myui.Center).AlignItems(myui.Center).
+						Cursor(myui.CursorPointer).Label(name).
+						Transition(motion(springTap))
+					col := st.TextSub
+					switch {
+					case active:
+						btn.Gradient(st.Brand, st.BrandGradientTo, 90).
+							Shadow(0, 2, 6, 0, st.BrandGlow)
+						col = myui.RGB(255, 255, 255)
+					case btn.Hovered():
+						btn.Background(st.CardHover).Border(1, st.Brand)
+						col = st.Text
+					default:
+						btn.Border(1, st.Divider).Background(st.Recessed)
 					}
-				})
-			}
+					btn = pressFeedback(btn, btn.Pressed(), 0.97)
+					btn.Children(func() {
+						weight := 500
+						if active {
+							weight = 600
+						}
+						myui.Text(c, name).FontSize(11).FontWeight(weight).TextColor(col).NoWrap()
+					})
+					if btn.Clicked() {
+						t.kind = key
+					}
+				}
+			})
 		}
 	})
 
@@ -1968,10 +1997,14 @@ func (t *CompareTool) PreviewPanel(c *myui.Context, a *App) {
 // showTile loads and shows one path in a letterboxed box.
 func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path string, job *studioJob[image.Image]) {
 	holder := myui.Column(c).Fill().MinHeight(0).Clip().Gap(6).Radius(st.RadiusControl).
-		Background(st.Card).Padding(8).Children(func() {
-		myui.Text(c, caption).FontSize(10.5).TextColor(st.TextDim)
+		Background(st.Card).Border(1, st.Divider).Padding(8).Children(func() {
+		myui.Text(c, caption).FontSize(10.5).FontWeight(500).TextColor(st.TextSub)
 		if path == "" {
-			myui.Spacer(c).Grow(1)
+			myui.Column(c).FillWidth().Grow(1).Justify(myui.Center).AlignItems(myui.Center).Gap(6).
+				Radius(st.RadiusPill).Background(st.Recessed).Children(func() {
+				myui.Icon(c, lucide.Image()).Width(22).Height(22).TextColor(st.TextDim)
+				myui.Text(c, "尚未选择"+caption).FontSize(11).TextColor(st.TextDim)
+			})
 			return
 		}
 		img, busy, err := job.request(a, path, func(context.Context) (image.Image, error) { return loadPreviewImage(path) })
@@ -1979,9 +2012,14 @@ func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path 
 			myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().Fit(myui.Contain).
 				Radius(st.RadiusPill)
 		} else if busy {
-			myui.Text(c, "正在读取").FontSize(11).TextColor(st.TextDim)
+			myui.Column(c).FillWidth().Grow(1).Justify(myui.Center).AlignItems(myui.Center).Gap(6).Children(func() {
+				loadingIcon(c, 18, st.Brand)
+				myui.Text(c, "正在读取").FontSize(11).TextColor(st.TextDim)
+			})
 		} else if err != nil {
-			myui.Text(c, "无法读取").FontSize(11).TextColor(st.Danger)
+			myui.Column(c).FillWidth().Grow(1).Justify(myui.Center).AlignItems(myui.Center).Children(func() {
+				myui.Text(c, "无法读取").FontSize(11).TextColor(st.Danger)
+			})
 		}
 	})
 	_ = holder
@@ -1990,8 +2028,8 @@ func (t *CompareTool) showTile(c *myui.Context, a *App, st style, caption, path 
 // showImage shows an already-decoded picture in a labelled box.
 func (t *CompareTool) showImage(c *myui.Context, st style, caption string, img image.Image) {
 	myui.Column(c).Fill().MinHeight(0).Clip().Gap(6).Radius(st.RadiusControl).Background(st.Card).
-		Padding(8).Children(func() {
-		myui.Text(c, caption).FontSize(10.5).TextColor(st.TextDim)
+		Border(1, st.Divider).Padding(8).Children(func() {
+		myui.Text(c, caption).FontSize(10.5).FontWeight(500).TextColor(st.TextSub)
 		myui.Image(c, myui.NewBitmap(img)).FillWidth().Grow(1).MinHeight(0).Clip().Fit(myui.Contain).
 			Radius(st.RadiusPill)
 	})
@@ -2176,8 +2214,8 @@ func histogramBars(c *myui.Context, st style, hist engine.Histogram, tint myui.C
 		data = hist.LogScaled()
 	}
 	peak := data.HistogramPeak()
-	myui.Row(c).FillWidth().Height(56).Radius(st.RadiusPill).
-		Background(st.Recessed).Clip().Children(func() {
+	myui.Row(c).FillWidth().Height(60).Padding(4, 2, 0, 2).Radius(st.RadiusPill).
+		Background(st.Recessed).Border(1, st.DividerTop).Clip().Children(func() {
 		// The bars are painted, not built as 256 elements: a row of 256 boxes
 		// would cost a layout pass per frame for a picture that never changes.
 		for i := 0; i < 256; i += 4 {
@@ -2362,10 +2400,12 @@ func (t *PixelTool) Panel(c *myui.Context, a *App) {
 	sectionCard(c, "颜色与抖动", func() {
 		switchField(c, &t.strict, "严格黑白")
 		if !t.strict {
-			levels := float64(t.colors)
-			sliderRow(c, "色数", &levels, 2, 16, 1, "%.0f")
-			t.colors = int(levels)
-			switchField(c, &t.gray, "灰阶调色板")
+			revealBlock(c, "pixel-multicolor", func() {
+				levels := float64(t.colors)
+				sliderRow(c, "色数", &levels, 2, 16, 1, "%.0f")
+				t.colors = int(levels)
+				switchField(c, &t.gray, "灰阶调色板")
+			})
 		}
 		sliderRow(c, "强度", &t.strength, 0, 100, 1, "%.0f%%")
 		labels := make([]string, 0, len(engine.DitherLabels))
@@ -2596,9 +2636,11 @@ func (t *EmoteTool) Panel(c *myui.Context, a *App) {
 		})
 		switchField(c, &t.applyLoop, "设置循环次数")
 		if t.applyLoop {
-			myui.Column(c).Gap(5).Children(func() {
-				label(c, "循环次数（0 = 无限）")
-				numberField(c, &t.loop, 0, 100, 1, "0")
+			revealBlock(c, "emote-loop", func() {
+				myui.Column(c).Gap(5).Children(func() {
+					label(c, "循环次数（0 = 无限）")
+					numberField(c, &t.loop, 0, 100, 1, "0")
+				})
 			})
 		}
 	})

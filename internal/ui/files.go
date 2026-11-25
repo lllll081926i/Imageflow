@@ -72,7 +72,7 @@ func (a *App) visibleInputRows() []batch.Item {
 func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 	c.Key("input-file-" + item.Path)
 	row := myui.Row(c).FillWidth().Height(62).Gap(11).Padding(7, 9, 7, 9).
-		AlignItems(myui.Center).Radius(st.RadiusControl).Transition(motion(springSoft)).
+		AlignItems(myui.Center).Radius(st.RadiusControl).Transition(motion(springTap)).
 		Focusable().Cursor(myui.CursorPointer).Label("预览 " + item.Name).
 		OnClick(func() { a.selectBrowserPreview(item.Path) })
 	if a.selectedPreviewPath() == item.Path {
@@ -87,7 +87,9 @@ func (a *App) fileRow(c *myui.Context, st style, item *batch.Item) {
 			row.ScrollIntoView()
 		}
 	} else if row.Hovered() {
-		row.Background(st.Recessed)
+		row.Background(st.CardHover).Border(1, st.Divider)
+	} else {
+		row.Background(st.Card).Border(1, st.DividerTop)
 	}
 	row.Children(func() {
 		a.thumbBox(c, st, item)
@@ -177,10 +179,13 @@ func (a *App) fileBrowserGrid(c *myui.Context, st style, items []batch.Item, gri
 		c.Key("input-tile-" + item.Path)
 		tile := myui.Column(c).Fill().MinWidth(0).Clip().Padding(6).Gap(4).
 			Radius(st.RadiusControl).Background(st.Card).Border(1, st.Divider).
+			Transition(motion(springTap)).
 			Label("预览 " + item.Name).Tooltip(item.Path).Cursor(myui.CursorPointer).
 			OnClick(func() { a.selectBrowserPreview(item.Path) })
 		if selected == item.Path {
 			tile.Background(st.BrandSoft).Border(1, st.Brand)
+		} else if tile.Hovered() {
+			tile.Background(st.CardHover).Border(1, st.TextDim)
 		}
 		tile.Children(func() {
 			if a.fileLayout == 1 {
@@ -232,11 +237,16 @@ func (a *App) thumbBox(c *myui.Context, st style, item *batch.Item) {
 }
 
 func (a *App) fileRemoveAction(c *myui.Context, st style, item *batch.Item) {
-	myui.ButtonBase(c).Size(28, 28).Label("移除 " + item.Name).
+	btn := myui.ButtonBase(c).Size(28, 28).Radius(st.RadiusPill).Label("移除 " + item.Name).
 		Tooltip("从列表移除，不删除文件").Disabled(a.IsRunning() || a.IsImporting()).
-		AlignItems(myui.Center).Justify(myui.Center).
-		OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
-		myui.Icon(c, lucide.X()).Size(14, 14).TextColor(st.TextDim)
+		AlignItems(myui.Center).Justify(myui.Center).Transition(motion(springTap))
+	tint := st.TextDim
+	if !btn.IsDisabled() && btn.Hovered() {
+		btn.Background(myui.RGBA(st.Danger.R, st.Danger.G, st.Danger.B, 0.12))
+		tint = st.Danger
+	}
+	btn.OnClick(func() { a.removeByPath(item.Path) }).Children(func() {
+		myui.Icon(c, lucide.X()).Size(14, 14).TextColor(tint)
 	})
 }
 
